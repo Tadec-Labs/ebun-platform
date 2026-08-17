@@ -1,0 +1,2 @@
+-- Ebun local development seed data.
+-- Intentionally empty for the initial scaffold.
