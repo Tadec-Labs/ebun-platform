@@ -20,6 +20,13 @@ coverage/
 .env.*
 !.env.example
 
+# Supabase
+supabase/.temp/
+
+ 
+# distribution folder
+dist/
+
 # Vercel
 .vercel/
 
