@@ -46,7 +46,6 @@ Thumbs.db
 # Editors
 .vscode/*
 !.vscode/extensions.json
-!.vscode/settings.json
 
 # Certificates / private keys
 *.pem
