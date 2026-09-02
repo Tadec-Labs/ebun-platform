@@ -8,6 +8,10 @@ class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   SUPABASE_SERVICE_ROLE_KEY!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  PAYSTACK_SECRET_KEY!: string;
 }
 
 export function validateEnv(

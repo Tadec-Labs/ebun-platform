@@ -17,13 +17,12 @@ export interface AttemptOrderTransitionParams {
   actorId?: string | null;
   metadata?: Record<string, unknown> | null;
 }
-
 export interface OrderRow {
   id: string;
   status: OrderStatus;
+  total_amount: number; // kobo — explicit because callers (e.g. PaystackWebhookService) compare/interpolate it directly, not just pass it through
   [key: string]: unknown;
 }
-
 /**
  * Thin wrapper around attempt_order_transition() (see
  * supabase/migrations — attempt_order_transition.sql). Deliberately does
@@ -70,6 +69,27 @@ export class OrdersRepository {
       // translate Postgres/PostgREST errors into HTTP responses once
       // one exists. Swallowing it here would hide real failures
       // (connection errors, bad enum values, etc.) behind a plain null.
+      throw response.error;
+    }
+
+    return response.data ?? null;
+  }
+
+  /**
+   * Reads an order by its Paystack transaction reference. Returns null if none exists — a normal, expected outcome for the caller to check (e.g. a webhook referencing an order that was never created by us), not necessarily a bug.
+   */
+  async findByPaystackReference(reference: string): Promise<OrderRow | null> {
+    const response = (await this.supabase
+      .from('orders')
+      .select('id, status, total_amount, paystack_reference')
+      .eq('paystack_reference', reference)
+      // .maybeSingle(), not .single() — returns null for zero matches instead of erroring; still errors if more than one row matches, which would indicate a real data-integrity problem (paystack_reference is UNIQUE in the schema, so that should be impossible, but this doesn't silently paper over it if it ever isn't).
+      .maybeSingle()) as {
+      data: OrderRow | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
       throw response.error;
     }
 

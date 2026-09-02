@@ -4,6 +4,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { OrdersModule } from './orders/orders.module';
 import { SupabaseModule } from './supabase/supabase.module';
+import { IdempotencyModule } from './idempotency/idempotency.module';
+import { PaymentsModule } from './payments/payments.module';
 import { validateEnv } from './config/env.validation';
 
 @Module({
@@ -14,6 +16,8 @@ import { validateEnv } from './config/env.validation';
     }),
     SupabaseModule,
     OrdersModule,
+    IdempotencyModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
