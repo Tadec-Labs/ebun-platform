@@ -1,0 +1,1094 @@
+diff --git a/apps/api/src/gifts/gift-templates.repository.ts b/apps/api/src/gifts/gift-templates.repository.ts
+new file mode 100644
+index 0000000..d670656
+--- /dev/null
++++ b/apps/api/src/gifts/gift-templates.repository.ts
+@@ -0,0 +1,35 @@
++import { Inject, Injectable } from '@nestjs/common';
++import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
++import { SUPABASE_CLIENT } from '../supabase/supabase.module';
++
++export interface GiftTemplateRow {
++  id: string;
++  base_price: number; // kobo
++  available: boolean;
++  requires_address: boolean;
++  [key: string]: unknown;
++}
++
++@Injectable()
++export class GiftTemplatesRepository {
++  constructor(
++    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
++  ) {}
++
++  async findById(id: string): Promise<GiftTemplateRow | null> {
++    const response = (await this.supabase
++      .from('gift_templates')
++      .select('*')
++      .eq('id', id)
++      .maybeSingle()) as {
++      data: GiftTemplateRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? null;
++  }
++}
+diff --git a/apps/api/src/gifts/gifts.module.ts b/apps/api/src/gifts/gifts.module.ts
+new file mode 100644
+index 0000000..723c92e
+--- /dev/null
++++ b/apps/api/src/gifts/gifts.module.ts
+@@ -0,0 +1,9 @@
++import { Module } from '@nestjs/common';
++import { GiftTemplatesRepository } from './gift-templates.repository';
++import { GiftsService } from './gifts.service';
++
++@Module({
++  providers: [GiftTemplatesRepository, GiftsService],
++  exports: [GiftsService],
++})
++export class GiftsModule {}
+diff --git a/apps/api/src/gifts/gifts.service.ts b/apps/api/src/gifts/gifts.service.ts
+new file mode 100644
+index 0000000..1328542
+--- /dev/null
++++ b/apps/api/src/gifts/gifts.service.ts
+@@ -0,0 +1,23 @@
++import { Injectable, NotFoundException } from '@nestjs/common';
++import {
++  GiftTemplateRow,
++  GiftTemplatesRepository,
++} from './gift-templates.repository';
++
++@Injectable()
++export class GiftsService {
++  constructor(private readonly repository: GiftTemplatesRepository) {}
++
++  /** Throws if the template doesn't exist OR exists but isn't currently available — CreateOrderService should never have to check `.available` itself. */
++  async findAvailableById(id: string): Promise<GiftTemplateRow> {
++    const template = await this.repository.findById(id);
++
++    if (!template || !template.available) {
++      throw new NotFoundException(
++        `Gift template ${id} not found or not currently available`,
++      );
++    }
++
++    return template;
++  }
++}
+diff --git a/apps/api/src/orders/create-order.service.spec.ts b/apps/api/src/orders/create-order.service.spec.ts
+new file mode 100644
+index 0000000..d57a9ce
+--- /dev/null
++++ b/apps/api/src/orders/create-order.service.spec.ts
+@@ -0,0 +1,153 @@
++import { Test } from '@nestjs/testing';
++import { OrderStatus } from '@ebun/types';
++import { CreateOrderService } from './create-order.service';
++import { GiftsService } from '../gifts/gifts.service';
++import { UsersService } from '../users/users.service';
++import { OrdersService } from './orders.service';
++import { PaystackClientService } from '../paystack/paystack-client.service';
++import { CreateOrderDto } from './dto/create-order.dto';
++
++function makeDto(overrides: Partial<CreateOrderDto> = {}): CreateOrderDto {
++  return Object.assign(new CreateOrderDto(), {
++    giftTemplateId: 'template-1',
++    recipientName: 'Recipient Name',
++    recipientPhone: '+2348012345678',
++    senderName: 'Sender Name',
++    senderEmail: 'sender@example.com',
++    ...overrides,
++  });
++}
++
++describe('CreateOrderService', () => {
++  let sut: CreateOrderService;
++  let gifts: { findAvailableById: jest.Mock };
++  let users: { findOrCreateGuestSender: jest.Mock };
++  let orders: { create: jest.Mock; transitionNormal: jest.Mock };
++  let paystack: { initializeTransaction: jest.Mock };
++
++  beforeEach(async () => {
++    gifts = { findAvailableById: jest.fn() };
++    users = { findOrCreateGuestSender: jest.fn() };
++    orders = { create: jest.fn(), transitionNormal: jest.fn() };
++    paystack = { initializeTransaction: jest.fn() };
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        CreateOrderService,
++        { provide: GiftsService, useValue: gifts },
++        { provide: UsersService, useValue: users },
++        { provide: OrdersService, useValue: orders },
++        { provide: PaystackClientService, useValue: paystack },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(CreateOrderService);
++
++    gifts.findAvailableById.mockResolvedValue({
++      id: 'template-1',
++      base_price: 500000,
++    });
++    users.findOrCreateGuestSender.mockResolvedValue({ id: 'user-1' });
++    orders.create.mockResolvedValue({
++      id: 'order-1',
++      order_number: 'EBN-0001',
++    });
++    paystack.initializeTransaction.mockResolvedValue({
++      authorizationUrl: 'https://checkout.paystack.com/xyz',
++      accessCode: 'code',
++      reference: 'ebun_ref',
++    });
++  });
++
++  it('runs the full sequence and returns the checkout URL', async () => {
++    const result = await sut.execute(makeDto(), '127.0.0.1');
++
++    expect(gifts.findAvailableById).toHaveBeenCalledWith('template-1');
++    expect(users.findOrCreateGuestSender).toHaveBeenCalledWith({
++      email: 'sender@example.com',
++      phone: undefined,
++      name: 'Sender Name',
++    });
++    // price computed server-side from the template, not from the DTO
++    expect(orders.create).toHaveBeenCalledWith(
++      expect.objectContaining({
++        giftValue: 500000,
++        deliveryFee: 0,
++        serviceFee: 0,
++        totalAmount: 500000,
++      }),
++    );
++    expect(paystack.initializeTransaction).toHaveBeenCalledWith(
++      expect.objectContaining({
++        email: 'sender@example.com',
++        amountKobo: 500000,
++      }),
++    );
++    expect(orders.transitionNormal).toHaveBeenCalledWith(
++      'order-1',
++      OrderStatus.Draft,
++      OrderStatus.PendingPayment,
++      { type: 'system' },
++      expect.any(Object),
++    );
++    expect(result).toEqual({
++      orderId: 'order-1',
++      orderNumber: 'EBN-0001',
++      checkoutUrl: 'https://checkout.paystack.com/xyz',
++    });
++  });
++
++  it('marks the sender as diaspora only when senderCountryCode is present and not NG', async () => {
++    await sut.execute(makeDto({ senderCountryCode: 'GB' }), '127.0.0.1');
++    expect(orders.create).toHaveBeenCalledWith(
++      expect.objectContaining({ isDiasporaSender: true }),
++    );
++
++    await sut.execute(makeDto({ senderCountryCode: 'NG' }), '127.0.0.1');
++    expect(orders.create).toHaveBeenCalledWith(
++      expect.objectContaining({ isDiasporaSender: false }),
++    );
++
++    await sut.execute(makeDto(), '127.0.0.1'); // omitted entirely
++    expect(orders.create).toHaveBeenCalledWith(
++      expect.objectContaining({ isDiasporaSender: false }),
++    );
++  });
++
++  it('rejects voice/video messageType before touching gifts, users, orders, or Paystack', async () => {
++    await expect(
++      sut.execute(makeDto({ messageType: 'voice' }), '127.0.0.1'),
++    ).rejects.toThrow(/not yet supported/);
++
++    expect(gifts.findAvailableById).not.toHaveBeenCalled();
++    expect(users.findOrCreateGuestSender).not.toHaveBeenCalled();
++    expect(orders.create).not.toHaveBeenCalled();
++    expect(paystack.initializeTransaction).not.toHaveBeenCalled();
++  });
++
++  it('propagates a gift-template-not-found error before touching anything else', async () => {
++    gifts.findAvailableById.mockRejectedValue(new Error('not found'));
++
++    await expect(sut.execute(makeDto(), '127.0.0.1')).rejects.toThrow(
++      'not found',
++    );
++
++    expect(users.findOrCreateGuestSender).not.toHaveBeenCalled();
++    expect(orders.create).not.toHaveBeenCalled();
++  });
++
++  it('leaves the order in draft (never transitions) if the Paystack call fails', async () => {
++    paystack.initializeTransaction.mockRejectedValue(
++      new Error('Paystack unreachable'),
++    );
++
++    await expect(sut.execute(makeDto(), '127.0.0.1')).rejects.toThrow(
++      'Paystack unreachable',
++    );
++
++    // The order WAS created (it has to exist before we can pay for it)...
++    expect(orders.create).toHaveBeenCalled();
++    // ...but the transition to pending_payment must never have been attempted.
++    expect(orders.transitionNormal).not.toHaveBeenCalled();
++  });
++});
+diff --git a/apps/api/src/orders/create-order.service.ts b/apps/api/src/orders/create-order.service.ts
+new file mode 100644
+index 0000000..0ed3752
+--- /dev/null
++++ b/apps/api/src/orders/create-order.service.ts
+@@ -0,0 +1,115 @@
++import { randomUUID } from 'crypto';
++import { BadRequestException, Injectable } from '@nestjs/common';
++import { OrderStatus } from '@ebun/types';
++import { GiftsService } from '../gifts/gifts.service';
++import { UsersService } from '../users/users.service';
++import { PaystackClientService } from '../paystack/paystack-client.service';
++import { OrdersService } from './orders.service';
++import { CreateOrderDto } from './dto/create-order.dto';
++
++export interface CreateOrderResult {
++  orderId: string;
++  orderNumber: string | null;
++  checkoutUrl: string;
++}
++
++@Injectable()
++export class CreateOrderService {
++  constructor(
++    private readonly giftsService: GiftsService,
++    private readonly usersService: UsersService,
++    private readonly ordersService: OrdersService,
++    private readonly paystackClient: PaystackClientService,
++  ) {}
++
++  async execute(
++    dto: CreateOrderDto,
++    senderIp: string | undefined,
++  ): Promise<CreateOrderResult> {
++    // Only text messages are supported at creation right now —
++    // voice/video need a Cloudflare R2 presigned-upload step that isn't
++    // built yet. Checked FIRST, before the gift lookup: this is a pure,
++    // local check with no I/O, so a request that's going to be rejected
++    // regardless of the gift template shouldn't cost a DB round-trip
++    // first. (Found via a live HTTP test against a running server —
++    // originally this ran after the gift lookup, which meant an
++    // unreachable/slow DB turned an instant 400 into a delayed 500.)
++    if (dto.messageType && dto.messageType !== 'text') {
++      throw new BadRequestException(
++        `messageType "${dto.messageType}" is not yet supported — only "text" messages can be attached at order creation for now.`,
++      );
++    }
++
++    const giftTemplate = await this.giftsService.findAvailableById(
++      dto.giftTemplateId,
++    );
++
++    const sender = await this.usersService.findOrCreateGuestSender({
++      email: dto.senderEmail,
++      phone: dto.senderPhone,
++      name: dto.senderName,
++    });
++
++    // Server-computed, never client-supplied — same principle as
++    // "backend never trusts frontend payment status" extended to price.
++    const giftValue = giftTemplate.base_price;
++    // PLACEHOLDER — no delivery/service fee schedule has been specified
++    // anywhere in the Brief excerpts seen so far. Both are 0 until
++    // there's a real pricing rule to implement; flagged here rather
++    // than silently invented.
++    const deliveryFee = 0;
++    const serviceFee = 0;
++    const totalAmount = giftValue + deliveryFee + serviceFee;
++
++    const paystackReference = `ebun_${randomUUID()}`;
++
++    const order = await this.ordersService.create({
++      senderId: sender.id,
++      giftTemplateId: giftTemplate.id,
++      recipientName: dto.recipientName,
++      recipientPhone: dto.recipientPhone,
++      senderMessage: dto.senderMessage,
++      messageType: dto.messageType,
++      scheduledSendAt: dto.scheduledSendAt,
++      paystackReference,
++      totalAmount,
++      giftValue,
++      deliveryFee,
++      serviceFee,
++      senderIp,
++      senderCountryCode: dto.senderCountryCode,
++      isDiasporaSender: !!(
++        dto.senderCountryCode && dto.senderCountryCode !== 'NG'
++      ),
++    });
++
++    // Paystack call happens AFTER the order exists but BEFORE the
++    // draft -> pending_payment transition. If Paystack's call fails,
++    // the order simply stays 'draft' — never falsely marked as awaiting
++    // a payment that was never actually initiated with Paystack. The
++    // caller can retry order creation; a stuck 'draft' row from a failed
++    // Paystack call isn't currently auto-cleaned (expire_unclaimed_gifts()
++    // only handles ready_for_redemption/reveal_opened/voucher_issued),
++    // which is a known minor gap, not addressed in this slice.
++    const checkout = await this.paystackClient.initializeTransaction({
++      email: dto.senderEmail,
++      amountKobo: totalAmount,
++      reference: paystackReference,
++      metadata: { orderId: order.id, orderNumber: order.order_number },
++    });
++
++    await this.ordersService.transitionNormal(
++      order.id,
++      OrderStatus.Draft,
++      OrderStatus.PendingPayment,
++      { type: 'system' },
++      { paystackReference },
++    );
++
++    return {
++      orderId: order.id,
++      orderNumber: order.order_number,
++      checkoutUrl: checkout.authorizationUrl,
++    };
++  }
++}
+diff --git a/apps/api/src/orders/dto/create-order.dto.ts b/apps/api/src/orders/dto/create-order.dto.ts
+new file mode 100644
+index 0000000..f24c660
+--- /dev/null
++++ b/apps/api/src/orders/dto/create-order.dto.ts
+@@ -0,0 +1,87 @@
++import {
++  IsEmail,
++  IsIn,
++  IsISO8601,
++  IsNotEmpty,
++  IsOptional,
++  IsString,
++  IsUUID,
++  Length,
++  Matches,
++  MaxLength,
++} from 'class-validator';
++
++// Loose E.164 check — full validation (country-specific length/format)
++// would need a library like libphonenumber-js; not pulled in for one
++// field. Good enough to reject obviously-malformed input.
++const PHONE_PATTERN = /^\+[1-9]\d{6,14}$/;
++
++/**
++ * No pricing fields here on purpose — gift_value/delivery_fee/
++ * service_fee/total_amount are computed server-side from
++ * gift_templates.base_price. Never trust a client-supplied price, same
++ * principle as "backend never trusts frontend payment status."
++ *
++ * senderIp is also deliberately absent — it's captured server-side from
++ * the request itself in OrdersController, not accepted as client input
++ * (trivially spoofable, and it exists for fraud/geo signals that would
++ * be meaningless if the client could just supply any value).
++ */
++export class CreateOrderDto {
++  @IsUUID()
++  giftTemplateId!: string;
++
++  @IsString()
++  @IsNotEmpty()
++  @MaxLength(200)
++  recipientName!: string;
++
++  @IsString()
++  @Matches(PHONE_PATTERN, {
++    message: 'recipientPhone must be in E.164 format, e.g. +2348012345678',
++  })
++  recipientPhone!: string;
++
++  @IsString()
++  @IsNotEmpty()
++  @MaxLength(200)
++  senderName!: string;
++
++  @IsEmail()
++  senderEmail!: string;
++
++  @IsOptional()
++  @IsString()
++  @Matches(PHONE_PATTERN, {
++    message: 'senderPhone must be in E.164 format, e.g. +2348012345678',
++  })
++  senderPhone?: string;
++
++  @IsOptional()
++  @IsString()
++  @MaxLength(2000)
++  senderMessage?: string;
++
++  // Only 'text' is actually accepted right now — see CreateOrderService.
++  // 'voice'/'video' are declared here (matching the schema's check
++  // constraint) so a client sending them gets a clear rejection message
++  // rather than a generic validation error, since Cloudflare R2
++  // presigned upload (needed for actual media) isn't built yet.
++  @IsOptional()
++  @IsIn(['text', 'voice', 'video'])
++  messageType?: string;
++
++  @IsOptional()
++  @IsISO8601()
++  scheduledSendAt?: string;
++
++  // ISO2 (e.g. 'NG', 'GB', 'US', 'CA') — matches orders.sender_country_code's
++  // documented format. Note this is a DIFFERENT format from
++  // users.country_code, which stores a dialing code ('+234') by schema
++  // default — the two columns are not interchangeable despite the
++  // similar name.
++  @IsOptional()
++  @IsString()
++  @Length(2, 2)
++  senderCountryCode?: string;
++}
+diff --git a/apps/api/src/orders/orders.controller.ts b/apps/api/src/orders/orders.controller.ts
+new file mode 100644
+index 0000000..7c9e770
+--- /dev/null
++++ b/apps/api/src/orders/orders.controller.ts
+@@ -0,0 +1,16 @@
++import { Body, Controller, Post, Req } from '@nestjs/common';
++import type { Request } from 'express';
++import { CreateOrderService } from './create-order.service';
++import { CreateOrderDto } from './dto/create-order.dto';
++
++@Controller('orders')
++export class OrdersController {
++  constructor(private readonly createOrderService: CreateOrderService) {}
++
++  @Post()
++  async create(@Body() dto: CreateOrderDto, @Req() request: Request) {
++    // request.ip, not any client-supplied field — see CreateOrderDto's
++    // comment on why senderIp isn't part of the request body.
++    return this.createOrderService.execute(dto, request.ip);
++  }
++}
+diff --git a/apps/api/src/orders/orders.module.ts b/apps/api/src/orders/orders.module.ts
+index 8ff7052..d30649b 100644
+--- a/apps/api/src/orders/orders.module.ts
++++ b/apps/api/src/orders/orders.module.ts
+@@ -1,7 +1,12 @@
+ import { Module } from '@nestjs/common';
++import { GiftsModule } from '../gifts/gifts.module';
++import { UsersModule } from '../users/users.module';
++import { PaystackModule } from '../paystack/paystack.module';
+ import { OrderStateMachineService } from './order-state-machine.service';
+ import { OrdersRepository } from './orders.repository';
+ import { OrdersService } from './orders.service';
++import { CreateOrderService } from './create-order.service';
++import { OrdersController } from './orders.controller';
+ 
+ /**
+  * OrdersService is the only export other feature modules should use.
+@@ -12,7 +17,14 @@ import { OrdersService } from './orders.service';
+  * the atomic write directly, bypassing the guard in OrdersService.
+  */
+ @Module({
+-  providers: [OrderStateMachineService, OrdersRepository, OrdersService],
++  imports: [GiftsModule, UsersModule, PaystackModule],
++  controllers: [OrdersController],
++  providers: [
++    OrderStateMachineService,
++    OrdersRepository,
++    OrdersService,
++    CreateOrderService,
++  ],
+   exports: [OrderStateMachineService, OrdersService],
+ })
+ export class OrdersModule {}
+diff --git a/apps/api/src/orders/orders.repository.ts b/apps/api/src/orders/orders.repository.ts
+index 24d3eee..c84e413 100644
+--- a/apps/api/src/orders/orders.repository.ts
++++ b/apps/api/src/orders/orders.repository.ts
+@@ -20,9 +20,28 @@ export interface AttemptOrderTransitionParams {
+ export interface OrderRow {
+   id: string;
+   status: OrderStatus;
++  order_number: string | null; // EBN-XXXX — generated by a DB trigger, never set by us
+   total_amount: number; // kobo — explicit because callers (e.g. PaystackWebhookService) compare/interpolate it directly, not just pass it through
+   [key: string]: unknown;
+ }
++
++export interface CreateOrderParams {
++  senderId: string;
++  giftTemplateId: string;
++  recipientName: string;
++  recipientPhone: string;
++  senderMessage?: string | null;
++  messageType?: string | null;
++  scheduledSendAt?: string | null;
++  paystackReference: string;
++  totalAmount: number;
++  giftValue: number;
++  deliveryFee: number;
++  serviceFee: number;
++  senderIp?: string | null;
++  senderCountryCode?: string | null;
++  isDiasporaSender: boolean;
++}
+ /**
+  * Thin wrapper around attempt_order_transition() (see
+  * supabase/migrations — attempt_order_transition.sql). Deliberately does
+@@ -95,4 +114,48 @@ export class OrdersRepository {
+ 
+     return response.data ?? null;
+   }
++
++  /**
++   * The one place a new order row is ever inserted. Always as 'draft' —
++   * matches both the schema's column default and the state machine's
++   * only entry point (see order-state-machine.ts: nothing transitions
++   * INTO draft, only out of it). order_number is deliberately absent
++   * from the insert payload — a DB trigger (trg_order_number) generates
++   * it automatically; setting it ourselves would just be overwritten
++   * unless it were non-null/non-empty, in which case we'd risk a
++   * collision with the trigger's own sequence.
++   */
++  async create(params: CreateOrderParams): Promise<OrderRow> {
++    const response = (await this.supabase
++      .from('orders')
++      .insert({
++        status: 'draft',
++        sender_id: params.senderId,
++        gift_template_id: params.giftTemplateId,
++        recipient_name: params.recipientName,
++        recipient_phone: params.recipientPhone,
++        sender_message: params.senderMessage ?? null,
++        message_type: params.messageType ?? null,
++        scheduled_send_at: params.scheduledSendAt ?? null,
++        paystack_reference: params.paystackReference,
++        total_amount: params.totalAmount,
++        gift_value: params.giftValue,
++        delivery_fee: params.deliveryFee,
++        service_fee: params.serviceFee,
++        sender_ip: params.senderIp ?? null,
++        sender_country_code: params.senderCountryCode ?? null,
++        is_diaspora_sender: params.isDiasporaSender,
++      })
++      .select()
++      .single()) as { data: OrderRow | null; error: PostgrestError | null };
++
++    if (response.error) {
++      throw response.error;
++    }
++    if (!response.data) {
++      throw new Error('Order insert returned no data');
++    }
++
++    return response.data;
++  }
+ }
+diff --git a/apps/api/src/orders/orders.service.ts b/apps/api/src/orders/orders.service.ts
+index 93ae7bb..570cefb 100644
+--- a/apps/api/src/orders/orders.service.ts
++++ b/apps/api/src/orders/orders.service.ts
+@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
+ import { OrderStatus } from '@ebun/types';
+ import { OrderStateMachineService } from './order-state-machine.service';
+ import {
++  CreateOrderParams,
+   OrdersRepository,
+   OrderTransitionActorType,
+ } from './orders.repository';
+@@ -53,6 +54,16 @@ export class OrdersService {
+     return this.ordersRepository.findByPaystackReference(reference);
+   }
+ 
++  /**
++   * No guard needed here — this is order genesis, not a transition;
++   * there's no "from" state to validate against. Always creates as
++   * 'draft'. See OrdersRepository.create() for why order_number is
++   * absent from the payload (DB-trigger-generated).
++   */
++  async create(params: CreateOrderParams) {
++    return this.ordersRepository.create(params);
++  }
++
+   private async applyTransition(
+     orderId: string,
+     from: OrderStatus,
+diff --git a/apps/api/src/paystack/paystack-client.service.spec.ts b/apps/api/src/paystack/paystack-client.service.spec.ts
+new file mode 100644
+index 0000000..4fd04a9
+--- /dev/null
++++ b/apps/api/src/paystack/paystack-client.service.spec.ts
+@@ -0,0 +1,133 @@
++import { Test } from '@nestjs/testing';
++import { ConfigService } from '@nestjs/config';
++import { PaystackClientService } from './paystack-client.service';
++
++// Properly typed against the real fetch signature — a plain jest.fn()
++// leaves .mock.calls[n] typed `any`, which trips
++// @typescript-eslint/no-unsafe-assignment when inspecting the sent
++// request body below.
++const fetchMock = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>();
++
++interface FakeFetchResponse {
++  ok: boolean;
++  statusText?: string;
++  json: () => Promise<unknown>;
++}
++
++function fakeResponse(body: FakeFetchResponse): Response {
++  return body as unknown as Response;
++}
++
++describe('PaystackClientService', () => {
++  let sut: PaystackClientService;
++
++  beforeEach(async () => {
++    global.fetch = fetchMock;
++    fetchMock.mockReset();
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        PaystackClientService,
++        {
++          provide: ConfigService,
++          useValue: { getOrThrow: () => 'sk_test_fake' },
++        },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(PaystackClientService);
++  });
++
++  it('sends amount/email/reference/currency and returns the parsed checkout details on success', async () => {
++    fetchMock.mockResolvedValue(
++      fakeResponse({
++        ok: true,
++        json: () =>
++          Promise.resolve({
++            status: true,
++            message: 'Authorization URL created',
++            data: {
++              authorization_url: 'https://checkout.paystack.com/abc123',
++              access_code: 'access_code_123',
++              reference: 'ebun_ref_123',
++            },
++          }),
++      }),
++    );
++
++    const result = await sut.initializeTransaction({
++      email: 'sender@example.com',
++      amountKobo: 500000,
++      reference: 'ebun_ref_123',
++      metadata: { orderId: 'order-1' },
++    });
++
++    expect(fetchMock).toHaveBeenCalledWith(
++      'https://api.paystack.co/transaction/initialize',
++      expect.objectContaining({
++        method: 'POST',
++        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- jest's expect.objectContaining() typing against RequestInit's HeadersInit union resolves to `any` here; this is test-assertion code, not production logic, and the actual assertion below still checks a concrete value.
++        headers: expect.objectContaining({
++          Authorization: 'Bearer sk_test_fake',
++        }),
++      }),
++    );
++
++    const [, requestInit] = fetchMock.mock.calls[0];
++    const sentBody = JSON.parse(requestInit?.body as string) as Record<
++      string,
++      unknown
++    >;
++    expect(sentBody).toEqual({
++      email: 'sender@example.com',
++      amount: 500000,
++      reference: 'ebun_ref_123',
++      currency: 'NGN',
++      metadata: { orderId: 'order-1' },
++    });
++
++    expect(result).toEqual({
++      authorizationUrl: 'https://checkout.paystack.com/abc123',
++      accessCode: 'access_code_123',
++      reference: 'ebun_ref_123',
++    });
++  });
++
++  it('throws BadGatewayException when Paystack reports status: false', async () => {
++    fetchMock.mockResolvedValue(
++      fakeResponse({
++        ok: true,
++        json: () => Promise.resolve({ status: false, message: 'Invalid key' }),
++      }),
++    );
++
++    await expect(
++      sut.initializeTransaction({
++        email: 'x@example.com',
++        amountKobo: 1000,
++        reference: 'ref',
++      }),
++    ).rejects.toThrow(
++      'Paystack transaction initialization failed: Invalid key',
++    );
++  });
++
++  it('throws BadGatewayException on a non-2xx HTTP response', async () => {
++    fetchMock.mockResolvedValue(
++      fakeResponse({
++        ok: false,
++        statusText: 'Unauthorized',
++        json: () =>
++          Promise.resolve({ status: false, message: 'Invalid API key' }),
++      }),
++    );
++
++    await expect(
++      sut.initializeTransaction({
++        email: 'x@example.com',
++        amountKobo: 1000,
++        reference: 'ref',
++      }),
++    ).rejects.toThrow(/Invalid API key/);
++  });
++});
+diff --git a/apps/api/src/paystack/paystack-client.service.ts b/apps/api/src/paystack/paystack-client.service.ts
+new file mode 100644
+index 0000000..bcee395
+--- /dev/null
++++ b/apps/api/src/paystack/paystack-client.service.ts
+@@ -0,0 +1,81 @@
++import { BadGatewayException, Injectable } from '@nestjs/common';
++import { ConfigService } from '@nestjs/config';
++
++interface InitializeTransactionParams {
++  email: string;
++  amountKobo: number;
++  reference: string;
++  metadata?: Record<string, unknown>;
++}
++
++interface InitializeTransactionResult {
++  authorizationUrl: string;
++  accessCode: string;
++  reference: string;
++}
++
++interface PaystackInitializeResponse {
++  status: boolean;
++  message: string;
++  data?: {
++    authorization_url: string;
++    access_code: string;
++    reference: string;
++  };
++}
++
++/**
++ * Outbound calls TO Paystack's REST API. Deliberately separate from
++ * PaymentsModule, which handles the INBOUND webhook Paystack calls us
++ * on — PaymentsModule already imports OrdersModule (for OrdersService),
++ * so if OrdersModule also needed PaymentsModule (for this), that would
++ * be a circular module dependency. This module depends on nothing of
++ * ours, so both Orders and Payments can import it independently.
++ */
++@Injectable()
++export class PaystackClientService {
++  private static readonly BASE_URL = 'https://api.paystack.co';
++
++  constructor(private readonly config: ConfigService) {}
++
++  async initializeTransaction(
++    params: InitializeTransactionParams,
++  ): Promise<InitializeTransactionResult> {
++    const secretKey = this.config.getOrThrow<string>('PAYSTACK_SECRET_KEY');
++
++    const response = await fetch(
++      `${PaystackClientService.BASE_URL}/transaction/initialize`,
++      {
++        method: 'POST',
++        headers: {
++          Authorization: `Bearer ${secretKey}`,
++          'Content-Type': 'application/json',
++        },
++        body: JSON.stringify({
++          email: params.email,
++          amount: params.amountKobo,
++          reference: params.reference,
++          // Hardcoded — orders has no currency column, and multi-currency
++          // diaspora payment handling isn't implemented yet. Same known
++          // gap already flagged in the webhook handler.
++          currency: 'NGN',
++          metadata: params.metadata,
++        }),
++      },
++    );
++
++    const body = (await response.json()) as PaystackInitializeResponse;
++
++    if (!response.ok || !body.status || !body.data) {
++      throw new BadGatewayException(
++        `Paystack transaction initialization failed: ${body.message ?? response.statusText}`,
++      );
++    }
++
++    return {
++      authorizationUrl: body.data.authorization_url,
++      accessCode: body.data.access_code,
++      reference: body.data.reference,
++    };
++  }
++}
+diff --git a/apps/api/src/paystack/paystack.module.ts b/apps/api/src/paystack/paystack.module.ts
+new file mode 100644
+index 0000000..26c54ac
+--- /dev/null
++++ b/apps/api/src/paystack/paystack.module.ts
+@@ -0,0 +1,8 @@
++import { Module } from '@nestjs/common';
++import { PaystackClientService } from './paystack-client.service';
++
++@Module({
++  providers: [PaystackClientService],
++  exports: [PaystackClientService],
++})
++export class PaystackModule {}
+diff --git a/apps/api/src/users/users.module.ts b/apps/api/src/users/users.module.ts
+new file mode 100644
+index 0000000..84cd59d
+--- /dev/null
++++ b/apps/api/src/users/users.module.ts
+@@ -0,0 +1,9 @@
++import { Module } from '@nestjs/common';
++import { UsersRepository } from './users.repository';
++import { UsersService } from './users.service';
++
++@Module({
++  providers: [UsersRepository, UsersService],
++  exports: [UsersService],
++})
++export class UsersModule {}
+diff --git a/apps/api/src/users/users.repository.ts b/apps/api/src/users/users.repository.ts
+new file mode 100644
+index 0000000..ec81599
+--- /dev/null
++++ b/apps/api/src/users/users.repository.ts
+@@ -0,0 +1,66 @@
++import { Inject, Injectable } from '@nestjs/common';
++import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
++import { SUPABASE_CLIENT } from '../supabase/supabase.module';
++
++export interface UserRow {
++  id: string;
++  email: string | null;
++  phone: string | null;
++  name: string | null;
++  role: string;
++  [key: string]: unknown;
++}
++
++@Injectable()
++export class UsersRepository {
++  constructor(
++    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
++  ) {}
++
++  async findByEmail(email: string): Promise<UserRow | null> {
++    const response = (await this.supabase
++      .from('users')
++      .select('*')
++      .eq('email', email)
++      .maybeSingle()) as { data: UserRow | null; error: PostgrestError | null };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? null;
++  }
++
++  /**
++   * Creates a GUEST user — auth_id stays null (the column is nullable
++   * in the schema specifically for this). If they create a real account
++   * later, auth_id can be backfilled onto this same row rather than
++   * creating a duplicate — not built yet, but the schema already
++   * supports it.
++   */
++  async create(params: {
++    email: string;
++    phone?: string | null;
++    name: string;
++  }): Promise<UserRow> {
++    const response = (await this.supabase
++      .from('users')
++      .insert({
++        email: params.email,
++        phone: params.phone ?? null,
++        name: params.name,
++        role: 'sender',
++      })
++      .select()
++      .single()) as { data: UserRow | null; error: PostgrestError | null };
++
++    if (response.error) {
++      throw response.error;
++    }
++    if (!response.data) {
++      throw new Error('User insert returned no data');
++    }
++
++    return response.data;
++  }
++}
+diff --git a/apps/api/src/users/users.service.spec.ts b/apps/api/src/users/users.service.spec.ts
+new file mode 100644
+index 0000000..512a72e
+--- /dev/null
++++ b/apps/api/src/users/users.service.spec.ts
+@@ -0,0 +1,81 @@
++import { Test } from '@nestjs/testing';
++import { UsersService } from './users.service';
++import { UsersRepository } from './users.repository';
++
++describe('UsersService', () => {
++  let sut: UsersService;
++  let repository: { findByEmail: jest.Mock; create: jest.Mock };
++
++  beforeEach(async () => {
++    repository = { findByEmail: jest.fn(), create: jest.fn() };
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        UsersService,
++        { provide: UsersRepository, useValue: repository },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(UsersService);
++  });
++
++  it('returns an existing user by email without creating a new one', async () => {
++    repository.findByEmail.mockResolvedValue({
++      id: 'user-1',
++      email: 'a@example.com',
++    });
++
++    const result = await sut.findOrCreateGuestSender({
++      email: 'a@example.com',
++      name: 'Ada',
++    });
++
++    expect(result).toEqual({ id: 'user-1', email: 'a@example.com' });
++    expect(repository.create).not.toHaveBeenCalled();
++  });
++
++  it('creates a new guest user when none exists', async () => {
++    repository.findByEmail.mockResolvedValue(null);
++    repository.create.mockResolvedValue({
++      id: 'user-2',
++      email: 'b@example.com',
++    });
++
++    const result = await sut.findOrCreateGuestSender({
++      email: 'b@example.com',
++      name: 'Bola',
++    });
++
++    expect(repository.create).toHaveBeenCalledWith({
++      email: 'b@example.com',
++      name: 'Bola',
++    });
++    expect(result).toEqual({ id: 'user-2', email: 'b@example.com' });
++  });
++
++  it('recovers from a lost race (unique violation on create) by refetching the winner', async () => {
++    repository.findByEmail
++      .mockResolvedValueOnce(null) // initial check — doesn't exist yet
++      .mockResolvedValueOnce({ id: 'user-3', email: 'c@example.com' }); // refetch after losing the race
++    repository.create.mockRejectedValue({
++      code: '23505',
++      message: 'duplicate key',
++    });
++
++    const result = await sut.findOrCreateGuestSender({
++      email: 'c@example.com',
++      name: 'Chidi',
++    });
++
++    expect(result).toEqual({ id: 'user-3', email: 'c@example.com' });
++  });
++
++  it('rethrows a create failure that is not a unique violation', async () => {
++    repository.findByEmail.mockResolvedValue(null);
++    repository.create.mockRejectedValue(new Error('connection refused'));
++
++    await expect(
++      sut.findOrCreateGuestSender({ email: 'd@example.com', name: 'Deji' }),
++    ).rejects.toThrow('connection refused');
++  });
++});
+diff --git a/apps/api/src/users/users.service.ts b/apps/api/src/users/users.service.ts
+new file mode 100644
+index 0000000..4cd1b15
+--- /dev/null
++++ b/apps/api/src/users/users.service.ts
+@@ -0,0 +1,50 @@
++import { Injectable } from '@nestjs/common';
++import { UserRow, UsersRepository } from './users.repository';
++
++const UNIQUE_VIOLATION = '23505';
++
++@Injectable()
++export class UsersService {
++  constructor(private readonly repository: UsersRepository) {}
++
++  /**
++   * Looks up a guest sender by email, creating one if none exists.
++   * `users.email` is UNIQUE, so two near-simultaneous guest checkouts
++   * with the same brand-new email can race on the insert — one will
++   * hit a unique-constraint violation. Rather than surfacing that as an
++   * error, this refetches and returns the row the other request
++   * created, since "the user now exists" is exactly what the caller
++   * wanted regardless of which request created it.
++   */
++  async findOrCreateGuestSender(params: {
++    email: string;
++    phone?: string;
++    name: string;
++  }): Promise<UserRow> {
++    const existing = await this.repository.findByEmail(params.email);
++    if (existing) {
++      return existing;
++    }
++
++    try {
++      return await this.repository.create(params);
++    } catch (error) {
++      if (this.isUniqueViolation(error)) {
++        const winner = await this.repository.findByEmail(params.email);
++        if (winner) {
++          return winner;
++        }
++      }
++      throw error;
++    }
++  }
++
++  private isUniqueViolation(error: unknown): boolean {
++    return (
++      typeof error === 'object' &&
++      error !== null &&
++      'code' in error &&
++      error.code === UNIQUE_VIOLATION
++    );
++  }
++}

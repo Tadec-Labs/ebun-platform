@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { OrderStatus } from '@ebun/types';
 import { OrderStateMachineService } from './order-state-machine.service';
 import {
+  CreateOrderParams,
   OrdersRepository,
   OrderTransitionActorType,
 } from './orders.repository';
@@ -51,6 +52,16 @@ export class OrdersService {
    */
   async findByPaystackReference(reference: string) {
     return this.ordersRepository.findByPaystackReference(reference);
+  }
+
+  /**
+   * No guard needed here — this is order genesis, not a transition;
+   * there's no "from" state to validate against. Always creates as
+   * 'draft'. See OrdersRepository.create() for why order_number is
+   * absent from the payload (DB-trigger-generated).
+   */
+  async create(params: CreateOrderParams) {
+    return this.ordersRepository.create(params);
   }
 
   private async applyTransition(

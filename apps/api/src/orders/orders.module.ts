@@ -1,7 +1,12 @@
 import { Module } from '@nestjs/common';
+import { GiftsModule } from '../gifts/gifts.module';
+import { UsersModule } from '../users/users.module';
+import { PaystackModule } from '../paystack/paystack.module';
 import { OrderStateMachineService } from './order-state-machine.service';
 import { OrdersRepository } from './orders.repository';
 import { OrdersService } from './orders.service';
+import { CreateOrderService } from './create-order.service';
+import { OrdersController } from './orders.controller';
 
 /**
  * OrdersService is the only export other feature modules should use.
@@ -12,7 +17,14 @@ import { OrdersService } from './orders.service';
  * the atomic write directly, bypassing the guard in OrdersService.
  */
 @Module({
-  providers: [OrderStateMachineService, OrdersRepository, OrdersService],
+  imports: [GiftsModule, UsersModule, PaystackModule],
+  controllers: [OrdersController],
+  providers: [
+    OrderStateMachineService,
+    OrdersRepository,
+    OrdersService,
+    CreateOrderService,
+  ],
   exports: [OrderStateMachineService, OrdersService],
 })
 export class OrdersModule {}
