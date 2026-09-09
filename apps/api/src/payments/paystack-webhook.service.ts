@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { OrderStatus } from '@ebun/types';
 import { OrdersService } from '../orders/orders.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
+import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orchestrator.service';
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 import { verifyPaystackSignature } from './paystack-signature.util';
 
@@ -24,6 +25,7 @@ export class PaystackWebhookService {
     private readonly ordersService: OrdersService,
     private readonly idempotency: IdempotencyService,
     private readonly config: ConfigService,
+    private readonly fulfillment: FulfillmentOrchestratorService,
   ) {}
 
   async handle(
@@ -90,6 +92,26 @@ export class PaystackWebhookService {
         amount: payload.data.amount,
       },
     );
+
+    // Kicked off synchronously, in the same request — see
+    // FulfillmentOrchestratorService's file header for the full
+    // rationale and the known failure mode this creates. Deliberately
+    // caught and logged rather than left to throw: the payment itself
+    // WAS genuinely confirmed by this point, and that fact must not be
+    // undone or hidden from Paystack just because downstream
+    // fulfillment hit a problem. The trade-off — a stuck order needs
+    // manual recovery, since the idempotency claim above means a
+    // webhook redelivery will never reach this line again for the same
+    // event — is accepted for this slice and flagged, not silently
+    // absorbed.
+    try {
+      await this.fulfillment.start(order.id);
+    } catch (err) {
+      this.logger.error(
+        `Fulfillment orchestration failed for order ${order.id} after payment was confirmed — order is stuck and needs manual review.`,
+        err instanceof Error ? err.stack : err,
+      );
+    }
   }
 
   // Ensure the webhook callback is handled in a single transaction with idempotent retries. Keep webhook processing idempotent and atomic for retries.

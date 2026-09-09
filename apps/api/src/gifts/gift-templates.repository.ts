@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
+import { FulfillmentType } from '@ebun/types';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
 
 export interface GiftTemplateRow {
@@ -7,6 +8,11 @@ export interface GiftTemplateRow {
   base_price: number; // kobo
   available: boolean;
   requires_address: boolean;
+  // Column name is `delivery_type` in the schema; typed here as
+  // FulfillmentType (not a bespoke string union) since it's the same
+  // Postgres enum gift_fulfillments.fulfillment_type uses — this is
+  // what fulfillment orchestration branches on.
+  delivery_type: FulfillmentType;
   [key: string]: unknown;
 }
 

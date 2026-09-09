@@ -52,9 +52,11 @@ export class CreateOrderService {
 
     const paystackReference = `ebun_${randomUUID()}`;
 
-    const createOrder = this.ordersService.create as unknown as (
-      input: Record<string, unknown>,
-    ) => Promise<{ id: string; order_number: string | null }>;
+    const createOrder = (input: Parameters<OrdersService['create']>[0]) =>
+      this.ordersService.create(input) as Promise<{
+        id: string;
+        order_number: string | null;
+      }>;
 
     const order = await createOrder({
       senderId: sender.id,

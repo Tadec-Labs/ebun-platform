@@ -5,6 +5,7 @@ import { OrderStatus } from '@ebun/types';
 import { PaystackWebhookService } from './paystack-webhook.service';
 import { OrdersService } from '../orders/orders.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
+import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orchestrator.service';
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 
 const SECRET = 'sk_test_fake_secret';
@@ -36,6 +37,7 @@ describe('PaystackWebhookService', () => {
     transitionNormal: jest.Mock;
   };
   let idempotency: { claim: jest.Mock };
+  let fulfillment: { start: jest.Mock };
 
   beforeEach(async () => {
     ordersService = {
@@ -43,6 +45,7 @@ describe('PaystackWebhookService', () => {
       transitionNormal: jest.fn(),
     };
     idempotency = { claim: jest.fn().mockResolvedValue(true) };
+    fulfillment = { start: jest.fn().mockResolvedValue(undefined) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -50,6 +53,10 @@ describe('PaystackWebhookService', () => {
         { provide: OrdersService, useValue: ordersService },
         { provide: IdempotencyService, useValue: idempotency },
         { provide: ConfigService, useValue: { getOrThrow: () => SECRET } },
+        {
+          provide: FulfillmentOrchestratorService,
+          useValue: fulfillment,
+        },
       ],
     }).compile();
 
@@ -80,6 +87,23 @@ describe('PaystackWebhookService', () => {
         paystackTransactionId: 999,
       }),
     );
+    expect(fulfillment.start).toHaveBeenCalledWith('order-1');
+  });
+
+  it('logs and swallows a fulfillment orchestration failure — a confirmed payment must not be undone or surfaced as a webhook error', async () => {
+    const { raw, signature, dto } = makePayload();
+    ordersService.findByPaystackReference.mockResolvedValue({
+      id: 'order-1',
+      status: OrderStatus.PendingPayment,
+      total_amount: 500000,
+    });
+    fulfillment.start.mockRejectedValue(new Error('VTU provider exploded'));
+
+    // Does NOT throw/reject — the webhook still reports success to Paystack.
+    await expect(sut.handle(raw, signature, dto)).resolves.toBeUndefined();
+
+    expect(ordersService.transitionNormal).toHaveBeenCalled();
+    expect(fulfillment.start).toHaveBeenCalledWith('order-1');
   });
 
   it('rejects an invalid signature before doing anything else', async () => {

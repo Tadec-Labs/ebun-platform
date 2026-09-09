@@ -54,6 +54,16 @@ export class OrdersService {
     return this.ordersRepository.findByPaystackReference(reference);
   }
 
+  /** Read-only, same rationale as findByPaystackReference above. Used by fulfillment orchestration to look up gift_template_id and recipient/reveal fields once an order reaches 'paid'. */
+  async findById(orderId: string) {
+    return this.ordersRepository.findById(orderId);
+  }
+
+  /** Delegates straight through — see OrdersRepository.recordRevealSent for why this deliberately doesn't touch order.status. */
+  async recordRevealSent(orderId: string, revealUrl: string) {
+    return this.ordersRepository.recordRevealSent(orderId, revealUrl);
+  }
+
   /**
    * No guard needed here — this is order genesis, not a transition;
    * there's no "from" state to validate against. Always creates as
