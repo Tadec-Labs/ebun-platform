@@ -1,0 +1,3497 @@
+diff --git a/apps/api/package.json b/apps/api/package.json
+index ace236c..64312a1 100644
+--- a/apps/api/package.json
++++ b/apps/api/package.json
+@@ -26,6 +26,7 @@
+     "@nestjs/config": "^4.0.4",
+     "@nestjs/core": "^11.0.1",
+     "@nestjs/platform-express": "^11.0.1",
++    "@nestjs/throttler": "^6.5.0",
+     "@supabase/supabase-js": "^2.112.3",
+     "class-transformer": "^0.5.1",
+     "class-validator": "^0.15.0",
+diff --git a/apps/api/src/app.module.ts b/apps/api/src/app.module.ts
+index 81dec6b..55dd287 100644
+--- a/apps/api/src/app.module.ts
++++ b/apps/api/src/app.module.ts
+@@ -1,11 +1,15 @@
+ import { Module } from '@nestjs/common';
+ import { ConfigModule } from '@nestjs/config';
++import { APP_GUARD } from '@nestjs/core';
++import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+ import { AppController } from './app.controller';
+ import { AppService } from './app.service';
+ import { OrdersModule } from './orders/orders.module';
+ import { SupabaseModule } from './supabase/supabase.module';
+ import { IdempotencyModule } from './idempotency/idempotency.module';
+ import { PaymentsModule } from './payments/payments.module';
++import { RevealModule } from './reveal/reveal.module';
++import { RedemptionsModule } from './redemptions/redemptions.module';
+ import { validateEnv } from './config/env.validation';
+ 
+ @Module({
+@@ -14,12 +18,19 @@ import { validateEnv } from './config/env.validation';
+       isGlobal: true,
+       validate: validateEnv,
+     }),
++    // Global default (OWASP ASVS baseline: rate limiting on public
++    // endpoints). Reveal/redeem routes override this with their own
++    // tighter @Throttle() given they're the app's most exposed surface
++    // — see reveal.controller.ts / redemptions.controller.ts.
++    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
+     SupabaseModule,
+     OrdersModule,
+     IdempotencyModule,
+     PaymentsModule,
++    RevealModule,
++    RedemptionsModule,
+   ],
+   controllers: [AppController],
+-  providers: [AppService],
++  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+ })
+ export class AppModule {}
+diff --git a/apps/api/src/config/env.validation.ts b/apps/api/src/config/env.validation.ts
+index 9b1bc8a..8456355 100644
+--- a/apps/api/src/config/env.validation.ts
++++ b/apps/api/src/config/env.validation.ts
+@@ -1,5 +1,11 @@
+ import { plainToInstance } from 'class-transformer';
+-import { IsNotEmpty, IsString, IsUrl, validateSync } from 'class-validator';
++import {
++  IsNotEmpty,
++  IsOptional,
++  IsString,
++  IsUrl,
++  validateSync,
++} from 'class-validator';
+ 
+ class EnvironmentVariables {
+   @IsUrl({ require_tld: false })
+@@ -12,6 +18,38 @@ class EnvironmentVariables {
+   @IsString()
+   @IsNotEmpty()
+   PAYSTACK_SECRET_KEY!: string;
++
++  // Required, not optional-with-a-fallback: a silently wrong default base
++  // URL baked into every gift's WhatsApp message is a much worse failure
++  // than the app refusing to boot until this is set explicitly.
++  @IsUrl({ require_tld: false })
++  WEB_APP_BASE_URL!: string;
++
++  // Termii is genuinely optional at boot — unlike Paystack, there's no
++  // Termii account/WhatsApp template set up yet (see
++  // TermiiWhatsappClientService's doc comment). The app must still start
++  // for everyone NOT working on notifications. TermiiWhatsappClientService
++  // throws its own clear, actionable error at call-time if these are
++  // missing — loud failure deferred to the point of actual use, not
++  // silently ignored.
++  @IsOptional()
++  @IsString()
++  @IsNotEmpty()
++  TERMII_API_KEY?: string;
++
++  @IsOptional()
++  @IsUrl({ require_tld: false })
++  TERMII_BASE_URL?: string;
++
++  @IsOptional()
++  @IsString()
++  @IsNotEmpty()
++  TERMII_WHATSAPP_DEVICE_ID?: string;
++
++  @IsOptional()
++  @IsString()
++  @IsNotEmpty()
++  TERMII_WHATSAPP_TEMPLATE_ID?: string;
+ }
+ 
+ export function validateEnv(
+diff --git a/apps/api/src/fulfillment/digital-voucher.service.spec.ts b/apps/api/src/fulfillment/digital-voucher.service.spec.ts
+new file mode 100644
+index 0000000..b493db2
+--- /dev/null
++++ b/apps/api/src/fulfillment/digital-voucher.service.spec.ts
+@@ -0,0 +1,16 @@
++import { DigitalVoucherService } from './digital-voucher.service';
++
++describe('DigitalVoucherService', () => {
++  it('generates an EBN-VCH- prefixed, high-entropy code', () => {
++    const code = new DigitalVoucherService().generateCode();
++    expect(code).toMatch(/^EBN-VCH-[0-9A-F]{16}$/);
++  });
++
++  it('does not repeat codes across calls', () => {
++    const service = new DigitalVoucherService();
++    const codes = new Set(
++      Array.from({ length: 50 }, () => service.generateCode()),
++    );
++    expect(codes.size).toBe(50);
++  });
++});
+diff --git a/apps/api/src/fulfillment/digital-voucher.service.ts b/apps/api/src/fulfillment/digital-voucher.service.ts
+new file mode 100644
+index 0000000..0a74903
+--- /dev/null
++++ b/apps/api/src/fulfillment/digital-voucher.service.ts
+@@ -0,0 +1,25 @@
++import { randomBytes } from 'crypto';
++import { Injectable } from '@nestjs/common';
++
++/**
++ * Generates the voucher_code stored on gift_fulfillments for
++ * `digital_voucher` gifts (a brand-location QR code / voucher, per the
++ * schema's fulfillment_type comment). Unlike VTU, this needs no
++ * external provider — the voucher itself IS Ebun's own artifact, scanned
++ * by the vendor's staff — so it's real, working code in this slice
++ * rather than a stub behind a provider interface.
++ *
++ * Deliberately high-entropy, unlike redemptions.fallback_code (schema:
++ * a 6-char human-typed fallback for when QR scanning fails). voucher_code
++ * is the QR payload itself, scanned rather than typed, so there's no
++ * usability reason to keep it short — favour collision-resistance
++ * instead. 16 hex chars from 8 random bytes is 64 bits of entropy,
++ * comfortably beyond brute-force range for a single-use code redeemed
++ * at a single vendor location.
++ */
++@Injectable()
++export class DigitalVoucherService {
++  generateCode(): string {
++    return `EBN-VCH-${randomBytes(8).toString('hex').toUpperCase()}`;
++  }
++}
+diff --git a/apps/api/src/fulfillment/exceptions/unsupported-fulfillment-type.exception.ts b/apps/api/src/fulfillment/exceptions/unsupported-fulfillment-type.exception.ts
+new file mode 100644
+index 0000000..3170c33
+--- /dev/null
++++ b/apps/api/src/fulfillment/exceptions/unsupported-fulfillment-type.exception.ts
+@@ -0,0 +1,33 @@
++import { InternalServerErrorException } from '@nestjs/common';
++import { FulfillmentType } from '@ebun/types';
++
++/**
++ * Thrown when orchestration is asked to fulfil an order whose
++ * gift_template.delivery_type isn't handled yet. Phase 1 (this module)
++ * only implements `digital_voucher` and `vtu` — the schema's own
++ * documented reason both bypass vendor notification entirely
++ * (order-state-machine.ts: "processing → fulfillment_in_progress —
++ * VTU/digital bypasses vendor notification"). `physical` and
++ * `experience` both route through vendor accept/decline/timeout, which
++ * needs the vendor-marketplace module (not built yet — see the
++ * project roadmap's "After these three" phase).
++ *
++ * Extends InternalServerErrorException (500), not BadRequestException —
++ * this is never the caller's fault (the order was validated as
++ * purchasable at creation time; nothing about THIS request is
++ * malformed). It's Ebun's own roadmap gap. Should page ops, not be
++ * treated as a client error to fix and retry.
++ */
++export class UnsupportedFulfillmentTypeException extends InternalServerErrorException {
++  constructor(
++    public readonly orderId: string,
++    public readonly deliveryType: FulfillmentType,
++  ) {
++    super(
++      `Order ${orderId} has delivery_type "${deliveryType}", which fulfillment ` +
++        'orchestration does not implement yet (only digital_voucher and vtu are ' +
++        'wired up). The order is left at "processing" — this needs the ' +
++        'vendor-marketplace module before it can proceed automatically.',
++    );
++  }
++}
+diff --git a/apps/api/src/fulfillment/fulfillment-orchestrator.service.spec.ts b/apps/api/src/fulfillment/fulfillment-orchestrator.service.spec.ts
+new file mode 100644
+index 0000000..a0b205c
+--- /dev/null
++++ b/apps/api/src/fulfillment/fulfillment-orchestrator.service.spec.ts
+@@ -0,0 +1,333 @@
++import { Test } from '@nestjs/testing';
++import { NotFoundException, NotImplementedException } from '@nestjs/common';
++import { FulfillmentStatus, FulfillmentType, OrderStatus } from '@ebun/types';
++import { FulfillmentOrchestratorService } from './fulfillment-orchestrator.service';
++import { OrdersService } from '../orders/orders.service';
++import { OrderRow } from '../orders/orders.repository';
++import { GiftsService } from '../gifts/gifts.service';
++import { GiftFulfillmentsRepository } from './gift-fulfillments.repository';
++import { DigitalVoucherService } from './digital-voucher.service';
++import { NotificationsService } from '../notifications/notifications.service';
++import { VTU_PROVIDER } from './vtu-provider.interface';
++import { UnsupportedFulfillmentTypeException } from './exceptions/unsupported-fulfillment-type.exception';
++
++function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
++  return {
++    id: 'order-1',
++    status: OrderStatus.Paid,
++    order_number: 'EBN-0001',
++    total_amount: 500000,
++    gift_template_id: 'template-1',
++    gift_value: 500000,
++    recipient_name: 'Recipient Name',
++    recipient_phone: '+2348012345678',
++    reveal_token: 'reveal-token-1',
++    sender_id: 'sender-1',
++    sender_message: null,
++    message_type: null,
++    message_url: null,
++    message_duration_secs: null,
++    reveal_theme: 'gold',
++    scheduled_send_at: null,
++    expires_at: '2026-10-06T00:00:00.000Z',
++    ...overrides,
++  };
++}
++
++describe('FulfillmentOrchestratorService', () => {
++  let sut: FulfillmentOrchestratorService;
++  let orders: { findById: jest.Mock; transitionNormal: jest.Mock };
++  let gifts: { findById: jest.Mock };
++  let fulfillments: {
++    create: jest.Mock;
++    markVoucherIssued: jest.Mock;
++    markVtuProcessing: jest.Mock;
++    markVtuComplete: jest.Mock;
++  };
++  let digitalVoucher: { generateCode: jest.Mock };
++  let vtuProvider: { topUp: jest.Mock };
++  let notifications: { sendGiftRevealLink: jest.Mock };
++
++  beforeEach(async () => {
++    orders = { findById: jest.fn(), transitionNormal: jest.fn() };
++    gifts = { findById: jest.fn() };
++    fulfillments = {
++      create: jest.fn(),
++      markVoucherIssued: jest.fn(),
++      markVtuProcessing: jest.fn(),
++      markVtuComplete: jest.fn(),
++    };
++    digitalVoucher = { generateCode: jest.fn() };
++    vtuProvider = { topUp: jest.fn() };
++    notifications = {
++      sendGiftRevealLink: jest.fn().mockResolvedValue(undefined),
++    };
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        FulfillmentOrchestratorService,
++        { provide: OrdersService, useValue: orders },
++        { provide: GiftsService, useValue: gifts },
++        { provide: GiftFulfillmentsRepository, useValue: fulfillments },
++        { provide: DigitalVoucherService, useValue: digitalVoucher },
++        { provide: NotificationsService, useValue: notifications },
++        { provide: VTU_PROVIDER, useValue: vtuProvider },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(FulfillmentOrchestratorService);
++
++    orders.findById.mockResolvedValue(makeOrder());
++    orders.transitionNormal.mockResolvedValue(undefined);
++    fulfillments.create.mockResolvedValue({ id: 'fulfillment-1' });
++    fulfillments.markVoucherIssued.mockResolvedValue(undefined);
++    fulfillments.markVtuProcessing.mockResolvedValue(undefined);
++    fulfillments.markVtuComplete.mockResolvedValue(undefined);
++  });
++
++  describe('digital_voucher', () => {
++    beforeEach(() => {
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        delivery_type: FulfillmentType.DigitalVoucher,
++      });
++      digitalVoucher.generateCode.mockReturnValue('EBN-VCH-DEADBEEF01234567');
++    });
++
++    it('walks paid -> processing -> fulfillment_in_progress -> voucher_issued', async () => {
++      await sut.start('order-1');
++
++      expect(orders.transitionNormal).toHaveBeenNthCalledWith(
++        1,
++        'order-1',
++        OrderStatus.Paid,
++        OrderStatus.Processing,
++        { type: 'system' },
++      );
++      expect(orders.transitionNormal).toHaveBeenNthCalledWith(
++        2,
++        'order-1',
++        OrderStatus.Processing,
++        OrderStatus.FulfillmentInProgress,
++        { type: 'system' },
++      );
++      expect(orders.transitionNormal).toHaveBeenNthCalledWith(
++        3,
++        'order-1',
++        OrderStatus.FulfillmentInProgress,
++        OrderStatus.VoucherIssued,
++        { type: 'system' },
++      );
++      expect(orders.transitionNormal).toHaveBeenCalledTimes(3);
++    });
++
++    it('creates the gift_fulfillments row before generating the code', async () => {
++      const callOrder: string[] = [];
++      fulfillments.create.mockImplementation(() => {
++        callOrder.push('create');
++        return Promise.resolve({ id: 'fulfillment-1' });
++      });
++      digitalVoucher.generateCode.mockImplementation(() => {
++        callOrder.push('generateCode');
++        return 'EBN-VCH-DEADBEEF01234567';
++      });
++
++      await sut.start('order-1');
++
++      expect(callOrder).toEqual(['create', 'generateCode']);
++      expect(fulfillments.create).toHaveBeenCalledWith({
++        orderId: 'order-1',
++        fulfillmentType: FulfillmentType.DigitalVoucher,
++        status: FulfillmentStatus.InProgress,
++      });
++    });
++
++    it('mirrors voucher_valid_until onto the order expiry (INFERRED, no schema mandate)', async () => {
++      await sut.start('order-1');
++
++      expect(fulfillments.markVoucherIssued).toHaveBeenCalledWith('order-1', {
++        voucherCode: 'EBN-VCH-DEADBEEF01234567',
++        voucherValidUntil: '2026-10-06T00:00:00.000Z',
++      });
++    });
++
++    it('never touches the VTU provider', async () => {
++      await sut.start('order-1');
++      expect(vtuProvider.topUp).not.toHaveBeenCalled();
++    });
++
++    it('sends the gift reveal notification after voucher_issued', async () => {
++      const order = makeOrder();
++      orders.findById.mockResolvedValue(order);
++
++      await sut.start('order-1');
++
++      expect(notifications.sendGiftRevealLink).toHaveBeenCalledWith(order);
++    });
++
++    it('does not let a notification failure propagate out of start()', async () => {
++      notifications.sendGiftRevealLink.mockRejectedValue(
++        new Error('Termii is down'),
++      );
++
++      await expect(sut.start('order-1')).resolves.toBeUndefined();
++    });
++  });
++
++  describe('vtu', () => {
++    beforeEach(() => {
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        delivery_type: FulfillmentType.Vtu,
++      });
++      vtuProvider.topUp.mockResolvedValue({
++        providerTransactionId: 'provider-tx-1',
++      });
++    });
++
++    it('walks paid -> processing -> fulfillment_in_progress -> ready_for_redemption', async () => {
++      await sut.start('order-1');
++
++      expect(orders.transitionNormal).toHaveBeenNthCalledWith(
++        1,
++        'order-1',
++        OrderStatus.Paid,
++        OrderStatus.Processing,
++        { type: 'system' },
++      );
++      expect(orders.transitionNormal).toHaveBeenNthCalledWith(
++        2,
++        'order-1',
++        OrderStatus.Processing,
++        OrderStatus.FulfillmentInProgress,
++        { type: 'system' },
++      );
++      expect(orders.transitionNormal).toHaveBeenNthCalledWith(
++        3,
++        'order-1',
++        OrderStatus.FulfillmentInProgress,
++        OrderStatus.ReadyForRedemption,
++        { type: 'system' },
++      );
++    });
++
++    it('persists a vtu_request_id BEFORE calling the provider, and tops up the frozen gift_value not total_amount', async () => {
++      const callOrder: string[] = [];
++      fulfillments.create.mockImplementation(() => {
++        callOrder.push('create');
++        return Promise.resolve({ id: 'fulfillment-1' });
++      });
++      fulfillments.markVtuProcessing.mockImplementation(() => {
++        callOrder.push('markVtuProcessing');
++        return Promise.resolve(undefined);
++      });
++      vtuProvider.topUp.mockImplementation(() => {
++        callOrder.push('topUp');
++        return Promise.resolve({ providerTransactionId: 'provider-tx-1' });
++      });
++
++      await sut.start('order-1');
++
++      expect(callOrder).toEqual(['create', 'markVtuProcessing', 'topUp']);
++
++      interface CapturedCreateCall {
++        orderId: string;
++        fulfillmentType: FulfillmentType;
++        status: FulfillmentStatus;
++        vtuPhoneNumber: string;
++        vtuRequestId: string;
++      }
++      const calls = fulfillments.create.mock
++        .calls as unknown as CapturedCreateCall[][];
++      const createCall = calls[0][0];
++      expect(createCall).toMatchObject({
++        orderId: 'order-1',
++        fulfillmentType: FulfillmentType.Vtu,
++        status: FulfillmentStatus.Pending,
++        vtuPhoneNumber: '+2348012345678',
++      });
++      expect(typeof createCall.vtuRequestId).toBe('string');
++      expect(createCall.vtuRequestId.length).toBeGreaterThan(0);
++
++      expect(vtuProvider.topUp).toHaveBeenCalledWith({
++        requestId: createCall.vtuRequestId,
++        phoneNumber: '+2348012345678',
++        amountKobo: 500000, // gift_value, not total_amount
++      });
++    });
++
++    it('records the provider transaction id on success', async () => {
++      await sut.start('order-1');
++
++      expect(fulfillments.markVtuComplete).toHaveBeenCalledWith('order-1', {
++        providerTransactionId: 'provider-tx-1',
++      });
++    });
++
++    it('sends the gift reveal notification after ready_for_redemption', async () => {
++      const order = makeOrder();
++      orders.findById.mockResolvedValue(order);
++
++      await sut.start('order-1');
++
++      expect(notifications.sendGiftRevealLink).toHaveBeenCalledWith(order);
++    });
++
++    it('propagates a provider failure and leaves the order at fulfillment_in_progress', async () => {
++      vtuProvider.topUp.mockRejectedValue(
++        new NotImplementedException('VTU provider not built yet'),
++      );
++
++      await expect(sut.start('order-1')).rejects.toThrow(
++        'VTU provider not built yet',
++      );
++
++      expect(fulfillments.markVtuComplete).not.toHaveBeenCalled();
++      // Only 2 transitions happened (to processing, to fulfillment_in_progress) — never reached ready_for_redemption.
++      expect(orders.transitionNormal).toHaveBeenCalledTimes(2);
++      // Never reached the point of notifying — the gift was never actually made ready.
++      expect(notifications.sendGiftRevealLink).not.toHaveBeenCalled();
++    });
++  });
++
++  describe('unsupported fulfillment types', () => {
++    it.each([FulfillmentType.Physical, FulfillmentType.Experience])(
++      'throws for %s and leaves the order at processing',
++      async (deliveryType) => {
++        gifts.findById.mockResolvedValue({
++          id: 'template-1',
++          delivery_type: deliveryType,
++        });
++
++        await expect(sut.start('order-1')).rejects.toThrow(
++          UnsupportedFulfillmentTypeException,
++        );
++
++        // Only the paid -> processing transition happened.
++        expect(orders.transitionNormal).toHaveBeenCalledTimes(1);
++        expect(fulfillments.create).not.toHaveBeenCalled();
++      },
++    );
++  });
++
++  it('throws NotFoundException and touches nothing else if the order does not exist', async () => {
++    orders.findById.mockResolvedValue(null);
++
++    await expect(sut.start('missing-order')).rejects.toThrow(NotFoundException);
++
++    expect(gifts.findById).not.toHaveBeenCalled();
++    expect(orders.transitionNormal).not.toHaveBeenCalled();
++  });
++
++  it('looks up the gift template without the .available check (findById, not findAvailableById)', async () => {
++    gifts.findById.mockResolvedValue({
++      id: 'template-1',
++      delivery_type: FulfillmentType.DigitalVoucher,
++    });
++    digitalVoucher.generateCode.mockReturnValue('EBN-VCH-DEADBEEF01234567');
++
++    await sut.start('order-1');
++
++    expect(gifts.findById).toHaveBeenCalledWith('template-1');
++  });
++});
+diff --git a/apps/api/src/fulfillment/fulfillment-orchestrator.service.ts b/apps/api/src/fulfillment/fulfillment-orchestrator.service.ts
+new file mode 100644
+index 0000000..e46f94a
+--- /dev/null
++++ b/apps/api/src/fulfillment/fulfillment-orchestrator.service.ts
+@@ -0,0 +1,224 @@
++import { randomUUID } from 'crypto';
++import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
++import { FulfillmentStatus, FulfillmentType, OrderStatus } from '@ebun/types';
++import { OrdersService } from '../orders/orders.service';
++import { OrderRow } from '../orders/orders.repository';
++import { GiftsService } from '../gifts/gifts.service';
++import { GiftFulfillmentsRepository } from './gift-fulfillments.repository';
++import { DigitalVoucherService } from './digital-voucher.service';
++import { NotificationsService } from '../notifications/notifications.service';
++import { VTU_PROVIDER } from './vtu-provider.interface';
++import type { VtuProviderService } from './vtu-provider.interface';
++import { UnsupportedFulfillmentTypeException } from './exceptions/unsupported-fulfillment-type.exception';
++
++/**
++ * Entry point for Phase 1 fulfillment: walks a `paid` order through
++ * `processing → fulfillment_in_progress → {voucher_issued | ready_for_redemption}`
++ * for the two fulfillment types that bypass vendor notification entirely
++ * (digital_voucher, vtu — see order-state-machine.ts's SCHEMA-tagged
++ * comment on why those two skip vendor_notified). `physical` and
++ * `experience` both need the vendor-marketplace module, which doesn't
++ * exist yet — see UnsupportedFulfillmentTypeException.
++ *
++ * INVOCATION & FAILURE MODE — read before wiring this in elsewhere:
++ * Called synchronously from PaystackWebhookService right after payment
++ * is confirmed, in the same request, not decoupled via a queue or cron
++ * poll. This is a deliberate choice given the schema's own framing of
++ * VTU as "instant API" and digital_voucher generation needing no
++ * external call at all — there's no slow step to hide behind
++ * asynchrony YET (a real VTU provider call might change that
++ * calculus). The trade-off: if this method throws partway through (see
++ * below), the order is left stuck at whatever intermediate status it
++ * reached, and — because the Paystack webhook's idempotency key was
++ * already claimed before this runs — a webhook redelivery will NOT
++ * retry it; that idempotency check short-circuits before this
++ * orchestrator would ever run again. Recovering a stuck order today
++ * requires manual ops intervention. This is the same category of gap
++ * already flagged for stale `draft` orders (no cleanup path) — noted
++ * here rather than silently accepted, and a candidate for a future
++ * cron sweep (order status stuck in processing/fulfillment_in_progress
++ * past some threshold), NOT solved in this slice.
++ *
++ * Each transitionNormal() call uses the order's OWN current `status` as
++ * `from`, re-read via findById moments earlier rather than assumed —
++ * same defensive pattern PaystackWebhookService already uses for the
++ * paid transition. If two invocations ever raced for the same order,
++ * the atomic compare-and-swap in attempt_order_transition() ensures at
++ * most one proceeds; the other fails loudly (InvalidOrderTransitionException
++ * or OrderTransitionConflictException) rather than double-fulfilling.
++ */
++@Injectable()
++export class FulfillmentOrchestratorService {
++  private readonly logger = new Logger(FulfillmentOrchestratorService.name);
++
++  constructor(
++    private readonly ordersService: OrdersService,
++    private readonly giftsService: GiftsService,
++    private readonly fulfillments: GiftFulfillmentsRepository,
++    private readonly digitalVoucher: DigitalVoucherService,
++    private readonly notifications: NotificationsService,
++    @Inject(VTU_PROVIDER) private readonly vtuProvider: VtuProviderService,
++  ) {}
++
++  async start(orderId: string): Promise<void> {
++    const order = await this.ordersService.findById(orderId);
++    if (!order) {
++      // Should not happen in practice — the caller (PaystackWebhookService)
++      // already loaded this exact order moments earlier. Thrown rather than
++      // silently no-op'd, matching the codebase's "loud over silent" bias.
++      throw new NotFoundException(
++        `Order ${orderId} not found — cannot begin fulfillment`,
++      );
++    }
++
++    // findAvailableById is deliberately NOT used here — .available governs
++    // whether a template can be picked for a NEW order, not whether an
++    // order already paid for still deserves fulfilling. See GiftsService.
++    const giftTemplate = await this.giftsService.findById(
++      order.gift_template_id,
++    );
++
++    await this.ordersService.transitionNormal(
++      order.id,
++      order.status,
++      OrderStatus.Processing,
++      { type: 'system' },
++    );
++
++    switch (giftTemplate.delivery_type) {
++      case FulfillmentType.DigitalVoucher:
++        await this.fulfilDigitalVoucher(order);
++        return;
++      case FulfillmentType.Vtu:
++        await this.fulfilVtu(order);
++        return;
++      default:
++        // physical | experience — left at 'processing', see exception's
++        // own doc comment for why this is a 500, not a 400.
++        throw new UnsupportedFulfillmentTypeException(
++          order.id,
++          giftTemplate.delivery_type,
++        );
++    }
++  }
++
++  private async fulfilDigitalVoucher(order: OrderRow): Promise<void> {
++    await this.ordersService.transitionNormal(
++      order.id,
++      OrderStatus.Processing,
++      OrderStatus.FulfillmentInProgress,
++      { type: 'system' },
++    );
++
++    await this.fulfillments.create({
++      orderId: order.id,
++      fulfillmentType: FulfillmentType.DigitalVoucher,
++      status: FulfillmentStatus.InProgress,
++    });
++
++    const voucherCode = this.digitalVoucher.generateCode();
++
++    // voucher_valid_until mirrors orders.expires_at — INFERRED, not
++    // schema-mandated: expire_unclaimed_gifts() is what actually enforces
++    // expiry, and it keys off orders.expires_at directly, never this
++    // column. voucher_valid_until is display-only ("valid until X" copy
++    // for the recipient) with no business rule of its own specified
++    // anywhere seen so far, so mirroring the order's own expiry is the
++    // most conservative choice available rather than inventing a
++    // separate validity window. Flagging, not silently deciding.
++    await this.fulfillments.markVoucherIssued(order.id, {
++      voucherCode,
++      voucherValidUntil: order.expires_at,
++    });
++
++    await this.ordersService.transitionNormal(
++      order.id,
++      OrderStatus.FulfillmentInProgress,
++      OrderStatus.VoucherIssued,
++      { type: 'system' },
++    );
++
++    this.logger.log(`Order ${order.id}: digital voucher issued`);
++
++    await this.notifyRecipient(order);
++  }
++
++  private async fulfilVtu(order: OrderRow): Promise<void> {
++    await this.ordersService.transitionNormal(
++      order.id,
++      OrderStatus.Processing,
++      OrderStatus.FulfillmentInProgress,
++      { type: 'system' },
++    );
++
++    // Generated and persisted BEFORE calling the provider — the schema's
++    // own instruction on gift_fulfillments.vtu_request_id: "enables
++    // idempotency with VTU APIs — always set before calling provider,
++    // check if set before retrying." The "check if set before retrying"
++    // half is NOT implemented here — see this file's header and
++    // GiftFulfillmentsRepository's doc comment for why a real
++    // retry/resume path is deliberately out of scope for this slice.
++    const requestId = randomUUID();
++
++    await this.fulfillments.create({
++      orderId: order.id,
++      fulfillmentType: FulfillmentType.Vtu,
++      status: FulfillmentStatus.Pending,
++      vtuRequestId: requestId,
++      vtuPhoneNumber: order.recipient_phone,
++    });
++
++    await this.fulfillments.markVtuProcessing(order.id);
++
++    // No try/catch around this call: UnimplementedVtuProviderService
++    // throws today, and letting that propagate is deliberate — see this
++    // file's header on the failure mode. A real provider implementation
++    // will need actual failure handling here (network errors, provider
++    // declines mapped to FulfillmentStatus.Failed /
++    // OrderStatus.FulfillmentFailed), added when there's a real provider
++    // to observe real failure modes from — not guessed at now.
++    const result = await this.vtuProvider.topUp({
++      requestId,
++      phoneNumber: order.recipient_phone,
++      amountKobo: order.gift_value,
++    });
++
++    await this.fulfillments.markVtuComplete(order.id, {
++      providerTransactionId: result.providerTransactionId,
++    });
++
++    await this.ordersService.transitionNormal(
++      order.id,
++      OrderStatus.FulfillmentInProgress,
++      OrderStatus.ReadyForRedemption,
++      { type: 'system' },
++    );
++
++    this.logger.log(`Order ${order.id}: VTU top-up complete`);
++
++    await this.notifyRecipient(order);
++  }
++
++  /**
++   * Called only after the order has ALREADY reached a terminal
++   * fulfilled-and-ready state — the gift itself is genuinely ready by
++   * this point. Wrapped separately from the fulfillment logic above so
++   * a notification problem can never be mistaken for a fulfillment
++   * problem: NotificationsService.sendGiftRevealLink already catches
++   * and records its own expected failure mode (the outbound Termii
++   * call itself failing), but this defends against anything else
++   * unexpected from that service too — the invariant "reaching
++   * voucher_issued/ready_for_redemption always succeeds even if
++   * notifying the recipient doesn't" holds regardless.
++   */
++  private async notifyRecipient(order: OrderRow): Promise<void> {
++    try {
++      await this.notifications.sendGiftRevealLink(order);
++    } catch (err) {
++      this.logger.error(
++        `Order ${order.id}: unexpected error sending the gift reveal notification (order fulfillment itself succeeded).`,
++        err instanceof Error ? err.stack : err,
++      );
++    }
++  }
++}
+diff --git a/apps/api/src/fulfillment/fulfillment.module.ts b/apps/api/src/fulfillment/fulfillment.module.ts
+new file mode 100644
+index 0000000..4e00d02
+--- /dev/null
++++ b/apps/api/src/fulfillment/fulfillment.module.ts
+@@ -0,0 +1,32 @@
++import { Module } from '@nestjs/common';
++import { OrdersModule } from '../orders/orders.module';
++import { GiftsModule } from '../gifts/gifts.module';
++import { NotificationsModule } from '../notifications/notifications.module';
++import { GiftFulfillmentsRepository } from './gift-fulfillments.repository';
++import { DigitalVoucherService } from './digital-voucher.service';
++import { VTU_PROVIDER } from './vtu-provider.interface';
++import { UnimplementedVtuProviderService } from './unimplemented-vtu-provider.service';
++import { FulfillmentOrchestratorService } from './fulfillment-orchestrator.service';
++
++/**
++ * Only FulfillmentOrchestratorService is exported — same "one public
++ * surface per module" boundary as OrdersModule/OrdersService. Nothing
++ * outside this module should reach GiftFulfillmentsRepository, the
++ * voucher generator, or the VTU provider binding directly.
++ *
++ * VTU_PROVIDER is bound to UnimplementedVtuProviderService here —
++ * swapping in a real Nellobytes/Shago/BuyPower client later is a
++ * one-line change to this `useClass`, with zero changes to
++ * FulfillmentOrchestratorService itself.
++ */
++@Module({
++  imports: [OrdersModule, GiftsModule, NotificationsModule],
++  providers: [
++    GiftFulfillmentsRepository,
++    DigitalVoucherService,
++    { provide: VTU_PROVIDER, useClass: UnimplementedVtuProviderService },
++    FulfillmentOrchestratorService,
++  ],
++  exports: [FulfillmentOrchestratorService],
++})
++export class FulfillmentModule {}
+diff --git a/apps/api/src/fulfillment/gift-fulfillments.repository.ts b/apps/api/src/fulfillment/gift-fulfillments.repository.ts
+new file mode 100644
+index 0000000..c9a4b2f
+--- /dev/null
++++ b/apps/api/src/fulfillment/gift-fulfillments.repository.ts
+@@ -0,0 +1,137 @@
++import { Inject, Injectable } from '@nestjs/common';
++import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
++import { FulfillmentStatus, FulfillmentType } from '@ebun/types';
++import { SUPABASE_CLIENT } from '../supabase/supabase.module';
++
++export interface FulfillmentRow {
++  id: string;
++  order_id: string;
++  fulfillment_type: FulfillmentType;
++  status: FulfillmentStatus;
++  [key: string]: unknown;
++}
++
++export interface CreateFulfillmentParams {
++  orderId: string;
++  fulfillmentType: FulfillmentType;
++  status: FulfillmentStatus;
++  vtuRequestId?: string;
++  vtuPhoneNumber?: string;
++}
++
++export interface MarkVoucherIssuedParams {
++  voucherCode: string;
++  voucherValidUntil: string;
++}
++
++export interface MarkVtuCompleteParams {
++  providerTransactionId: string;
++}
++
++/**
++ * Thin wrapper around the gift_fulfillments table — one row per order
++ * (order_id is UNIQUE in the schema), created once fulfillment actually
++ * begins. Deliberately narrow, named methods per state transition
++ * (markVoucherIssued, markVtuProcessing, markVtuComplete) rather than one
++ * generic `update(orderId, patch)` — same reasoning as OrdersRepository
++ * having a single attemptTransition() rather than an open update: each
++ * method's name says exactly which columns it touches and why, so a
++ * caller can't accidentally set voucher fields on a VTU row or vice
++ * versa.
++ *
++ * NOT exported from FulfillmentModule — FulfillmentOrchestratorService
++ * is the only public surface, same encapsulation boundary
++ * OrdersRepository/OrdersService already establish.
++ *
++ * No idempotent "create-or-fetch-existing" handling here yet: a second
++ * create() for the same order_id will throw on the table's UNIQUE
++ * constraint. That's an honest failure, not a silent one — there's no
++ * automatic retry/resume path calling this twice today (see
++ * FulfillmentOrchestratorService's file header), so building
++ * insert-or-fetch logic now would be speculative. A future retry/resume
++ * mechanism should add that handling deliberately, not inherit it by
++ * accident.
++ */
++@Injectable()
++export class GiftFulfillmentsRepository {
++  constructor(
++    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
++  ) {}
++
++  async create(params: CreateFulfillmentParams): Promise<FulfillmentRow> {
++    const response = (await this.supabase
++      .from('gift_fulfillments')
++      .insert({
++        order_id: params.orderId,
++        fulfillment_type: params.fulfillmentType,
++        status: params.status,
++        vtu_request_id: params.vtuRequestId ?? null,
++        vtu_phone_number: params.vtuPhoneNumber ?? null,
++      })
++      .select()
++      .single()) as {
++      data: FulfillmentRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++    if (!response.data) {
++      throw new Error('gift_fulfillments insert returned no data');
++    }
++
++    return response.data;
++  }
++
++  /** digital_voucher path only. Sets voucher_issued_at to now() in the same write as the code and validity, rather than in a separate round-trip. */
++  async markVoucherIssued(
++    orderId: string,
++    params: MarkVoucherIssuedParams,
++  ): Promise<void> {
++    const { error } = await this.supabase
++      .from('gift_fulfillments')
++      .update({
++        voucher_code: params.voucherCode,
++        voucher_issued_at: new Date().toISOString(),
++        voucher_valid_until: params.voucherValidUntil,
++        status: FulfillmentStatus.VoucherGenerated,
++      })
++      .eq('order_id', orderId);
++
++    if (error) {
++      throw error;
++    }
++  }
++
++  /** vtu path only. Marks the row as "about to call the provider" — a distinct, queryable moment from "row just created", useful for spotting a fulfillment stuck mid-call if the process dies during the outbound request. */
++  async markVtuProcessing(orderId: string): Promise<void> {
++    const { error } = await this.supabase
++      .from('gift_fulfillments')
++      .update({ status: FulfillmentStatus.VtuProcessing })
++      .eq('order_id', orderId);
++
++    if (error) {
++      throw error;
++    }
++  }
++
++  /** vtu path only. Called after the provider confirms the top-up succeeded. */
++  async markVtuComplete(
++    orderId: string,
++    params: MarkVtuCompleteParams,
++  ): Promise<void> {
++    const { error } = await this.supabase
++      .from('gift_fulfillments')
++      .update({
++        vtu_transaction_id: params.providerTransactionId,
++        vtu_completed_at: new Date().toISOString(),
++        status: FulfillmentStatus.VtuComplete,
++      })
++      .eq('order_id', orderId);
++
++    if (error) {
++      throw error;
++    }
++  }
++}
+diff --git a/apps/api/src/fulfillment/unimplemented-vtu-provider.service.ts b/apps/api/src/fulfillment/unimplemented-vtu-provider.service.ts
+new file mode 100644
+index 0000000..5452f6e
+--- /dev/null
++++ b/apps/api/src/fulfillment/unimplemented-vtu-provider.service.ts
+@@ -0,0 +1,31 @@
++import { Injectable, NotImplementedException } from '@nestjs/common';
++import {
++  VtuProviderService,
++  VtuTopUpParams,
++  VtuTopUpResult,
++} from './vtu-provider.interface';
++
++/**
++ * Default VTU_PROVIDER binding until a real Nellobytes/Shago/BuyPower
++ * client is built. Throws clearly and immediately rather than the
++ * orchestrator silently marking a VTU order "complete" without ever
++ * having actually topped anyone up — a stub that pretended to succeed
++ * would be far more dangerous than one that fails loudly, given this
++ * is a money-touching gift that a real recipient is waiting on.
++ *
++ * The order is left at `fulfillment_in_progress` with a gift_fulfillments
++ * row already recording the (unused) vtu_request_id — see
++ * FulfillmentOrchestratorService for why persisting that request id
++ * before this call matters even though this implementation never uses
++ * it yet.
++ */
++@Injectable()
++export class UnimplementedVtuProviderService implements VtuProviderService {
++  topUp(params: VtuTopUpParams): Promise<VtuTopUpResult> {
++    throw new NotImplementedException(
++      'VTU provider integration (Nellobytes/Shago/BuyPower) is not built yet. ' +
++        'The order is left at fulfillment_in_progress pending manual fulfillment or the real provider client. ' +
++        `Requested top-up: requestId=${params.requestId}, amountKobo=${params.amountKobo}.`,
++    );
++  }
++}
+diff --git a/apps/api/src/fulfillment/vtu-provider.interface.ts b/apps/api/src/fulfillment/vtu-provider.interface.ts
+new file mode 100644
+index 0000000..7ad7bb0
+--- /dev/null
++++ b/apps/api/src/fulfillment/vtu-provider.interface.ts
+@@ -0,0 +1,40 @@
++/**
++ * Port for outbound VTU (airtime/data/electricity) provider calls —
++ * Nellobytes/Shago for airtime & data, BuyPower for electricity, per
++ * gift_fulfillments.vtu_provider's documented values. Deliberately an
++ * interface + DI token, not a concrete class, the same way
++ * PaystackClientService is concrete but lives in its OWN module
++ * separate from the domain logic that calls it — except here there
++ * isn't yet a concrete implementation to point to.
++ *
++ * NOT IMPLEMENTED YET. Nellobytes/Shago/BuyPower each have their own
++ * request/response shapes, auth schemes, and error semantics that
++ * would need to be confirmed against their real API docs (or a sandbox)
++ * before writing a client against them — the same care that went into
++ * confirming Postgres's unique-violation code and Paystack's actual
++ * webhook-event-ID behaviour via real sources rather than assumption
++ * (see PaystackWebhookService / IdempotencyService). Guessing at a
++ * third-party contract here would risk building against the wrong
++ * shape entirely.
++ *
++ * FulfillmentOrchestratorService is written against this interface so
++ * that dropping in a real NellobytesVtuProviderService later is a
++ * one-line change in FulfillmentModule's providers array — nothing
++ * about the orchestration logic itself should need to change.
++ */
++export interface VtuTopUpParams {
++  /** Persisted on gift_fulfillments.vtu_request_id BEFORE this is called — see FulfillmentOrchestratorService for why the ordering matters. */
++  requestId: string;
++  phoneNumber: string;
++  amountKobo: number;
++}
++
++export interface VtuTopUpResult {
++  providerTransactionId: string;
++}
++
++export interface VtuProviderService {
++  topUp(params: VtuTopUpParams): Promise<VtuTopUpResult>;
++}
++
++export const VTU_PROVIDER = Symbol('VTU_PROVIDER');
+diff --git a/apps/api/src/gifts/gift-templates.repository.ts b/apps/api/src/gifts/gift-templates.repository.ts
+index d670656..c5cf1b9 100644
+--- a/apps/api/src/gifts/gift-templates.repository.ts
++++ b/apps/api/src/gifts/gift-templates.repository.ts
+@@ -1,12 +1,21 @@
+ import { Inject, Injectable } from '@nestjs/common';
+ import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
++import { FulfillmentType } from '@ebun/types';
+ import { SUPABASE_CLIENT } from '../supabase/supabase.module';
+ 
+ export interface GiftTemplateRow {
+   id: string;
++  name: string;
++  description: string | null;
++  image_url: string | null;
+   base_price: number; // kobo
+   available: boolean;
+   requires_address: boolean;
++  // Column name is `delivery_type` in the schema; typed here as
++  // FulfillmentType (not a bespoke string union) since it's the same
++  // Postgres enum gift_fulfillments.fulfillment_type uses — this is
++  // what fulfillment orchestration branches on.
++  delivery_type: FulfillmentType;
+   [key: string]: unknown;
+ }
+ 
+diff --git a/apps/api/src/gifts/gifts.service.ts b/apps/api/src/gifts/gifts.service.ts
+index 1328542..f30b7f6 100644
+--- a/apps/api/src/gifts/gifts.service.ts
++++ b/apps/api/src/gifts/gifts.service.ts
+@@ -20,4 +20,23 @@ export class GiftsService {
+ 
+     return template;
+   }
++
++  /**
++   * Deliberately does NOT check `.available` — that flag governs whether
++   * a template can be selected for a NEW order, not whether an order
++   * already paid for still deserves to be fulfilled. Fulfillment
++   * orchestration needs the latter: look up delivery_type for an order
++   * that already exists, regardless of whether the template was pulled
++   * from the catalogue since. Still throws if the template row is
++   * genuinely gone (a real data-integrity problem, not a normal case).
++   */
++  async findById(id: string): Promise<GiftTemplateRow> {
++    const template = await this.repository.findById(id);
++
++    if (!template) {
++      throw new NotFoundException(`Gift template ${id} not found`);
++    }
++
++    return template;
++  }
+ }
+diff --git a/apps/api/src/media/media-url-resolver.interface.ts b/apps/api/src/media/media-url-resolver.interface.ts
+new file mode 100644
+index 0000000..0c40443
+--- /dev/null
++++ b/apps/api/src/media/media-url-resolver.interface.ts
+@@ -0,0 +1,23 @@
++/**
++ * Resolves a private Cloudflare R2 object path into a short-lived,
++ * publicly-fetchable playback URL. "Media storage: Cloudflare R2
++ * (presigned URLs, private by default)" is a settled architecture
++ * decision — orders.message_url is a path into a PRIVATE bucket, not a
++ * directly fetchable URL. Something has to turn it into a presigned GET
++ * URL before a recipient's browser can play it back.
++ *
++ * NOT IMPLEMENTED YET — same reasoning and same shape as
++ * VtuProviderService: I don't have R2 account credentials
++ * (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY /
++ * R2_BUCKET_NAME) in this session, and guessing at bucket/key
++ * conventions risks building against the wrong shape. RevealService is
++ * written against this interface so a real R2Client-backed
++ * implementation (via @aws-sdk/client-s3's S3 presigner, which is how
++ * R2's S3-compatible API is normally driven from Node) is a one-line
++ * change in RevealModule's providers array.
++ */
++export interface MediaUrlResolver {
++  resolvePlaybackUrl(privateMessageUrl: string): Promise<string>;
++}
++
++export const MEDIA_URL_RESOLVER = Symbol('MEDIA_URL_RESOLVER');
+diff --git a/apps/api/src/media/unimplemented-media-url-resolver.service.ts b/apps/api/src/media/unimplemented-media-url-resolver.service.ts
+new file mode 100644
+index 0000000..249c4b4
+--- /dev/null
++++ b/apps/api/src/media/unimplemented-media-url-resolver.service.ts
+@@ -0,0 +1,35 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { MediaUrlResolver } from './media-url-resolver.interface';
++
++/**
++ * Default MEDIA_URL_RESOLVER binding until real R2 presigned-URL
++ * generation exists. Deliberately does NOT throw the way
++ * UnimplementedVtuProviderService does — reveal is the recipient's
++ * entire moment with the gift; hard-failing the whole reveal page
++ * because playback isn't wired up yet would block testing everything
++ * else about the flow. Instead this passes the raw message_url through
++ * unchanged and logs a loud warning every time, so it's impossible to
++ * miss in logs but doesn't block end-to-end testing of the rest of the
++ * reveal/accept/redeem flow.
++ *
++ * THIS IS NOT SAFE FOR REAL RECIPIENT MESSAGES: if the R2 bucket is
++ * actually private (per architecture decisions, it should be), the
++ * passthrough URL will simply fail to load in the recipient's browser —
++ * or worse, work by accident if the bucket is misconfigured as public.
++ * Either way, do not ship this to real users before replacing it with a
++ * real presigned-URL implementation.
++ */
++@Injectable()
++export class UnimplementedMediaUrlResolver implements MediaUrlResolver {
++  private readonly logger = new Logger(UnimplementedMediaUrlResolver.name);
++
++  resolvePlaybackUrl(privateMessageUrl: string): Promise<string> {
++    this.logger.warn(
++      'MediaUrlResolver is not implemented — returning the raw (possibly private) ' +
++        'message_url unchanged. This will not play back for real recipients if the ' +
++        'R2 bucket is actually private. Needs a real R2 presigned-URL implementation ' +
++        'before this reaches production.',
++    );
++    return Promise.resolve(privateMessageUrl);
++  }
++}
+diff --git a/apps/api/src/notifications/notifications.module.ts b/apps/api/src/notifications/notifications.module.ts
+new file mode 100644
+index 0000000..8d950b1
+--- /dev/null
++++ b/apps/api/src/notifications/notifications.module.ts
+@@ -0,0 +1,12 @@
++import { Module } from '@nestjs/common';
++import { OrdersModule } from '../orders/orders.module';
++import { TermiiModule } from '../termii/termii.module';
++import { NotificationsRepository } from './notifications.repository';
++import { NotificationsService } from './notifications.service';
++
++@Module({
++  imports: [OrdersModule, TermiiModule],
++  providers: [NotificationsRepository, NotificationsService],
++  exports: [NotificationsService],
++})
++export class NotificationsModule {}
+diff --git a/apps/api/src/notifications/notifications.repository.ts b/apps/api/src/notifications/notifications.repository.ts
+new file mode 100644
+index 0000000..375e72b
+--- /dev/null
++++ b/apps/api/src/notifications/notifications.repository.ts
+@@ -0,0 +1,116 @@
++import { Inject, Injectable } from '@nestjs/common';
++import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
++import { NotificationChannel, NotificationStatus } from '@ebun/types';
++import { SUPABASE_CLIENT } from '../supabase/supabase.module';
++
++export interface NotificationRow {
++  id: string;
++  order_id: string | null;
++  status: NotificationStatus;
++  idempotency_key: string | null;
++  [key: string]: unknown;
++}
++
++export interface CreatePendingNotificationParams {
++  orderId: string;
++  recipientPhone: string;
++  channel: NotificationChannel;
++  notificationType: string;
++  provider: string;
++  templateName: string | null;
++  payload: Record<string, unknown>;
++  /** Maps onto notifications.idempotency_key (UNIQUE) — the schema's own documented purpose: "prevents duplicate sends on retry". */
++  idempotencyKey: string;
++}
++
++/**
++ * Thin wrapper around the notifications table. Unlike gift_fulfillments
++ * (one row per order, enforced by a UNIQUE(order_id)), this table
++ * intentionally allows multiple rows per order over time (retries,
++ * multiple channels) — schema comment: "Tracks every outbound
++ * communication". The per-notification-attempt uniqueness guard is
++ * idempotency_key instead, scoped by caller (e.g.
++ * `gift_reveal_link:${orderId}` — see NotificationsService).
++ *
++ * NOT exported from NotificationsModule — NotificationsService is the
++ * only public surface, same encapsulation boundary as every other
++ * repository in this codebase.
++ */
++@Injectable()
++export class NotificationsRepository {
++  constructor(
++    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
++  ) {}
++
++  /**
++   * Returns the created row, or the string 'ALREADY_SENT' if a row with
++   * this idempotencyKey already exists (a real 23505 on the UNIQUE
++   * constraint, not a pre-check-then-insert race) — the caller should
++   * treat that as "nothing to do", not an error.
++   */
++  async createPending(
++    params: CreatePendingNotificationParams,
++  ): Promise<NotificationRow | 'ALREADY_SENT'> {
++    const response = (await this.supabase
++      .from('notifications')
++      .insert({
++        order_id: params.orderId,
++        recipient_type: 'recipient',
++        recipient_phone: params.recipientPhone,
++        channel: params.channel,
++        notification_type: params.notificationType,
++        status: NotificationStatus.Pending,
++        provider: params.provider,
++        template_name: params.templateName,
++        payload: params.payload,
++        idempotency_key: params.idempotencyKey,
++      })
++      .select()
++      .single()) as {
++      data: NotificationRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      if (response.error.code === '23505') {
++        return 'ALREADY_SENT';
++      }
++      throw response.error;
++    }
++    if (!response.data) {
++      throw new Error('notifications insert returned no data');
++    }
++
++    return response.data;
++  }
++
++  async markSent(id: string, providerMessageId: string): Promise<void> {
++    const { error } = await this.supabase
++      .from('notifications')
++      .update({
++        status: NotificationStatus.Sent,
++        provider_message_id: providerMessageId,
++        sent_at: new Date().toISOString(),
++      })
++      .eq('id', id);
++
++    if (error) {
++      throw error;
++    }
++  }
++
++  async markFailed(id: string, errorMessage: string): Promise<void> {
++    const { error } = await this.supabase
++      .from('notifications')
++      .update({
++        status: NotificationStatus.Failed,
++        error_message: errorMessage,
++        failed_at: new Date().toISOString(),
++      })
++      .eq('id', id);
++
++    if (error) {
++      throw error;
++    }
++  }
++}
+diff --git a/apps/api/src/notifications/notifications.service.spec.ts b/apps/api/src/notifications/notifications.service.spec.ts
+new file mode 100644
+index 0000000..f1e859a
+--- /dev/null
++++ b/apps/api/src/notifications/notifications.service.spec.ts
+@@ -0,0 +1,150 @@
++import { Test } from '@nestjs/testing';
++import { ConfigService } from '@nestjs/config';
++import { OrderStatus } from '@ebun/types';
++import { NotificationsService } from './notifications.service';
++import { NotificationsRepository } from './notifications.repository';
++import { OrdersService } from '../orders/orders.service';
++import { OrderRow } from '../orders/orders.repository';
++import { TermiiWhatsappClientService } from '../termii/termii-whatsapp-client.service';
++
++function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
++  return {
++    id: 'order-1',
++    status: OrderStatus.VoucherIssued,
++    order_number: 'EBN-0001',
++    total_amount: 500000,
++    gift_template_id: 'template-1',
++    gift_value: 500000,
++    recipient_name: 'Ada',
++    recipient_phone: '+2348012345678',
++    reveal_token: 'reveal-token-1',
++    sender_id: 'sender-1',
++    sender_message: null,
++    message_type: null,
++    message_url: null,
++    message_duration_secs: null,
++    reveal_theme: 'gold',
++    scheduled_send_at: null,
++    expires_at: '2026-10-06T00:00:00.000Z',
++    ...overrides,
++  };
++}
++
++describe('NotificationsService', () => {
++  let sut: NotificationsService;
++  let repository: {
++    createPending: jest.Mock;
++    markSent: jest.Mock;
++    markFailed: jest.Mock;
++  };
++  let ordersService: { recordRevealSent: jest.Mock };
++  let termii: { sendTemplateMessage: jest.Mock };
++
++  beforeEach(async () => {
++    repository = {
++      createPending: jest.fn(),
++      markSent: jest.fn().mockResolvedValue(undefined),
++      markFailed: jest.fn().mockResolvedValue(undefined),
++    };
++    ordersService = {
++      recordRevealSent: jest.fn().mockResolvedValue(undefined),
++    };
++    termii = { sendTemplateMessage: jest.fn() };
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        NotificationsService,
++        { provide: NotificationsRepository, useValue: repository },
++        { provide: OrdersService, useValue: ordersService },
++        { provide: TermiiWhatsappClientService, useValue: termii },
++        {
++          provide: ConfigService,
++          useValue: {
++            getOrThrow: () => 'https://app.ebun.ng',
++            get: () => 'template-abc',
++          },
++        },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(NotificationsService);
++  });
++
++  it('builds the reveal URL from WEB_APP_BASE_URL + reveal_token and sends it', async () => {
++    repository.createPending.mockResolvedValue({ id: 'notif-1' });
++    termii.sendTemplateMessage.mockResolvedValue({
++      providerMessageId: 'msg-1',
++    });
++
++    await sut.sendGiftRevealLink(makeOrder());
++
++    expect(termii.sendTemplateMessage).toHaveBeenCalledWith({
++      phoneNumber: '+2348012345678',
++      data: { '1': 'Ada', '2': 'https://app.ebun.ng/reveal/reveal-token-1' },
++    });
++    expect(ordersService.recordRevealSent).toHaveBeenCalledWith(
++      'order-1',
++      'https://app.ebun.ng/reveal/reveal-token-1',
++    );
++    expect(repository.markSent).toHaveBeenCalledWith('notif-1', 'msg-1');
++  });
++
++  it('skips sending (and touches nothing else) when scheduled_send_at is in the future', async () => {
++    const future = new Date(Date.now() + 60_000).toISOString();
++
++    await sut.sendGiftRevealLink(makeOrder({ scheduled_send_at: future }));
++
++    expect(repository.createPending).not.toHaveBeenCalled();
++    expect(termii.sendTemplateMessage).not.toHaveBeenCalled();
++  });
++
++  it('sends immediately when scheduled_send_at is in the past', async () => {
++    const past = new Date(Date.now() - 60_000).toISOString();
++    repository.createPending.mockResolvedValue({ id: 'notif-1' });
++    termii.sendTemplateMessage.mockResolvedValue({
++      providerMessageId: 'msg-1',
++    });
++
++    await sut.sendGiftRevealLink(makeOrder({ scheduled_send_at: past }));
++
++    expect(termii.sendTemplateMessage).toHaveBeenCalled();
++  });
++
++  it('does not call Termii again if a notification with this idempotency key already exists', async () => {
++    repository.createPending.mockResolvedValue('ALREADY_SENT');
++
++    await sut.sendGiftRevealLink(makeOrder());
++
++    expect(termii.sendTemplateMessage).not.toHaveBeenCalled();
++  });
++
++  it('records the failure and does NOT throw when the Termii call fails — order fulfillment already succeeded by this point', async () => {
++    repository.createPending.mockResolvedValue({ id: 'notif-1' });
++    termii.sendTemplateMessage.mockRejectedValue(new Error('Termii is down'));
++
++    await expect(sut.sendGiftRevealLink(makeOrder())).resolves.toBeUndefined();
++
++    expect(repository.markFailed).toHaveBeenCalledWith(
++      'notif-1',
++      'Termii is down',
++    );
++    expect(repository.markSent).not.toHaveBeenCalled();
++    expect(ordersService.recordRevealSent).not.toHaveBeenCalled();
++  });
++
++  it('uses a per-order idempotency key so retries cannot double-send', async () => {
++    repository.createPending.mockResolvedValue({ id: 'notif-1' });
++    termii.sendTemplateMessage.mockResolvedValue({
++      providerMessageId: 'msg-1',
++    });
++
++    await sut.sendGiftRevealLink(makeOrder());
++
++    expect(repository.createPending).toHaveBeenCalledWith(
++      expect.objectContaining({
++        orderId: 'order-1',
++        idempotencyKey: 'gift_reveal_link:order-1',
++      }),
++    );
++  });
++});
+diff --git a/apps/api/src/notifications/notifications.service.ts b/apps/api/src/notifications/notifications.service.ts
+new file mode 100644
+index 0000000..6fd48d3
+--- /dev/null
++++ b/apps/api/src/notifications/notifications.service.ts
+@@ -0,0 +1,117 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { ConfigService } from '@nestjs/config';
++import { NotificationChannel } from '@ebun/types';
++import { OrderRow } from '../orders/orders.repository';
++import { OrdersService } from '../orders/orders.service';
++import { TermiiWhatsappClientService } from '../termii/termii-whatsapp-client.service';
++import { NotificationsRepository } from './notifications.repository';
++
++const GIFT_REVEAL_LINK = 'GIFT_REVEAL_LINK';
++
++/**
++ * Only public surface of NotificationsModule — NotificationsRepository
++ * stays internal, same boundary as every other module here.
++ */
++@Injectable()
++export class NotificationsService {
++  private readonly logger = new Logger(NotificationsService.name);
++
++  constructor(
++    private readonly repository: NotificationsRepository,
++    private readonly ordersService: OrdersService,
++    private readonly termii: TermiiWhatsappClientService,
++    private readonly config: ConfigService,
++  ) {}
++
++  /**
++   * Sends the gift-reveal WhatsApp message once an order is ready
++   * (voucher_issued / ready_for_redemption). Deliberately does NOT
++   * throw on failure — see the doc comment on this method's only
++   * caller (FulfillmentOrchestratorService) for why a notification
++   * failure must not be conflated with a fulfillment failure: the gift
++   * itself is genuinely ready by the time this runs, so failing loudly
++   * here would incorrectly imply the whole order is broken. Failure is
++   * still fully recorded (notifications.status = 'failed',
++   * error_message set) — silent to the caller, not silent to the data.
++   */
++  async sendGiftRevealLink(order: OrderRow): Promise<void> {
++    if (
++      order.scheduled_send_at &&
++      new Date(order.scheduled_send_at) > new Date()
++    ) {
++      // Deliberately not sent now, and nothing schedules it for later —
++      // no cron/scheduler exists yet (no @nestjs/schedule dependency in
++      // apps/api today). A scheduled gift's fulfillment still completes
++      // on time (voucher/VTU work isn't gated on scheduled_send_at, only
++      // the recipient-visible notification is), but the WhatsApp send
++      // itself needs a future poller for "orders past their
++      // scheduled_send_at with no notification sent yet". Flagged, not
++      // solved, same as every other cron-shaped gap in this codebase so
++      // far.
++      this.logger.log(
++        `Order ${order.id}: scheduled_send_at is in the future — skipping WhatsApp send for now (needs a future scheduler to pick this up).`,
++      );
++      return;
++    }
++
++    const webAppBaseUrl = this.config.getOrThrow<string>('WEB_APP_BASE_URL');
++    const revealUrl = `${webAppBaseUrl}/reveal/${order.reveal_token}`;
++
++    // PROVISIONAL — see TermiiWhatsappClientService's header. Positional
++    // keys ("1", "2") matching Termii's own documented example, but
++    // which position means what is fixed by whichever WhatsApp template
++    // actually gets approved on the Termii dashboard, which doesn't
++    // exist yet. This mapping (1=recipient name, 2=reveal link) is a
++    // reasonable guess for a template body like "Hi {{1}}, you've got a
++    // gift! Open it here: {{2}}" — but if the approved template ends up
++    // shaped differently (e.g. the link as a URL BUTTON component
++    // rather than inline body text), this needs to change to match.
++    // Confirm against the real template before relying on this in
++    // production.
++    const templateData: Record<string, string> = {
++      '1': order.recipient_name,
++      '2': revealUrl,
++    };
++
++    const templateId = this.config.get<string>('TERMII_WHATSAPP_TEMPLATE_ID');
++    const idempotencyKey = `gift_reveal_link:${order.id}`;
++
++    const created = await this.repository.createPending({
++      orderId: order.id,
++      recipientPhone: order.recipient_phone,
++      channel: NotificationChannel.Whatsapp,
++      notificationType: GIFT_REVEAL_LINK,
++      provider: 'termii',
++      templateName: templateId ?? null,
++      payload: { data: templateData, revealUrl },
++      idempotencyKey,
++    });
++
++    if (created === 'ALREADY_SENT') {
++      this.logger.warn(
++        `Order ${order.id}: a GIFT_REVEAL_LINK notification already exists (idempotencyKey=${idempotencyKey}) — not sending again.`,
++      );
++      return;
++    }
++
++    try {
++      const result = await this.termii.sendTemplateMessage({
++        phoneNumber: order.recipient_phone,
++        data: templateData,
++      });
++
++      await this.repository.markSent(created.id, result.providerMessageId);
++      await this.ordersService.recordRevealSent(order.id, revealUrl);
++
++      this.logger.log(`Order ${order.id}: gift reveal link sent via WhatsApp`);
++    } catch (err) {
++      const message = err instanceof Error ? err.message : String(err);
++      await this.repository.markFailed(created.id, message);
++
++      this.logger.warn(
++        `Order ${order.id}: gift reveal WhatsApp send failed (order fulfillment itself is fine — only the notification failed): ${message}`,
++      );
++      // Not rethrown — see this method's doc comment.
++    }
++  }
++}
+diff --git a/apps/api/src/orders/orders.repository.ts b/apps/api/src/orders/orders.repository.ts
+index c84e413..7627330 100644
+--- a/apps/api/src/orders/orders.repository.ts
++++ b/apps/api/src/orders/orders.repository.ts
+@@ -22,6 +22,27 @@ export interface OrderRow {
+   status: OrderStatus;
+   order_number: string | null; // EBN-XXXX — generated by a DB trigger, never set by us
+   total_amount: number; // kobo — explicit because callers (e.g. PaystackWebhookService) compare/interpolate it directly, not just pass it through
++  // Below: only populated by findById() today (create()/findByPaystackReference()
++  // don't select these) — typed as required to match total_amount's existing
++  // convention, but a caller using a narrower-selecting method will get
++  // `undefined` at runtime despite the type saying otherwise. Same
++  // pre-existing gap as total_amount; not introduced by this change.
++  gift_template_id: string;
++  gift_value: number; // kobo — frozen at order time, used for VTU top-up amount rather than today's catalog price
++  recipient_name: string;
++  recipient_phone: string;
++  reveal_token: string;
++  // Below: only populated by findByRevealToken() — same "typed as
++  // required, but only true for the method that actually selects them"
++  // convention noted above for total_amount/gift_template_id etc.
++  sender_id: string | null; // nullable — guest senders w/ auth_id null still get a users row, but sender_id itself can be null if that user was later deleted (on delete set null)
++  sender_message: string | null;
++  message_type: 'text' | 'voice' | 'video' | null;
++  message_url: string | null; // Cloudflare R2 URL — PRIVATE bucket per architecture decisions; never return this raw to a public endpoint, see MediaUrlResolver
++  message_duration_secs: number | null;
++  reveal_theme: string;
++  scheduled_send_at: string | null;
++  expires_at: string;
+   [key: string]: unknown;
+ }
+ 
+@@ -94,6 +115,78 @@ export class OrdersRepository {
+     return response.data ?? null;
+   }
+ 
++  /**
++   * Public-facing lookup — called from the unauthenticated GET
++   * /reveal/:token endpoint, so this is the one OrdersRepository method
++   * where the caller is the open internet, not an authenticated
++   * subsystem. Selects only reveal-relevant columns; deliberately
++   * excludes payment fields (paystack_reference, total_amount isn't
++   * needed either — recipients see the gift, not the price paid).
++   */
++  async findByRevealToken(revealToken: string): Promise<OrderRow | null> {
++    const response = (await this.supabase
++      .from('orders')
++      .select(
++        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at',
++      )
++      .eq('reveal_token', revealToken)
++      .maybeSingle()) as {
++      data: OrderRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? null;
++  }
++
++  /**
++   * Reads an order by id, selecting only the columns fulfillment
++   * orchestration actually needs (gift_template_id to look up the
++   * fulfillment type, recipient/reveal fields for the eventual WhatsApp
++   * send) rather than `select('*')` — keeps this method's contract
++   * explicit about what it's for, and cheap to extend deliberately
++   * rather than accidentally pulling in every column (e.g. payment
++   * fields) a new caller doesn't need. Returns null if the order
++   * doesn't exist — a normal outcome for the caller to check, not
++   * necessarily a bug.
++   */
++  async findById(id: string): Promise<OrderRow | null> {
++    const response = (await this.supabase
++      .from('orders')
++      .select(
++        'id, status, total_amount, gift_value, gift_template_id, recipient_name, recipient_phone, reveal_token, scheduled_send_at, expires_at',
++      )
++      .eq('id', id)
++      .maybeSingle()) as {
++      data: OrderRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? null;
++  }
++
++  /** Records that the reveal link was actually sent — does NOT touch order.status (reveal delivery and order state are separate concerns; see order-state-machine.ts's reveal_opened edge, which fires on the recipient actually opening the link, not on us sending it). */
++  async recordRevealSent(id: string, revealUrl: string): Promise<void> {
++    const { error } = await this.supabase
++      .from('orders')
++      .update({
++        reveal_url: revealUrl,
++        whatsapp_sent_at: new Date().toISOString(),
++      })
++      .eq('id', id);
++
++    if (error) {
++      throw error;
++    }
++  }
++
+   /**
+    * Reads an order by its Paystack transaction reference. Returns null if none exists — a normal, expected outcome for the caller to check (e.g. a webhook referencing an order that was never created by us), not necessarily a bug.
+    */
+diff --git a/apps/api/src/orders/orders.service.ts b/apps/api/src/orders/orders.service.ts
+index 570cefb..898bd06 100644
+--- a/apps/api/src/orders/orders.service.ts
++++ b/apps/api/src/orders/orders.service.ts
+@@ -54,6 +54,21 @@ export class OrdersService {
+     return this.ordersRepository.findByPaystackReference(reference);
+   }
+ 
++  /** Read-only, same rationale as findByPaystackReference above. Used by fulfillment orchestration to look up gift_template_id and recipient/reveal fields once an order reaches 'paid'. */
++  async findById(orderId: string) {
++    return this.ordersRepository.findById(orderId);
++  }
++
++  /** Public-facing — see OrdersRepository.findByRevealToken for why this selects a deliberately narrower, non-payment column set than findById. */
++  async findByRevealToken(revealToken: string) {
++    return this.ordersRepository.findByRevealToken(revealToken);
++  }
++
++  /** Delegates straight through — see OrdersRepository.recordRevealSent for why this deliberately doesn't touch order.status. */
++  async recordRevealSent(orderId: string, revealUrl: string) {
++    return this.ordersRepository.recordRevealSent(orderId, revealUrl);
++  }
++
+   /**
+    * No guard needed here — this is order genesis, not a transition;
+    * there's no "from" state to validate against. Always creates as
+diff --git a/apps/api/src/payments/payments.module.ts b/apps/api/src/payments/payments.module.ts
+index ed2a2fa..485d039 100644
+--- a/apps/api/src/payments/payments.module.ts
++++ b/apps/api/src/payments/payments.module.ts
+@@ -1,11 +1,12 @@
+ import { Module } from '@nestjs/common';
+ import { OrdersModule } from '../orders/orders.module';
++import { FulfillmentModule } from '../fulfillment/fulfillment.module';
+ import { PaymentsController } from './payments.controller';
+ import { IdempotencyModule } from 'src/idempotency/idempotency.module';
+ import { PaystackWebhookService } from './paystack-webhook.service';
+ 
+ @Module({
+-  imports: [OrdersModule, IdempotencyModule],
++  imports: [OrdersModule, IdempotencyModule, FulfillmentModule],
+   controllers: [PaymentsController],
+   providers: [PaystackWebhookService],
+ })
+diff --git a/apps/api/src/payments/paystack-webhook.service.spec.ts b/apps/api/src/payments/paystack-webhook.service.spec.ts
+index 2ae9917..8f65659 100644
+--- a/apps/api/src/payments/paystack-webhook.service.spec.ts
++++ b/apps/api/src/payments/paystack-webhook.service.spec.ts
+@@ -5,6 +5,7 @@ import { OrderStatus } from '@ebun/types';
+ import { PaystackWebhookService } from './paystack-webhook.service';
+ import { OrdersService } from '../orders/orders.service';
+ import { IdempotencyService } from '../idempotency/idempotency.service';
++import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orchestrator.service';
+ import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
+ 
+ const SECRET = 'sk_test_fake_secret';
+@@ -36,6 +37,7 @@ describe('PaystackWebhookService', () => {
+     transitionNormal: jest.Mock;
+   };
+   let idempotency: { claim: jest.Mock };
++  let fulfillment: { start: jest.Mock };
+ 
+   beforeEach(async () => {
+     ordersService = {
+@@ -43,6 +45,7 @@ describe('PaystackWebhookService', () => {
+       transitionNormal: jest.fn(),
+     };
+     idempotency = { claim: jest.fn().mockResolvedValue(true) };
++    fulfillment = { start: jest.fn().mockResolvedValue(undefined) };
+ 
+     const moduleRef = await Test.createTestingModule({
+       providers: [
+@@ -50,6 +53,10 @@ describe('PaystackWebhookService', () => {
+         { provide: OrdersService, useValue: ordersService },
+         { provide: IdempotencyService, useValue: idempotency },
+         { provide: ConfigService, useValue: { getOrThrow: () => SECRET } },
++        {
++          provide: FulfillmentOrchestratorService,
++          useValue: fulfillment,
++        },
+       ],
+     }).compile();
+ 
+@@ -80,6 +87,23 @@ describe('PaystackWebhookService', () => {
+         paystackTransactionId: 999,
+       }),
+     );
++    expect(fulfillment.start).toHaveBeenCalledWith('order-1');
++  });
++
++  it('logs and swallows a fulfillment orchestration failure — a confirmed payment must not be undone or surfaced as a webhook error', async () => {
++    const { raw, signature, dto } = makePayload();
++    ordersService.findByPaystackReference.mockResolvedValue({
++      id: 'order-1',
++      status: OrderStatus.PendingPayment,
++      total_amount: 500000,
++    });
++    fulfillment.start.mockRejectedValue(new Error('VTU provider exploded'));
++
++    // Does NOT throw/reject — the webhook still reports success to Paystack.
++    await expect(sut.handle(raw, signature, dto)).resolves.toBeUndefined();
++
++    expect(ordersService.transitionNormal).toHaveBeenCalled();
++    expect(fulfillment.start).toHaveBeenCalledWith('order-1');
+   });
+ 
+   it('rejects an invalid signature before doing anything else', async () => {
+diff --git a/apps/api/src/payments/paystack-webhook.service.ts b/apps/api/src/payments/paystack-webhook.service.ts
+index 7b629fb..3e3c7d5 100644
+--- a/apps/api/src/payments/paystack-webhook.service.ts
++++ b/apps/api/src/payments/paystack-webhook.service.ts
+@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
+ import { OrderStatus } from '@ebun/types';
+ import { OrdersService } from '../orders/orders.service';
+ import { IdempotencyService } from '../idempotency/idempotency.service';
++import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orchestrator.service';
+ import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
+ import { verifyPaystackSignature } from './paystack-signature.util';
+ 
+@@ -24,6 +25,7 @@ export class PaystackWebhookService {
+     private readonly ordersService: OrdersService,
+     private readonly idempotency: IdempotencyService,
+     private readonly config: ConfigService,
++    private readonly fulfillment: FulfillmentOrchestratorService,
+   ) {}
+ 
+   async handle(
+@@ -90,6 +92,26 @@ export class PaystackWebhookService {
+         amount: payload.data.amount,
+       },
+     );
++
++    // Kicked off synchronously, in the same request — see
++    // FulfillmentOrchestratorService's file header for the full
++    // rationale and the known failure mode this creates. Deliberately
++    // caught and logged rather than left to throw: the payment itself
++    // WAS genuinely confirmed by this point, and that fact must not be
++    // undone or hidden from Paystack just because downstream
++    // fulfillment hit a problem. The trade-off — a stuck order needs
++    // manual recovery, since the idempotency claim above means a
++    // webhook redelivery will never reach this line again for the same
++    // event — is accepted for this slice and flagged, not silently
++    // absorbed.
++    try {
++      await this.fulfillment.start(order.id);
++    } catch (err) {
++      this.logger.error(
++        `Fulfillment orchestration failed for order ${order.id} after payment was confirmed — order is stuck and needs manual review.`,
++        err instanceof Error ? err.stack : err,
++      );
++    }
+   }
+ 
+   // Ensure the webhook callback is handled in a single transaction with idempotent retries. Keep webhook processing idempotent and atomic for retries.
+diff --git a/apps/api/src/redemptions/dto/redeem.dto.ts b/apps/api/src/redemptions/dto/redeem.dto.ts
+new file mode 100644
+index 0000000..5e660c4
+--- /dev/null
++++ b/apps/api/src/redemptions/dto/redeem.dto.ts
+@@ -0,0 +1,31 @@
++import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
++
++/**
++ * redemptionToken in the request BODY, not a URL path/query param —
++ * see redemptions.controller.ts's header for why that's a deliberate
++ * departure from the originally-sketched `/redeem/[token]` URL shape.
++ *
++ * vendorId/vendorConfirmedBy are REQUIRED, not optional. This endpoint
++ * is specifically "a vendor scanned a QR and confirmed" — the DB's own
++ * attempt_redemption() function will happily accept a null vendor and
++ * complete the redemption anyway, which would let anyone holding a
++ * leaked redemption_token bypass in-person vendor confirmation entirely
++ * for a digital_voucher gift. A vendorless completion (VTU, which has
++ * no vendor step to wait for) is a deliberately SEPARATE, internal-only
++ * code path — see RevealService.acceptGift, which calls
++ * RedemptionsService.complete() directly rather than going through this
++ * HTTP endpoint. Keeping that path off this public controller entirely
++ * means there's no DTO shape here that could accidentally authorize a
++ * vendorless completion from the open internet.
++ */
++export class RedeemDto {
++  @IsUUID()
++  redemptionToken!: string;
++
++  @IsUUID()
++  vendorId!: string;
++
++  @IsString()
++  @IsNotEmpty()
++  vendorConfirmedBy!: string;
++}
+diff --git a/apps/api/src/redemptions/exceptions/redemption-conflict.exception.ts b/apps/api/src/redemptions/exceptions/redemption-conflict.exception.ts
+new file mode 100644
+index 0000000..d134407
+--- /dev/null
++++ b/apps/api/src/redemptions/exceptions/redemption-conflict.exception.ts
+@@ -0,0 +1,20 @@
++import { ConflictException } from '@nestjs/common';
++
++/**
++ * Thrown when attempt_redemption() returns null — per its own doc
++ * comment, that means the redemption_token is unknown, was already
++ * completed, or is past its expiry. 409, not 404: the token format
++ * itself may be perfectly valid, the redemption just can't proceed.
++ * Deliberately doesn't distinguish "already redeemed" from "expired"
++ * from "unknown token" in the response — a vendor-facing scanning
++ * client learning WHY a stale/reused code exists doesn't need more
++ * detail than "this can't be redeemed", and finer-grained reasons here
++ * would help someone probing for valid-but-expired tokens.
++ */
++export class RedemptionConflictException extends ConflictException {
++  constructor() {
++    super(
++      'This gift cannot be redeemed — the code is invalid, already used, or expired.',
++    );
++  }
++}
+diff --git a/apps/api/src/redemptions/redemptions.controller.ts b/apps/api/src/redemptions/redemptions.controller.ts
+new file mode 100644
+index 0000000..c4c58fa
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.controller.ts
+@@ -0,0 +1,50 @@
++import { Body, Controller, Headers, Post, Req } from '@nestjs/common';
++import type { Request } from 'express';
++import { Throttle } from '@nestjs/throttler';
++import { RedemptionsService } from './redemptions.service';
++import { RedeemDto } from './dto/redeem.dto';
++
++/**
++ * POST /redeem — NOT POST /redeem/:token. The originally-sketched URL
++ * shape (`/redeem/[token]`) put the redemption_token in a URL path,
++ * which the schema explicitly forbids: "redemption_token is never in a
++ * URL. It is the QR code payload." (redemptions table comment). A URL
++ * path segment ends up in browser history, server access logs, and
++ * proxy/CDN logs — all places a HIGH-ENTROPY, VALUE-BEARING token
++ * (unlike reveal_token, possessing this one lets you actually claim the
++ * gift) should never sit. The token travels in a POST body instead,
++ * exactly like Ebun's other sensitive tokens (Paystack's webhook
++ * signature, for instance, is a header, never a query param).
++ *
++ * In practice this endpoint is called by whatever reads the QR code a
++ * vendor scans (a vendor-facing app/portal — not built yet, tracked
++ * separately) for digital_voucher gifts, and internally by
++ * RevealService for vtu gifts that have no vendor step to wait for (see
++ * RevealService.acceptGift).
++ */
++@Controller('redeem')
++export class RedemptionsController {
++  constructor(private readonly redemptions: RedemptionsService) {}
++
++  @Post()
++  @Throttle({ default: { limit: 10, ttl: 60_000 } })
++  async redeem(
++    @Body() dto: RedeemDto,
++    @Req() request: Request,
++    @Headers('user-agent') userAgent?: string,
++  ) {
++    const redemption = await this.redemptions.complete({
++      redemptionToken: dto.redemptionToken,
++      vendorId: dto.vendorId,
++      vendorConfirmedBy: dto.vendorConfirmedBy,
++      ipAddress: request.ip ?? null,
++      userAgent: userAgent ?? null,
++      actorType: 'vendor',
++    });
++
++    return {
++      redemptionNumber: redemption.redemption_number,
++      status: redemption.status,
++    };
++  }
++}
+diff --git a/apps/api/src/redemptions/redemptions.module.ts b/apps/api/src/redemptions/redemptions.module.ts
+new file mode 100644
+index 0000000..480c354
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.module.ts
+@@ -0,0 +1,13 @@
++import { Module } from '@nestjs/common';
++import { OrdersModule } from '../orders/orders.module';
++import { RedemptionsRepository } from './redemptions.repository';
++import { RedemptionsService } from './redemptions.service';
++import { RedemptionsController } from './redemptions.controller';
++
++@Module({
++  imports: [OrdersModule],
++  controllers: [RedemptionsController],
++  providers: [RedemptionsRepository, RedemptionsService],
++  exports: [RedemptionsService],
++})
++export class RedemptionsModule {}
+diff --git a/apps/api/src/redemptions/redemptions.repository.ts b/apps/api/src/redemptions/redemptions.repository.ts
+new file mode 100644
+index 0000000..811bbbc
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.repository.ts
+@@ -0,0 +1,128 @@
++import { Inject, Injectable } from '@nestjs/common';
++import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
++import { RedemptionStatus } from '@ebun/types';
++import { SUPABASE_CLIENT } from '../supabase/supabase.module';
++
++export interface RedemptionRow {
++  id: string;
++  order_id: string;
++  redemption_number: string;
++  redemption_token: string;
++  fallback_code: string;
++  status: RedemptionStatus;
++  [key: string]: unknown;
++}
++
++/**
++ * Thin wrapper around the redemptions table and its atomic
++ * attempt_redemption() RPC. NOT exported from RedemptionsModule —
++ * RedemptionsService is the sole public surface, same boundary as
++ * every other repository in this codebase.
++ *
++ * UNLIKE GiftFulfillmentsRepository's deliberately-non-idempotent
++ * create(): creating a pending redemption IS plausibly invoked more
++ * than once in completely normal use — a recipient double-tapping
++ * "accept", a flaky mobile connection retrying the POST, or reloading a
++ * page that re-fires the request. There's no automatic-retry-vs-real-bug
++ * ambiguity to worry about here the way there was for internal
++ * orchestration retries; treating a second call as "fetch what's
++ * already there" is simply correct. Hence createPendingOrFetch below,
++ * rather than a bare create() that throws on the second call.
++ */
++@Injectable()
++export class RedemptionsRepository {
++  constructor(
++    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
++  ) {}
++
++  async createPendingOrFetch(
++    orderId: string,
++    expiresAt: string,
++  ): Promise<RedemptionRow> {
++    const insertResponse = (await this.supabase
++      .from('redemptions')
++      .insert({
++        order_id: orderId,
++        status: RedemptionStatus.Pending,
++        expires_at: expiresAt,
++      })
++      .select()
++      .single()) as {
++      data: RedemptionRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (!insertResponse.error && insertResponse.data) {
++      return insertResponse.data;
++    }
++
++    if (insertResponse.error) {
++      if (insertResponse.error.code !== '23505') {
++        throw insertResponse.error;
++      }
++    } else {
++      // No error, but also no data — an empty response the Supabase
++      // client shouldn't normally produce. Thrown as a real Error
++      // rather than falling through, since insertResponse.error is
++      // null here and re-throwing it would throw `null`, not an
++      // inspectable error.
++      throw new Error(
++        `redemptions insert for order ${orderId} returned neither data nor an error`,
++      );
++    }
++
++    // order_id already has a redemption row (UNIQUE(order_id)) — fetch
++    // and return the existing one rather than erroring.
++    const existing = (await this.supabase
++      .from('redemptions')
++      .select()
++      .eq('order_id', orderId)
++      .single()) as {
++      data: RedemptionRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (existing.error) {
++      throw existing.error;
++    }
++    if (!existing.data) {
++      // Shouldn't happen — the 23505 we just caught proves a row exists.
++      // Thrown rather than silently returning something wrong.
++      throw new Error(
++        `redemptions row for order ${orderId} raced out of existence between insert conflict and fetch`,
++      );
++    }
++
++    return existing.data;
++  }
++
++  /**
++   * Wraps the DB's own attempt_redemption() function — per its schema
++   * comment, this is "the ONLY way to mark a redemption as completed".
++   * Returns null if the token is unknown, already completed, or expired
++   * — the RPC's own documented behaviour, not an error condition for
++   * this method to interpret; RedemptionsService decides what null
++   * means to its caller.
++   */
++  async attemptRedemption(params: {
++    redemptionToken: string;
++    vendorId: string | null;
++    vendorConfirmedBy: string | null;
++    ipAddress: string | null;
++    userAgent: string | null;
++  }): Promise<RedemptionRow | null> {
++    const response = (await this.supabase.rpc('attempt_redemption', {
++      p_redemption_token: params.redemptionToken,
++      p_vendor_id: params.vendorId,
++      p_vendor_confirmed_by: params.vendorConfirmedBy,
++      p_ip_address: params.ipAddress,
++      p_user_agent: params.userAgent,
++    })) as { data: RedemptionRow | null; error: PostgrestError | null };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data;
++  }
++}
+diff --git a/apps/api/src/redemptions/redemptions.service.spec.ts b/apps/api/src/redemptions/redemptions.service.spec.ts
+new file mode 100644
+index 0000000..5b20431
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.service.spec.ts
+@@ -0,0 +1,135 @@
++import { Test } from '@nestjs/testing';
++import { OrderStatus } from '@ebun/types';
++import { RedemptionsService } from './redemptions.service';
++import { RedemptionsRepository } from './redemptions.repository';
++import { OrdersService } from '../orders/orders.service';
++import { RedemptionConflictException } from './exceptions/redemption-conflict.exception';
++
++describe('RedemptionsService', () => {
++  let sut: RedemptionsService;
++  let repository: {
++    createPendingOrFetch: jest.Mock;
++    attemptRedemption: jest.Mock;
++  };
++  let ordersService: { transitionNormal: jest.Mock };
++
++  beforeEach(async () => {
++    repository = {
++      createPendingOrFetch: jest.fn(),
++      attemptRedemption: jest.fn(),
++    };
++    ordersService = {
++      transitionNormal: jest.fn().mockResolvedValue(undefined),
++    };
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        RedemptionsService,
++        { provide: RedemptionsRepository, useValue: repository },
++        { provide: OrdersService, useValue: ordersService },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(RedemptionsService);
++  });
++
++  describe('createPendingForOrder', () => {
++    it('delegates straight to the repository', async () => {
++      repository.createPendingOrFetch.mockResolvedValue({ id: 'redemption-1' });
++
++      const result = await sut.createPendingForOrder(
++        'order-1',
++        '2026-10-06T00:00:00.000Z',
++      );
++
++      expect(repository.createPendingOrFetch).toHaveBeenCalledWith(
++        'order-1',
++        '2026-10-06T00:00:00.000Z',
++      );
++      expect(result).toEqual({ id: 'redemption-1' });
++    });
++  });
++
++  describe('complete', () => {
++    const params = {
++      redemptionToken: 'token-1',
++      vendorId: 'vendor-1',
++      vendorConfirmedBy: 'Staff Name',
++      ipAddress: '127.0.0.1',
++      userAgent: 'test-agent',
++      actorType: 'vendor' as const,
++    };
++
++    it('throws RedemptionConflictException when attempt_redemption returns null (unknown/already-used/expired token)', async () => {
++      repository.attemptRedemption.mockResolvedValue(null);
++
++      await expect(sut.complete(params)).rejects.toThrow(
++        RedemptionConflictException,
++      );
++      expect(ordersService.transitionNormal).not.toHaveBeenCalled();
++    });
++
++    it('transitions the order to redeemed after a successful completion', async () => {
++      repository.attemptRedemption.mockResolvedValue({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++
++      const result = await sut.complete(params);
++
++      expect(ordersService.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.RevealOpened,
++        OrderStatus.Redeemed,
++        { type: 'vendor' },
++      );
++      expect(result).toEqual({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++    });
++
++    it('still returns the completed redemption even if the order status transition fails — the redemption itself is already correctly, permanently completed', async () => {
++      repository.attemptRedemption.mockResolvedValue({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++      ordersService.transitionNormal.mockRejectedValue(
++        new Error('order already moved on somehow'),
++      );
++
++      await expect(sut.complete(params)).resolves.toEqual({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++    });
++
++    it('uses actorType "system" for a vendorless (VTU) completion', async () => {
++      repository.attemptRedemption.mockResolvedValue({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++
++      await sut.complete({
++        redemptionToken: 'token-1',
++        vendorId: null,
++        vendorConfirmedBy: null,
++        ipAddress: null,
++        userAgent: null,
++        actorType: 'system',
++      });
++
++      expect(ordersService.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.RevealOpened,
++        OrderStatus.Redeemed,
++        { type: 'system' },
++      );
++    });
++  });
++});
+diff --git a/apps/api/src/redemptions/redemptions.service.ts b/apps/api/src/redemptions/redemptions.service.ts
+new file mode 100644
+index 0000000..b12fcf7
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.service.ts
+@@ -0,0 +1,83 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { OrderStatus } from '@ebun/types';
++import { OrdersService } from '../orders/orders.service';
++import { RedemptionsRepository, RedemptionRow } from './redemptions.repository';
++import { RedemptionConflictException } from './exceptions/redemption-conflict.exception';
++
++export interface CompleteRedemptionParams {
++  redemptionToken: string;
++  vendorId: string | null;
++  vendorConfirmedBy: string | null;
++  ipAddress: string | null;
++  userAgent: string | null;
++  /** Who's completing this — 'vendor' for a real in-person scan, 'system' for a no-vendor-needed type (VTU) auto-completing right after accept. */
++  actorType: 'vendor' | 'system';
++}
++
++/**
++ * Only public surface of RedemptionsModule — RedemptionsRepository
++ * stays internal, same boundary as every other module here.
++ */
++@Injectable()
++export class RedemptionsService {
++  private readonly logger = new Logger(RedemptionsService.name);
++
++  constructor(
++    private readonly repository: RedemptionsRepository,
++    private readonly ordersService: OrdersService,
++  ) {}
++
++  /** Called from POST /reveal/:token/accept — creates (or returns the existing) pending redemption row for an order. Idempotent on purpose; see RedemptionsRepository's doc comment. */
++  async createPendingForOrder(
++    orderId: string,
++    orderExpiresAt: string,
++  ): Promise<RedemptionRow> {
++    return this.repository.createPendingOrFetch(orderId, orderExpiresAt);
++  }
++
++  /**
++   * Completes a redemption. NOT atomic with the order's own status
++   * transition below — attempt_redemption() only touches the
++   * `redemptions` table, by the schema's own explicit design ("Separate
++   * from orders by design"). The redemption itself (the actual
++   * single-use, fraud-relevant control) completes first and is fully
++   * safe the moment this RPC returns non-null; the order's status
++   * transition to `redeemed` is bookkeeping on top of that, done best-
++   * effort afterward. If it fails, the redemption is still correctly,
++   * permanently completed — the order's status would just lag behind
++   * reality until someone notices and reconciles it. Flagged as an
++   * inherent gap given the schema's table separation, not something to
++   * silently paper over.
++   */
++  async complete(params: CompleteRedemptionParams): Promise<RedemptionRow> {
++    const redemption = await this.repository.attemptRedemption({
++      redemptionToken: params.redemptionToken,
++      vendorId: params.vendorId,
++      vendorConfirmedBy: params.vendorConfirmedBy,
++      ipAddress: params.ipAddress,
++      userAgent: params.userAgent,
++    });
++
++    if (!redemption) {
++      throw new RedemptionConflictException();
++    }
++
++    try {
++      await this.ordersService.transitionNormal(
++        redemption.order_id,
++        OrderStatus.RevealOpened,
++        OrderStatus.Redeemed,
++        { type: params.actorType },
++      );
++    } catch (err) {
++      this.logger.error(
++        `Redemption ${redemption.id} (order ${redemption.order_id}) completed successfully, ` +
++          `but the order's own status transition to 'redeemed' failed — order status will ` +
++          `lag behind the real (correctly single-use-enforced) redemption state until reconciled.`,
++        err instanceof Error ? err.stack : err,
++      );
++    }
++
++    return redemption;
++  }
++}
+diff --git a/apps/api/src/reveal/reveal-view.interface.ts b/apps/api/src/reveal/reveal-view.interface.ts
+new file mode 100644
+index 0000000..05f861a
+--- /dev/null
++++ b/apps/api/src/reveal/reveal-view.interface.ts
+@@ -0,0 +1,27 @@
++import { OrderStatus } from '@ebun/types';
++
++/**
++ * PROVISIONAL — built ahead of real mockups, at the person's own
++ * request (backend first). `orderStatus` is included raw specifically
++ * so the frontend isn't boxed in by whatever viewState buckets I
++ * guessed at here; expect this shape to change once real designs
++ * exist, hopefully by relaxing/extending rather than a rewrite.
++ */
++export type RevealViewState = 'not_ready' | 'ready' | 'expired' | 'unavailable';
++
++export interface RevealView {
++  viewState: RevealViewState;
++  orderStatus: OrderStatus;
++  recipientName?: string;
++  senderName?: string | null;
++  giftName?: string;
++  giftDescription?: string | null;
++  giftImageUrl?: string | null;
++  theme?: string;
++  message?: {
++    type: 'text' | 'voice' | 'video';
++    text?: string | null;
++    playbackUrl?: string;
++    durationSecs?: number | null;
++  };
++}
+diff --git a/apps/api/src/reveal/reveal.controller.ts b/apps/api/src/reveal/reveal.controller.ts
+new file mode 100644
+index 0000000..a063ae0
+--- /dev/null
++++ b/apps/api/src/reveal/reveal.controller.ts
+@@ -0,0 +1,27 @@
++import { Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
++import { Throttle } from '@nestjs/throttler';
++import { RevealService } from './reveal.service';
++
++/**
++ * Public, unauthenticated, token-gated — reveal_token is a high-entropy
++ * UUID (per the schema), but this is still the one surface in the app
++ * that takes arbitrary requests from the open internet against a
++ * possibly-enumerable identifier, hence the tighter-than-default
++ * throttling on both routes here specifically.
++ */
++@Controller('reveal')
++export class RevealController {
++  constructor(private readonly reveal: RevealService) {}
++
++  @Get(':token')
++  @Throttle({ default: { limit: 20, ttl: 60_000 } })
++  async view(@Param('token', new ParseUUIDPipe()) token: string) {
++    return this.reveal.view(token);
++  }
++
++  @Post(':token/accept')
++  @Throttle({ default: { limit: 10, ttl: 60_000 } })
++  async accept(@Param('token', new ParseUUIDPipe()) token: string) {
++    return this.reveal.acceptGift(token);
++  }
++}
+diff --git a/apps/api/src/reveal/reveal.module.ts b/apps/api/src/reveal/reveal.module.ts
+new file mode 100644
+index 0000000..ba1d13d
+--- /dev/null
++++ b/apps/api/src/reveal/reveal.module.ts
+@@ -0,0 +1,19 @@
++import { Module } from '@nestjs/common';
++import { OrdersModule } from '../orders/orders.module';
++import { GiftsModule } from '../gifts/gifts.module';
++import { UsersModule } from '../users/users.module';
++import { RedemptionsModule } from '../redemptions/redemptions.module';
++import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
++import { UnimplementedMediaUrlResolver } from '../media/unimplemented-media-url-resolver.service';
++import { RevealController } from './reveal.controller';
++import { RevealService } from './reveal.service';
++
++@Module({
++  imports: [OrdersModule, GiftsModule, UsersModule, RedemptionsModule],
++  controllers: [RevealController],
++  providers: [
++    { provide: MEDIA_URL_RESOLVER, useClass: UnimplementedMediaUrlResolver },
++    RevealService,
++  ],
++})
++export class RevealModule {}
+diff --git a/apps/api/src/reveal/reveal.service.spec.ts b/apps/api/src/reveal/reveal.service.spec.ts
+new file mode 100644
+index 0000000..82baa17
+--- /dev/null
++++ b/apps/api/src/reveal/reveal.service.spec.ts
+@@ -0,0 +1,325 @@
++import { Test } from '@nestjs/testing';
++import { FulfillmentType, OrderStatus } from '@ebun/types';
++import { RevealService } from './reveal.service';
++import { OrdersService } from '../orders/orders.service';
++import { OrderRow } from '../orders/orders.repository';
++import { GiftsService } from '../gifts/gifts.service';
++import { UsersService } from '../users/users.service';
++import { RedemptionsService } from '../redemptions/redemptions.service';
++import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
++import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
++
++function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
++  return {
++    id: 'order-1',
++    status: OrderStatus.ReadyForRedemption,
++    order_number: 'EBN-0001',
++    total_amount: 500000,
++    gift_template_id: 'template-1',
++    gift_value: 500000,
++    recipient_name: 'Ada',
++    recipient_phone: '+2348012345678',
++    reveal_token: 'reveal-token-1',
++    sender_id: 'sender-1',
++    sender_message: null,
++    message_type: null,
++    message_url: null,
++    message_duration_secs: null,
++    reveal_theme: 'gold',
++    scheduled_send_at: null,
++    expires_at: '2099-01-01T00:00:00.000Z', // far future by default
++    ...overrides,
++  };
++}
++
++describe('RevealService', () => {
++  let sut: RevealService;
++  let orders: { findByRevealToken: jest.Mock; transitionNormal: jest.Mock };
++  let gifts: { findById: jest.Mock };
++  let users: { findById: jest.Mock };
++  let redemptions: { createPendingForOrder: jest.Mock; complete: jest.Mock };
++  let mediaResolver: { resolvePlaybackUrl: jest.Mock };
++
++  beforeEach(async () => {
++    orders = { findByRevealToken: jest.fn(), transitionNormal: jest.fn() };
++    gifts = { findById: jest.fn() };
++    users = { findById: jest.fn() };
++    redemptions = {
++      createPendingForOrder: jest.fn(),
++      complete: jest.fn(),
++    };
++    mediaResolver = { resolvePlaybackUrl: jest.fn() };
++
++    gifts.findById.mockResolvedValue({
++      id: 'template-1',
++      name: 'Jollof Rice for Two',
++      description: 'A delicious meal',
++      image_url: 'https://example.com/img.png',
++      delivery_type: FulfillmentType.Vtu,
++    });
++    users.findById.mockResolvedValue({ id: 'sender-1', name: 'Chidi' });
++    orders.transitionNormal.mockResolvedValue(undefined);
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        RevealService,
++        { provide: OrdersService, useValue: orders },
++        { provide: GiftsService, useValue: gifts },
++        { provide: UsersService, useValue: users },
++        { provide: RedemptionsService, useValue: redemptions },
++        { provide: MEDIA_URL_RESOLVER, useValue: mediaResolver },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(RevealService);
++  });
++
++  describe('view', () => {
++    it('throws NotFoundException for an unknown token', async () => {
++      orders.findByRevealToken.mockResolvedValue(null);
++
++      await expect(sut.view('bad-token')).rejects.toThrow('No gift found');
++    });
++
++    it('transitions ready_for_redemption -> reveal_opened on first view and returns gift + sender details', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.ReadyForRedemption }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(orders.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.ReadyForRedemption,
++        OrderStatus.RevealOpened,
++        { type: 'user' },
++      );
++      expect(result.viewState).toBe('ready');
++      expect(result.giftName).toBe('Jollof Rice for Two');
++      expect(result.senderName).toBe('Chidi');
++      expect(result.recipientName).toBe('Ada');
++    });
++
++    it('also transitions voucher_issued -> reveal_opened on first view', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.VoucherIssued }),
++      );
++
++      await sut.view('reveal-token-1');
++
++      expect(orders.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.VoucherIssued,
++        OrderStatus.RevealOpened,
++        { type: 'user' },
++      );
++    });
++
++    it('does not re-transition on a second view — already reveal_opened', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(orders.transitionNormal).not.toHaveBeenCalled();
++      expect(result.viewState).toBe('ready');
++    });
++
++    it('treats a concurrent-request conflict on the reveal transition as success, not an error', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.ReadyForRedemption }),
++      );
++      orders.transitionNormal.mockRejectedValue(
++        new OrderTransitionConflictException(
++          'order-1',
++          OrderStatus.ReadyForRedemption,
++          OrderStatus.RevealOpened,
++        ),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('ready');
++    });
++
++    it('propagates a genuinely unexpected error from the transition attempt', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.ReadyForRedemption }),
++      );
++      orders.transitionNormal.mockRejectedValue(new Error('DB is on fire'));
++
++      await expect(sut.view('reveal-token-1')).rejects.toThrow('DB is on fire');
++    });
++
++    it('treats an order past expires_at as expired regardless of what status currently says (no cron has swept it yet)', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({
++          status: OrderStatus.ReadyForRedemption, // status hasn't caught up
++          expires_at: '2020-01-01T00:00:00.000Z', // long past
++        }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('expired');
++      expect(orders.transitionNormal).not.toHaveBeenCalled();
++      // Minimal payload — no gift/sender details leaked for an expired link.
++      expect(result.giftName).toBeUndefined();
++    });
++
++    it('does not treat an already-redeemed order as expired even if past expires_at', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({
++          status: OrderStatus.Redeemed,
++          expires_at: '2020-01-01T00:00:00.000Z',
++        }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('ready');
++    });
++
++    it('returns "unavailable" for a cancelled/refunded/failed order', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.Cancelled }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('unavailable');
++      expect(result.giftName).toBeUndefined();
++    });
++
++    it('returns "not_ready" for an order still mid-fulfillment', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.FulfillmentInProgress }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('not_ready');
++      expect(result.giftName).toBeUndefined();
++    });
++
++    it('resolves a private playback URL for a video message rather than returning message_url raw', async () => {
++      mediaResolver.resolvePlaybackUrl.mockResolvedValue(
++        'https://cdn.example.com/signed/video.mp4',
++      );
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({
++          message_type: 'video',
++          message_url: 'private/bucket/path.mp4',
++          message_duration_secs: 12,
++        }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(mediaResolver.resolvePlaybackUrl).toHaveBeenCalledWith(
++        'private/bucket/path.mp4',
++      );
++      expect(result.message).toEqual({
++        type: 'video',
++        text: null,
++        durationSecs: 12,
++        playbackUrl: 'https://cdn.example.com/signed/video.mp4',
++      });
++    });
++
++    it('does not call the media resolver for a text message', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ message_type: 'text', sender_message: 'Happy birthday!' }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(mediaResolver.resolvePlaybackUrl).not.toHaveBeenCalled();
++      expect(result.message).toEqual({ type: 'text', text: 'Happy birthday!' });
++    });
++  });
++
++  describe('acceptGift', () => {
++    it('auto-completes the redemption for a vtu gift with no vendor step to wait for', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++      redemptions.createPendingForOrder.mockResolvedValue({
++        redemption_token: 'redemption-token-1',
++      });
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        name: 'Airtime',
++        description: null,
++        image_url: null,
++        delivery_type: FulfillmentType.Vtu,
++      });
++
++      await sut.acceptGift('reveal-token-1');
++
++      expect(redemptions.createPendingForOrder).toHaveBeenCalledWith(
++        'order-1',
++        '2099-01-01T00:00:00.000Z',
++      );
++      expect(redemptions.complete).toHaveBeenCalledWith({
++        redemptionToken: 'redemption-token-1',
++        vendorId: null,
++        vendorConfirmedBy: null,
++        ipAddress: null,
++        userAgent: null,
++        actorType: 'system',
++      });
++    });
++
++    it('does NOT auto-complete for a digital_voucher gift — leaves it pending for a real vendor scan', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++      redemptions.createPendingForOrder.mockResolvedValue({
++        redemption_token: 'redemption-token-1',
++      });
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        name: 'Voucher',
++        description: null,
++        image_url: null,
++        delivery_type: FulfillmentType.DigitalVoucher,
++      });
++
++      await sut.acceptGift('reveal-token-1');
++
++      expect(redemptions.complete).not.toHaveBeenCalled();
++    });
++
++    it('implicitly performs the reveal transition if accept is called before any GET', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.ReadyForRedemption }),
++      );
++      redemptions.createPendingForOrder.mockResolvedValue({
++        redemption_token: 'redemption-token-1',
++      });
++
++      await sut.acceptGift('reveal-token-1');
++
++      expect(orders.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.ReadyForRedemption,
++        OrderStatus.RevealOpened,
++        { type: 'user' },
++      );
++      expect(redemptions.createPendingForOrder).toHaveBeenCalled();
++    });
++
++    it('is a no-op (just returns current view) if the gift is already redeemed', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.Redeemed }),
++      );
++
++      const result = await sut.acceptGift('reveal-token-1');
++
++      expect(redemptions.createPendingForOrder).not.toHaveBeenCalled();
++      expect(result.viewState).toBe('ready');
++    });
++  });
++});
+diff --git a/apps/api/src/reveal/reveal.service.ts b/apps/api/src/reveal/reveal.service.ts
+new file mode 100644
+index 0000000..e4ea58a
+--- /dev/null
++++ b/apps/api/src/reveal/reveal.service.ts
+@@ -0,0 +1,228 @@
++import { Inject, Injectable, NotFoundException } from '@nestjs/common';
++import { FulfillmentType, OrderStatus } from '@ebun/types';
++import { OrdersService } from '../orders/orders.service';
++import { OrderRow } from '../orders/orders.repository';
++import { GiftsService } from '../gifts/gifts.service';
++import { UsersService } from '../users/users.service';
++import { RedemptionsService } from '../redemptions/redemptions.service';
++import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
++import type { MediaUrlResolver } from '../media/media-url-resolver.interface';
++import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
++import { RevealView } from './reveal-view.interface';
++
++const PRE_REVEAL_STATES = new Set([
++  OrderStatus.VoucherIssued,
++  OrderStatus.ReadyForRedemption,
++]);
++
++const VIEWABLE_AFTER_REVEAL_STATES = new Set([
++  OrderStatus.RevealOpened,
++  OrderStatus.Redeemed,
++  OrderStatus.Fulfilled,
++]);
++
++const TERMINAL_NEGATIVE_STATES = new Set([
++  OrderStatus.Expired,
++  OrderStatus.Cancelled,
++  OrderStatus.Refunded,
++  OrderStatus.FulfillmentFailed,
++  OrderStatus.RedemptionFailed,
++]);
++
++/**
++ * Only public surface of RevealModule.
++ *
++ * PROVISIONAL BY DESIGN: built ahead of real mockups (Figma incoming),
++ * at the person's explicit request to do backend first. The viewState
++ * bucketing in reveal-view.interface.ts is my best guess at what a
++ * reveal page needs to distinguish, not a locked contract — expect to
++ * revise this once real screens exist.
++ */
++@Injectable()
++export class RevealService {
++  constructor(
++    private readonly ordersService: OrdersService,
++    private readonly giftsService: GiftsService,
++    private readonly usersService: UsersService,
++    private readonly redemptions: RedemptionsService,
++    @Inject(MEDIA_URL_RESOLVER)
++    private readonly mediaResolver: MediaUrlResolver,
++  ) {}
++
++  /**
++   * GET /reveal/:token. Safe to call repeatedly — the first call in a
++   * viewable pre-reveal state transitions the order to reveal_opened;
++   * every call after that (by design, or because a concurrent request
++   * won the race — see the catch below) just serves the same content.
++   */
++  async view(revealToken: string): Promise<RevealView> {
++    const order = await this.ordersService.findByRevealToken(revealToken);
++    if (!order) {
++      throw new NotFoundException('No gift found for this link.');
++    }
++
++    // Checked directly against expires_at, NOT trusted from order.status
++    // alone — no cron runs expire_unclaimed_gifts() yet (see
++    // FulfillmentOrchestratorService's file header for the established
++    // pattern of flagging cron-shaped gaps rather than silently
++    // assuming status is current). An order can be genuinely past its
++    // window while still sitting at ready_for_redemption/voucher_issued
++    // because nothing has swept it yet.
++    const isPastExpiry = new Date(order.expires_at) <= new Date();
++
++    if (
++      isPastExpiry &&
++      order.status !== OrderStatus.Redeemed &&
++      order.status !== OrderStatus.Fulfilled
++    ) {
++      return this.buildView(order, 'expired');
++    }
++
++    if (TERMINAL_NEGATIVE_STATES.has(order.status)) {
++      return this.buildView(order, 'unavailable');
++    }
++
++    if (PRE_REVEAL_STATES.has(order.status)) {
++      try {
++        await this.ordersService.transitionNormal(
++          order.id,
++          order.status,
++          OrderStatus.RevealOpened,
++          { type: 'user' },
++        );
++        order.status = OrderStatus.RevealOpened;
++      } catch (err) {
++        // A concurrent request (e.g. WhatsApp link preview fetchers
++        // hitting it at the same moment as the actual recipient) may
++        // have already won this exact transition. That's not a failure
++        // from this caller's point of view — the content is still
++        // safe to serve as "opened". Anything else is a genuine,
++        // unexpected problem and should propagate.
++        if (!(err instanceof OrderTransitionConflictException)) {
++          throw err;
++        }
++        order.status = OrderStatus.RevealOpened;
++      }
++      return this.buildView(order, 'ready');
++    }
++
++    if (VIEWABLE_AFTER_REVEAL_STATES.has(order.status)) {
++      return this.buildView(order, 'ready');
++    }
++
++    // paid / processing / fulfillment_in_progress / etc — the token
++    // exists (generated at order creation) but the gift genuinely isn't
++    // ready. Shouldn't happen in normal use (NotificationsService only
++    // sends this link once fulfillment completes), but the token could
++    // be probed before then.
++    return this.buildView(order, 'not_ready');
++  }
++
++  /**
++   * POST /reveal/:token/accept. Implicitly performs the reveal
++   * transition too if it hasn't happened yet (an accept without a prior
++   * GET is still a real acceptance, not an error). Creates the pending
++   * redemption record and, for fulfillment types with no vendor step to
++   * wait for (vtu — the money already landed as a top-up at fulfillment
++   * time), completes it immediately rather than leaving the recipient
++   * waiting on a redemption record that nothing else will ever advance.
++   */
++  async acceptGift(revealToken: string): Promise<RevealView> {
++    const order = await this.ordersService.findByRevealToken(revealToken);
++    if (!order) {
++      throw new NotFoundException('No gift found for this link.');
++    }
++
++    if (PRE_REVEAL_STATES.has(order.status)) {
++      await this.view(revealToken); // reuses the same idempotent transition + race handling
++      order.status = OrderStatus.RevealOpened;
++    }
++
++    if (order.status !== OrderStatus.RevealOpened) {
++      // Already redeemed/fulfilled, or expired/cancelled/etc — nothing
++      // new to do. Return the current view rather than erroring; an
++      // "accept" on a gift that's already accepted isn't a client
++      // mistake worth a 4xx.
++      return this.view(revealToken);
++    }
++
++    const giftTemplate = await this.giftsService.findById(
++      order.gift_template_id,
++    );
++
++    const redemption = await this.redemptions.createPendingForOrder(
++      order.id,
++      order.expires_at,
++    );
++
++    if (giftTemplate.delivery_type === FulfillmentType.Vtu) {
++      await this.redemptions.complete({
++        redemptionToken: redemption.redemption_token,
++        vendorId: null,
++        vendorConfirmedBy: null,
++        ipAddress: null,
++        userAgent: null,
++        actorType: 'system',
++      });
++      return this.view(revealToken);
++    }
++
++    // digital_voucher — pending, waiting on a real vendor scan via
++    // POST /redeem (not built into any vendor-facing UI yet). The
++    // recipient's own view of "I've accepted, here's my code" is
++    // reveal-view.interface.ts's job to render once real mockups exist;
++    // for now this just confirms acceptance succeeded.
++    return this.view(revealToken);
++  }
++
++  private async buildView(
++    order: OrderRow,
++    viewState: RevealView['viewState'],
++  ): Promise<RevealView> {
++    if (
++      viewState === 'not_ready' ||
++      viewState === 'expired' ||
++      viewState === 'unavailable'
++    ) {
++      // Deliberately minimal — no gift/sender details for a link that
++      // isn't (or is no longer) valid to view.
++      return { viewState, orderStatus: order.status };
++    }
++
++    const giftTemplate = await this.giftsService.findById(
++      order.gift_template_id,
++    );
++    const sender = order.sender_id
++      ? await this.usersService.findById(order.sender_id)
++      : null;
++
++    const view: RevealView = {
++      viewState,
++      orderStatus: order.status,
++      recipientName: order.recipient_name,
++      senderName: sender?.name ?? null,
++      giftName: giftTemplate.name,
++      giftDescription: giftTemplate.description,
++      giftImageUrl: giftTemplate.image_url,
++      theme: order.reveal_theme,
++    };
++
++    if (order.message_type === 'text') {
++      view.message = { type: 'text', text: order.sender_message };
++    } else if (
++      order.message_type === 'voice' ||
++      order.message_type === 'video'
++    ) {
++      view.message = {
++        type: order.message_type,
++        text: order.sender_message, // optional caption alongside voice/video, if the sender added one
++        durationSecs: order.message_duration_secs,
++        playbackUrl: order.message_url
++          ? await this.mediaResolver.resolvePlaybackUrl(order.message_url)
++          : undefined,
++      };
++    }
++
++    return view;
++  }
++}
+diff --git a/apps/api/src/termii/termii-whatsapp-client.service.spec.ts b/apps/api/src/termii/termii-whatsapp-client.service.spec.ts
+new file mode 100644
+index 0000000..1868580
+--- /dev/null
++++ b/apps/api/src/termii/termii-whatsapp-client.service.spec.ts
+@@ -0,0 +1,129 @@
++import { Test } from '@nestjs/testing';
++import { ConfigService } from '@nestjs/config';
++import { TermiiWhatsappClientService } from './termii-whatsapp-client.service';
++
++const fetchMock = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>();
++
++interface FakeFetchResponse {
++  ok: boolean;
++  statusText?: string;
++  json: () => Promise<unknown>;
++}
++
++function fakeResponse(body: FakeFetchResponse): Response {
++  return body as unknown as Response;
++}
++
++const CONFIGURED = {
++  TERMII_API_KEY: 'termii_test_key',
++  TERMII_BASE_URL: 'https://api.ng.termii.com',
++  TERMII_WHATSAPP_DEVICE_ID: 'device-123',
++  TERMII_WHATSAPP_TEMPLATE_ID: 'template-abc',
++};
++
++async function buildSut(
++  config: Partial<typeof CONFIGURED>,
++): Promise<TermiiWhatsappClientService> {
++  const moduleRef = await Test.createTestingModule({
++    providers: [
++      TermiiWhatsappClientService,
++      {
++        provide: ConfigService,
++        useValue: { get: (key: keyof typeof CONFIGURED) => config[key] },
++      },
++    ],
++  }).compile();
++
++  return moduleRef.get(TermiiWhatsappClientService);
++}
++
++describe('TermiiWhatsappClientService', () => {
++  beforeEach(() => {
++    global.fetch = fetchMock;
++    fetchMock.mockReset();
++  });
++
++  it('POSTs to /api/send/template with the documented field names and returns the message id', async () => {
++    const sut = await buildSut(CONFIGURED);
++    fetchMock.mockResolvedValue(
++      fakeResponse({
++        ok: true,
++        json: () =>
++          Promise.resolve({
++            code: 'ok',
++            message: 'Successfully Sent',
++            message_id_str: '3017544054459083819856413',
++          }),
++      }),
++    );
++
++    const result = await sut.sendTemplateMessage({
++      phoneNumber: '2348012345678',
++      data: { '1': 'Ada', '2': 'https://app.ebun.ng/reveal/token123' },
++    });
++
++    expect(fetchMock).toHaveBeenCalledWith(
++      'https://api.ng.termii.com/api/send/template',
++      expect.objectContaining({ method: 'POST' }),
++    );
++
++    const [, requestInit] = fetchMock.mock.calls[0];
++    const sentBody = JSON.parse(requestInit?.body as string) as Record<
++      string,
++      unknown
++    >;
++    expect(sentBody).toEqual({
++      api_key: 'termii_test_key',
++      phone_number: '2348012345678',
++      device_id: 'device-123',
++      template_id: 'template-abc',
++      data: { '1': 'Ada', '2': 'https://app.ebun.ng/reveal/token123' },
++    });
++
++    expect(result).toEqual({ providerMessageId: '3017544054459083819856413' });
++  });
++
++  it('throws a clear, actionable error when Termii config is missing, rather than sending a malformed request', async () => {
++    const sut = await buildSut({});
++
++    await expect(
++      sut.sendTemplateMessage({
++        phoneNumber: '2348012345678',
++        data: {},
++      }),
++    ).rejects.toThrow(/not configured yet/);
++
++    expect(fetchMock).not.toHaveBeenCalled();
++  });
++
++  it('throws BadGatewayException when Termii reports a non-"ok" code', async () => {
++    const sut = await buildSut(CONFIGURED);
++    fetchMock.mockResolvedValue(
++      fakeResponse({
++        ok: true,
++        json: () =>
++          Promise.resolve({ code: 'error', message: 'Invalid Sender Id' }),
++      }),
++    );
++
++    await expect(
++      sut.sendTemplateMessage({ phoneNumber: '2348012345678', data: {} }),
++    ).rejects.toThrow(/Invalid Sender Id/);
++  });
++
++  it('throws BadGatewayException on a non-2xx HTTP response', async () => {
++    const sut = await buildSut(CONFIGURED);
++    fetchMock.mockResolvedValue(
++      fakeResponse({
++        ok: false,
++        statusText: 'Unauthorized',
++        json: () =>
++          Promise.resolve({ code: 'error', message: 'No valid API key' }),
++      }),
++    );
++
++    await expect(
++      sut.sendTemplateMessage({ phoneNumber: '2348012345678', data: {} }),
++    ).rejects.toThrow(/No valid API key/);
++  });
++});
+diff --git a/apps/api/src/termii/termii-whatsapp-client.service.ts b/apps/api/src/termii/termii-whatsapp-client.service.ts
+new file mode 100644
+index 0000000..98e6e65
+--- /dev/null
++++ b/apps/api/src/termii/termii-whatsapp-client.service.ts
+@@ -0,0 +1,123 @@
++import {
++  BadGatewayException,
++  Injectable,
++  InternalServerErrorException,
++} from '@nestjs/common';
++import { ConfigService } from '@nestjs/config';
++
++export interface SendWhatsappTemplateParams {
++  phoneNumber: string;
++  /**
++   * Positional template variables, per Termii's convention (their own
++   * docs example: {"1": "2", "3": "4"}) — WhatsApp Business templates use
++   * numbered placeholders tied to the SPECIFIC approved template's
++   * content, not named keys. Which numbers mean what is entirely a
++   * function of whichever template ends up approved on the Termii
++   * dashboard — see this file's header for why that can't be nailed down
++   * further from here.
++   */
++  data: Record<string, string>;
++}
++
++export interface SendWhatsappTemplateResult {
++  providerMessageId: string;
++}
++
++interface TermiiTemplateResponse {
++  code: string; // "ok" on success, per docs
++  message: string;
++  message_id?: string;
++  message_id_str?: string;
++}
++
++/**
++ * Outbound calls to Termii's WhatsApp Template API
++ * (https://developer.termii.com/templates, verified current as of this
++ * writing). Same module-boundary reasoning as PaystackClientService:
++ * this depends on nothing of ours, so NotificationsModule can import it
++ * without risking a cycle.
++ *
++ * WHY THE TEMPLATE ENDPOINT, NOT THE PLAIN "CONVERSATIONAL" ONE:
++ * Termii's docs (developer.termii.com/error, "common errors") say a
++ * free-form WhatsApp message fails unless the recipient already opened
++ * a messaging window by messaging Ebun's WhatsApp number first. Every
++ * Ebun recipient's FIRST contact is the gift reveal notification itself
++ * — there is no prior inbound message to open that window. The
++ * Template API (POST /api/send/template) is Termii's documented path
++ * for messaging someone outside that window, which is Ebun's only real
++ * option here.
++ *
++ * WHAT THIS CANNOT KNOW YET, AND WHY:
++ * A WhatsApp Business template must be written and approved by Meta
++ * before it has a template_id, a device_id (from registering a WhatsApp
++ * "device" on the Termii dashboard), or a fixed set of positional
++ * variables — none of which can be produced from documentation alone;
++ * they only exist once a real Termii account has gone through that
++ * setup. TERMII_WHATSAPP_DEVICE_ID/TERMII_WHATSAPP_TEMPLATE_ID are read
++ * from config for exactly this reason, and this method throws a clear,
++ * actionable error if they're unset rather than silently no-op'ing or
++ * guessing values — same "loud failure" bias as
++ * UnimplementedVtuProviderService, for the same underlying reason: I
++ * don't have a real account to verify this against, so the code says so
++ * plainly instead of pretending otherwise.
++ *
++ * UNVERIFIED AGAINST A LIVE TERMII ACCOUNT. Built strictly from
++ * developer.termii.com's published request/response shapes, which are
++ * primary-source and currently dated — but no sandbox call has actually
++ * been made. Treat this as needing one real smoke test against a real
++ * Termii account (with a real approved template) before depending on it
++ * in production.
++ */
++@Injectable()
++export class TermiiWhatsappClientService {
++  constructor(private readonly config: ConfigService) {}
++
++  async sendTemplateMessage(
++    params: SendWhatsappTemplateParams,
++  ): Promise<SendWhatsappTemplateResult> {
++    const apiKey = this.config.get<string>('TERMII_API_KEY');
++    const baseUrl = this.config.get<string>('TERMII_BASE_URL');
++    const deviceId = this.config.get<string>('TERMII_WHATSAPP_DEVICE_ID');
++    const templateId = this.config.get<string>('TERMII_WHATSAPP_TEMPLATE_ID');
++
++    if (!apiKey || !baseUrl || !deviceId || !templateId) {
++      throw new InternalServerErrorException(
++        'Termii WhatsApp is not configured yet (need TERMII_API_KEY, ' +
++          'TERMII_BASE_URL, TERMII_WHATSAPP_DEVICE_ID, and ' +
++          'TERMII_WHATSAPP_TEMPLATE_ID) — a WhatsApp device and an ' +
++          'approved message template must exist on the Termii dashboard ' +
++          'first. See TermiiWhatsappClientService for why this cannot be ' +
++          'guessed at from documentation alone.',
++      );
++    }
++
++    const response = await fetch(`${baseUrl}/api/send/template`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({
++        api_key: apiKey,
++        phone_number: params.phoneNumber,
++        device_id: deviceId,
++        template_id: templateId,
++        data: params.data,
++      }),
++    });
++
++    const body = (await response.json()) as TermiiTemplateResponse;
++
++    if (!response.ok || body.code !== 'ok') {
++      throw new BadGatewayException(
++        `Termii WhatsApp template send failed: ${body.message ?? response.statusText}`,
++      );
++    }
++
++    const providerMessageId = body.message_id_str ?? body.message_id;
++    if (!providerMessageId) {
++      throw new BadGatewayException(
++        'Termii reported success but returned no message_id — cannot record delivery tracking.',
++      );
++    }
++
++    return { providerMessageId };
++  }
++}
+diff --git a/apps/api/src/termii/termii.module.ts b/apps/api/src/termii/termii.module.ts
+new file mode 100644
+index 0000000..7d1cef7
+--- /dev/null
++++ b/apps/api/src/termii/termii.module.ts
+@@ -0,0 +1,8 @@
++import { Module } from '@nestjs/common';
++import { TermiiWhatsappClientService } from './termii-whatsapp-client.service';
++
++@Module({
++  providers: [TermiiWhatsappClientService],
++  exports: [TermiiWhatsappClientService],
++})
++export class TermiiModule {}
+diff --git a/apps/api/src/users/users.repository.ts b/apps/api/src/users/users.repository.ts
+index 1f3dd8a..fc13d69 100644
+--- a/apps/api/src/users/users.repository.ts
++++ b/apps/api/src/users/users.repository.ts
+@@ -31,6 +31,24 @@ export class UsersRepository {
+     return response.data ?? null;
+   }
+ 
++  /** Used by the reveal endpoint to display the sender's name — only ever selects name, never email/phone (this data ends up in a public-facing response). */
++  async findById(id: string): Promise<Pick<UserRow, 'id' | 'name'> | null> {
++    const response = (await this.supabase
++      .from('users')
++      .select('id, name')
++      .eq('id', id)
++      .maybeSingle()) as {
++      data: Pick<UserRow, 'id' | 'name'> | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? null;
++  }
++
+   /**
+    * Creates a GUEST user — auth_id stays null (the column is nullable in the schema specifically for this). If they create a real account later, auth_id can be backfilled onto this same row rather than creating a duplicate — not built yet, but the schema already supports it.
+    */
+diff --git a/apps/api/src/users/users.service.ts b/apps/api/src/users/users.service.ts
+index 6c44caf..fab2850 100644
+--- a/apps/api/src/users/users.service.ts
++++ b/apps/api/src/users/users.service.ts
+@@ -35,6 +35,11 @@ export class UsersService {
+     }
+   }
+ 
++  /** Public-facing display purposes only — see UsersRepository.findById for why this never returns email/phone. */
++  async findById(id: string) {
++    return this.repository.findById(id);
++  }
++
+   private isUniqueViolation(error: unknown): boolean {
+     return (
+       typeof error === 'object' &&
+diff --git a/packages/types/src/fulfillment-status.ts b/packages/types/src/fulfillment-status.ts
+new file mode 100644
+index 0000000..bfa5d29
+--- /dev/null
++++ b/packages/types/src/fulfillment-status.ts
+@@ -0,0 +1,34 @@
++/**
++ * Mirrors the Postgres `fulfillment_status` enum in
++ * supabase/migrations/20260817040312_ebun_initial_schema.sql exactly.
++ * Tracks `gift_fulfillments.status` — deliberately a separate vocabulary
++ * from OrderStatus. The schema's own comment on gift_fulfillments says
++ * why: "fulfillment state doesn't pollute order state." An order's
++ * status answers "what stage of the sender→recipient lifecycle is this
++ * gift at, from the outside" (paid, ready_for_redemption, etc). A
++ * fulfillment's status answers "what is the vendor/VTU/voucher process
++ * doing right now, on the inside" (vtu_processing, rider_dispatched,
++ * etc) — a finer-grained, type-specific log that orders.status alone
++ * can't express without conflating physical/digital/VTU concerns.
++ *
++ * As with OrderStatus, this file is vocabulary only — no transition
++ * graph. Which fulfillment_status values are legal for which
++ * fulfillment_type, and in what order, is business logic that lives in
++ * apps/api (see apps/api/src/fulfillment/).
++ */
++export enum FulfillmentStatus {
++  Pending = 'pending',
++  VendorNotified = 'vendor_notified',
++  VendorAccepted = 'vendor_accepted',
++  VendorDeclined = 'vendor_declined',
++  VendorTimeout = 'vendor_timeout',
++  InProgress = 'in_progress',
++  RiderDispatched = 'rider_dispatched',
++  Delivered = 'delivered',
++  VoucherGenerated = 'voucher_generated',
++  VtuProcessing = 'vtu_processing',
++  VtuComplete = 'vtu_complete',
++  Completed = 'completed',
++  Failed = 'failed',
++  Cancelled = 'cancelled',
++}
+diff --git a/packages/types/src/fulfillment-type.ts b/packages/types/src/fulfillment-type.ts
+new file mode 100644
+index 0000000..4650cc8
+--- /dev/null
++++ b/packages/types/src/fulfillment-type.ts
+@@ -0,0 +1,16 @@
++/**
++ * Mirrors the Postgres `fulfillment_type` enum in
++ * supabase/migrations/20260817040312_ebun_initial_schema.sql exactly.
++ * Lives on `gift_templates.delivery_type` — this is what an order's
++ * fulfillment orchestration branches on, not something set per-order.
++ *
++ * Same "plain string enum" rationale as OrderStatus (see order-status.ts):
++ * isolatedModules forbids const enum, and string values round-trip
++ * through Postgres/Supabase without a mapping layer.
++ */
++export enum FulfillmentType {
++  Physical = 'physical',
++  DigitalVoucher = 'digital_voucher',
++  Vtu = 'vtu',
++  Experience = 'experience',
++}
+diff --git a/packages/types/src/index.ts b/packages/types/src/index.ts
+index 9ccb589..c7314b3 100644
+--- a/packages/types/src/index.ts
++++ b/packages/types/src/index.ts
+@@ -1 +1,6 @@
+-export {OrderStatus} from './order-status';
+\ No newline at end of file
++export {OrderStatus} from './order-status';
++export {FulfillmentType} from './fulfillment-type';
++export {FulfillmentStatus} from './fulfillment-status';
++export {NotificationChannel} from './notification-channel';
++export {NotificationStatus} from './notification-status';
++export {RedemptionStatus} from './redemption-status';
+\ No newline at end of file
+diff --git a/packages/types/src/notification-channel.ts b/packages/types/src/notification-channel.ts
+new file mode 100644
+index 0000000..0744488
+--- /dev/null
++++ b/packages/types/src/notification-channel.ts
+@@ -0,0 +1,10 @@
++/**
++ * Mirrors the Postgres `notification_channel` enum in
++ * supabase/migrations/20260817040312_ebun_initial_schema.sql exactly.
++ */
++export enum NotificationChannel {
++  Whatsapp = 'whatsapp',
++  Sms = 'sms',
++  Email = 'email',
++  Push = 'push',
++}
+diff --git a/packages/types/src/notification-status.ts b/packages/types/src/notification-status.ts
+new file mode 100644
+index 0000000..952eaf7
+--- /dev/null
++++ b/packages/types/src/notification-status.ts
+@@ -0,0 +1,15 @@
++/**
++ * Mirrors the Postgres `notification_status` enum in
++ * supabase/migrations/20260817040312_ebun_initial_schema.sql exactly.
++ * Vocabulary only, same as OrderStatus/FulfillmentStatus — no transition
++ * graph here. NotificationsRepository/Service in apps/api own which
++ * transitions are legal.
++ */
++export enum NotificationStatus {
++  Pending = 'pending',
++  Sent = 'sent',
++  Delivered = 'delivered',
++  Failed = 'failed',
++  Retrying = 'retrying',
++  Cancelled = 'cancelled',
++}
+diff --git a/packages/types/src/redemption-status.ts b/packages/types/src/redemption-status.ts
+new file mode 100644
+index 0000000..1d7d850
+--- /dev/null
++++ b/packages/types/src/redemption-status.ts
+@@ -0,0 +1,14 @@
++/**
++ * Mirrors the Postgres `redemption_status` enum in
++ * supabase/migrations/20260817040312_ebun_initial_schema.sql exactly.
++ * Vocabulary only — RedemptionsService owns which transitions are legal
++ * (in practice: pending -> initiated -> completed, or -> failed/expired,
++ * enforced by the atomic attempt_redemption() RPC, not by NestJS).
++ */
++export enum RedemptionStatus {
++  Pending = 'pending',
++  Initiated = 'initiated',
++  Completed = 'completed',
++  Failed = 'failed',
++  Expired = 'expired',
++}
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index d9eeee4..2f45925 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -238,6 +238,9 @@ importers:
+       '@nestjs/platform-express':
+         specifier: ^11.0.1
+         version: 11.2.1(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.1)(supports-color@8.1.1)
++      '@nestjs/throttler':
++        specifier: ^6.5.0
++        version: 6.5.0(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.1)(reflect-metadata@0.2.2)
+       '@supabase/supabase-js':
+         specifier: ^2.112.3
+         version: 2.112.4
+@@ -1176,6 +1179,13 @@ packages:
+       '@nestjs/platform-express':
+         optional: true
+ 
++  '@nestjs/throttler@6.5.0':
++    resolution: {integrity: sha512-9j0ZRfH0QE1qyrj9JjIRDz5gQLPqq9yVC2nHsrosDVAfI5HHw08/aUAWx9DZLSdQf4HDkmhTTEGLrRFHENvchQ==}
++    peerDependencies:
++      '@nestjs/common': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0
++      '@nestjs/core': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0
++      reflect-metadata: ^0.1.13 || ^0.2.0
++
+   '@next/env@16.3.1':
+     resolution: {integrity: sha512-35G3xwkQUb2oETSDjFXGrVugknoayLFBh7vSE+yAcl9IP2zT9wyGwq7297AYHR11kJld807t5f8AJBs6WBzXsQ==}
+ 
+@@ -5487,6 +5497,12 @@ snapshots:
+     optionalDependencies:
+       '@nestjs/platform-express': 11.2.1(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.1)(supports-color@8.1.1)
+ 
++  '@nestjs/throttler@6.5.0(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.1)(reflect-metadata@0.2.2)':
++    dependencies:
++      '@nestjs/common': 11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1)
++      '@nestjs/core': 11.2.1(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/platform-express@11.2.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
++      reflect-metadata: 0.2.2
++
+   '@next/env@16.3.1': {}
+ 
+   '@next/eslint-plugin-next@16.3.1(eslint@9.39.5(jiti@2.7.0)(supports-color@8.1.1))':
