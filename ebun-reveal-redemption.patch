@@ -1,0 +1,1477 @@
+diff --git a/apps/api/package.json b/apps/api/package.json
+index ace236c..64312a1 100644
+--- a/apps/api/package.json
++++ b/apps/api/package.json
+@@ -26,6 +26,7 @@
+     "@nestjs/config": "^4.0.4",
+     "@nestjs/core": "^11.0.1",
+     "@nestjs/platform-express": "^11.0.1",
++    "@nestjs/throttler": "^6.5.0",
+     "@supabase/supabase-js": "^2.112.3",
+     "class-transformer": "^0.5.1",
+     "class-validator": "^0.15.0",
+diff --git a/apps/api/src/app.module.ts b/apps/api/src/app.module.ts
+index 81dec6b..55dd287 100644
+--- a/apps/api/src/app.module.ts
++++ b/apps/api/src/app.module.ts
+@@ -1,11 +1,15 @@
+ import { Module } from '@nestjs/common';
+ import { ConfigModule } from '@nestjs/config';
++import { APP_GUARD } from '@nestjs/core';
++import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+ import { AppController } from './app.controller';
+ import { AppService } from './app.service';
+ import { OrdersModule } from './orders/orders.module';
+ import { SupabaseModule } from './supabase/supabase.module';
+ import { IdempotencyModule } from './idempotency/idempotency.module';
+ import { PaymentsModule } from './payments/payments.module';
++import { RevealModule } from './reveal/reveal.module';
++import { RedemptionsModule } from './redemptions/redemptions.module';
+ import { validateEnv } from './config/env.validation';
+ 
+ @Module({
+@@ -14,12 +18,19 @@ import { validateEnv } from './config/env.validation';
+       isGlobal: true,
+       validate: validateEnv,
+     }),
++    // Global default (OWASP ASVS baseline: rate limiting on public
++    // endpoints). Reveal/redeem routes override this with their own
++    // tighter @Throttle() given they're the app's most exposed surface
++    // — see reveal.controller.ts / redemptions.controller.ts.
++    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
+     SupabaseModule,
+     OrdersModule,
+     IdempotencyModule,
+     PaymentsModule,
++    RevealModule,
++    RedemptionsModule,
+   ],
+   controllers: [AppController],
+-  providers: [AppService],
++  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+ })
+ export class AppModule {}
+diff --git a/apps/api/src/fulfillment/fulfillment-orchestrator.service.spec.ts b/apps/api/src/fulfillment/fulfillment-orchestrator.service.spec.ts
+index 4957107..a0b205c 100644
+--- a/apps/api/src/fulfillment/fulfillment-orchestrator.service.spec.ts
++++ b/apps/api/src/fulfillment/fulfillment-orchestrator.service.spec.ts
+@@ -22,6 +22,12 @@ function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
+     recipient_name: 'Recipient Name',
+     recipient_phone: '+2348012345678',
+     reveal_token: 'reveal-token-1',
++    sender_id: 'sender-1',
++    sender_message: null,
++    message_type: null,
++    message_url: null,
++    message_duration_secs: null,
++    reveal_theme: 'gold',
+     scheduled_send_at: null,
+     expires_at: '2026-10-06T00:00:00.000Z',
+     ...overrides,
+diff --git a/apps/api/src/gifts/gift-templates.repository.ts b/apps/api/src/gifts/gift-templates.repository.ts
+index a7c7d14..c5cf1b9 100644
+--- a/apps/api/src/gifts/gift-templates.repository.ts
++++ b/apps/api/src/gifts/gift-templates.repository.ts
+@@ -5,6 +5,9 @@ import { SUPABASE_CLIENT } from '../supabase/supabase.module';
+ 
+ export interface GiftTemplateRow {
+   id: string;
++  name: string;
++  description: string | null;
++  image_url: string | null;
+   base_price: number; // kobo
+   available: boolean;
+   requires_address: boolean;
+diff --git a/apps/api/src/media/media-url-resolver.interface.ts b/apps/api/src/media/media-url-resolver.interface.ts
+new file mode 100644
+index 0000000..0c40443
+--- /dev/null
++++ b/apps/api/src/media/media-url-resolver.interface.ts
+@@ -0,0 +1,23 @@
++/**
++ * Resolves a private Cloudflare R2 object path into a short-lived,
++ * publicly-fetchable playback URL. "Media storage: Cloudflare R2
++ * (presigned URLs, private by default)" is a settled architecture
++ * decision — orders.message_url is a path into a PRIVATE bucket, not a
++ * directly fetchable URL. Something has to turn it into a presigned GET
++ * URL before a recipient's browser can play it back.
++ *
++ * NOT IMPLEMENTED YET — same reasoning and same shape as
++ * VtuProviderService: I don't have R2 account credentials
++ * (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY /
++ * R2_BUCKET_NAME) in this session, and guessing at bucket/key
++ * conventions risks building against the wrong shape. RevealService is
++ * written against this interface so a real R2Client-backed
++ * implementation (via @aws-sdk/client-s3's S3 presigner, which is how
++ * R2's S3-compatible API is normally driven from Node) is a one-line
++ * change in RevealModule's providers array.
++ */
++export interface MediaUrlResolver {
++  resolvePlaybackUrl(privateMessageUrl: string): Promise<string>;
++}
++
++export const MEDIA_URL_RESOLVER = Symbol('MEDIA_URL_RESOLVER');
+diff --git a/apps/api/src/media/unimplemented-media-url-resolver.service.ts b/apps/api/src/media/unimplemented-media-url-resolver.service.ts
+new file mode 100644
+index 0000000..249c4b4
+--- /dev/null
++++ b/apps/api/src/media/unimplemented-media-url-resolver.service.ts
+@@ -0,0 +1,35 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { MediaUrlResolver } from './media-url-resolver.interface';
++
++/**
++ * Default MEDIA_URL_RESOLVER binding until real R2 presigned-URL
++ * generation exists. Deliberately does NOT throw the way
++ * UnimplementedVtuProviderService does — reveal is the recipient's
++ * entire moment with the gift; hard-failing the whole reveal page
++ * because playback isn't wired up yet would block testing everything
++ * else about the flow. Instead this passes the raw message_url through
++ * unchanged and logs a loud warning every time, so it's impossible to
++ * miss in logs but doesn't block end-to-end testing of the rest of the
++ * reveal/accept/redeem flow.
++ *
++ * THIS IS NOT SAFE FOR REAL RECIPIENT MESSAGES: if the R2 bucket is
++ * actually private (per architecture decisions, it should be), the
++ * passthrough URL will simply fail to load in the recipient's browser —
++ * or worse, work by accident if the bucket is misconfigured as public.
++ * Either way, do not ship this to real users before replacing it with a
++ * real presigned-URL implementation.
++ */
++@Injectable()
++export class UnimplementedMediaUrlResolver implements MediaUrlResolver {
++  private readonly logger = new Logger(UnimplementedMediaUrlResolver.name);
++
++  resolvePlaybackUrl(privateMessageUrl: string): Promise<string> {
++    this.logger.warn(
++      'MediaUrlResolver is not implemented — returning the raw (possibly private) ' +
++        'message_url unchanged. This will not play back for real recipients if the ' +
++        'R2 bucket is actually private. Needs a real R2 presigned-URL implementation ' +
++        'before this reaches production.',
++    );
++    return Promise.resolve(privateMessageUrl);
++  }
++}
+diff --git a/apps/api/src/notifications/notifications.service.spec.ts b/apps/api/src/notifications/notifications.service.spec.ts
+index 02f7f4b..f1e859a 100644
+--- a/apps/api/src/notifications/notifications.service.spec.ts
++++ b/apps/api/src/notifications/notifications.service.spec.ts
+@@ -18,6 +18,12 @@ function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
+     recipient_name: 'Ada',
+     recipient_phone: '+2348012345678',
+     reveal_token: 'reveal-token-1',
++    sender_id: 'sender-1',
++    sender_message: null,
++    message_type: null,
++    message_url: null,
++    message_duration_secs: null,
++    reveal_theme: 'gold',
+     scheduled_send_at: null,
+     expires_at: '2026-10-06T00:00:00.000Z',
+     ...overrides,
+diff --git a/apps/api/src/orders/orders.repository.ts b/apps/api/src/orders/orders.repository.ts
+index ec253a6..7627330 100644
+--- a/apps/api/src/orders/orders.repository.ts
++++ b/apps/api/src/orders/orders.repository.ts
+@@ -32,6 +32,15 @@ export interface OrderRow {
+   recipient_name: string;
+   recipient_phone: string;
+   reveal_token: string;
++  // Below: only populated by findByRevealToken() — same "typed as
++  // required, but only true for the method that actually selects them"
++  // convention noted above for total_amount/gift_template_id etc.
++  sender_id: string | null; // nullable — guest senders w/ auth_id null still get a users row, but sender_id itself can be null if that user was later deleted (on delete set null)
++  sender_message: string | null;
++  message_type: 'text' | 'voice' | 'video' | null;
++  message_url: string | null; // Cloudflare R2 URL — PRIVATE bucket per architecture decisions; never return this raw to a public endpoint, see MediaUrlResolver
++  message_duration_secs: number | null;
++  reveal_theme: string;
+   scheduled_send_at: string | null;
+   expires_at: string;
+   [key: string]: unknown;
+@@ -106,6 +115,33 @@ export class OrdersRepository {
+     return response.data ?? null;
+   }
+ 
++  /**
++   * Public-facing lookup — called from the unauthenticated GET
++   * /reveal/:token endpoint, so this is the one OrdersRepository method
++   * where the caller is the open internet, not an authenticated
++   * subsystem. Selects only reveal-relevant columns; deliberately
++   * excludes payment fields (paystack_reference, total_amount isn't
++   * needed either — recipients see the gift, not the price paid).
++   */
++  async findByRevealToken(revealToken: string): Promise<OrderRow | null> {
++    const response = (await this.supabase
++      .from('orders')
++      .select(
++        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at',
++      )
++      .eq('reveal_token', revealToken)
++      .maybeSingle()) as {
++      data: OrderRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? null;
++  }
++
+   /**
+    * Reads an order by id, selecting only the columns fulfillment
+    * orchestration actually needs (gift_template_id to look up the
+diff --git a/apps/api/src/orders/orders.service.ts b/apps/api/src/orders/orders.service.ts
+index 4970496..898bd06 100644
+--- a/apps/api/src/orders/orders.service.ts
++++ b/apps/api/src/orders/orders.service.ts
+@@ -59,6 +59,11 @@ export class OrdersService {
+     return this.ordersRepository.findById(orderId);
+   }
+ 
++  /** Public-facing — see OrdersRepository.findByRevealToken for why this selects a deliberately narrower, non-payment column set than findById. */
++  async findByRevealToken(revealToken: string) {
++    return this.ordersRepository.findByRevealToken(revealToken);
++  }
++
+   /** Delegates straight through — see OrdersRepository.recordRevealSent for why this deliberately doesn't touch order.status. */
+   async recordRevealSent(orderId: string, revealUrl: string) {
+     return this.ordersRepository.recordRevealSent(orderId, revealUrl);
+diff --git a/apps/api/src/redemptions/dto/redeem.dto.ts b/apps/api/src/redemptions/dto/redeem.dto.ts
+new file mode 100644
+index 0000000..5e660c4
+--- /dev/null
++++ b/apps/api/src/redemptions/dto/redeem.dto.ts
+@@ -0,0 +1,31 @@
++import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
++
++/**
++ * redemptionToken in the request BODY, not a URL path/query param —
++ * see redemptions.controller.ts's header for why that's a deliberate
++ * departure from the originally-sketched `/redeem/[token]` URL shape.
++ *
++ * vendorId/vendorConfirmedBy are REQUIRED, not optional. This endpoint
++ * is specifically "a vendor scanned a QR and confirmed" — the DB's own
++ * attempt_redemption() function will happily accept a null vendor and
++ * complete the redemption anyway, which would let anyone holding a
++ * leaked redemption_token bypass in-person vendor confirmation entirely
++ * for a digital_voucher gift. A vendorless completion (VTU, which has
++ * no vendor step to wait for) is a deliberately SEPARATE, internal-only
++ * code path — see RevealService.acceptGift, which calls
++ * RedemptionsService.complete() directly rather than going through this
++ * HTTP endpoint. Keeping that path off this public controller entirely
++ * means there's no DTO shape here that could accidentally authorize a
++ * vendorless completion from the open internet.
++ */
++export class RedeemDto {
++  @IsUUID()
++  redemptionToken!: string;
++
++  @IsUUID()
++  vendorId!: string;
++
++  @IsString()
++  @IsNotEmpty()
++  vendorConfirmedBy!: string;
++}
+diff --git a/apps/api/src/redemptions/exceptions/redemption-conflict.exception.ts b/apps/api/src/redemptions/exceptions/redemption-conflict.exception.ts
+new file mode 100644
+index 0000000..d134407
+--- /dev/null
++++ b/apps/api/src/redemptions/exceptions/redemption-conflict.exception.ts
+@@ -0,0 +1,20 @@
++import { ConflictException } from '@nestjs/common';
++
++/**
++ * Thrown when attempt_redemption() returns null — per its own doc
++ * comment, that means the redemption_token is unknown, was already
++ * completed, or is past its expiry. 409, not 404: the token format
++ * itself may be perfectly valid, the redemption just can't proceed.
++ * Deliberately doesn't distinguish "already redeemed" from "expired"
++ * from "unknown token" in the response — a vendor-facing scanning
++ * client learning WHY a stale/reused code exists doesn't need more
++ * detail than "this can't be redeemed", and finer-grained reasons here
++ * would help someone probing for valid-but-expired tokens.
++ */
++export class RedemptionConflictException extends ConflictException {
++  constructor() {
++    super(
++      'This gift cannot be redeemed — the code is invalid, already used, or expired.',
++    );
++  }
++}
+diff --git a/apps/api/src/redemptions/redemptions.controller.ts b/apps/api/src/redemptions/redemptions.controller.ts
+new file mode 100644
+index 0000000..c4c58fa
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.controller.ts
+@@ -0,0 +1,50 @@
++import { Body, Controller, Headers, Post, Req } from '@nestjs/common';
++import type { Request } from 'express';
++import { Throttle } from '@nestjs/throttler';
++import { RedemptionsService } from './redemptions.service';
++import { RedeemDto } from './dto/redeem.dto';
++
++/**
++ * POST /redeem — NOT POST /redeem/:token. The originally-sketched URL
++ * shape (`/redeem/[token]`) put the redemption_token in a URL path,
++ * which the schema explicitly forbids: "redemption_token is never in a
++ * URL. It is the QR code payload." (redemptions table comment). A URL
++ * path segment ends up in browser history, server access logs, and
++ * proxy/CDN logs — all places a HIGH-ENTROPY, VALUE-BEARING token
++ * (unlike reveal_token, possessing this one lets you actually claim the
++ * gift) should never sit. The token travels in a POST body instead,
++ * exactly like Ebun's other sensitive tokens (Paystack's webhook
++ * signature, for instance, is a header, never a query param).
++ *
++ * In practice this endpoint is called by whatever reads the QR code a
++ * vendor scans (a vendor-facing app/portal — not built yet, tracked
++ * separately) for digital_voucher gifts, and internally by
++ * RevealService for vtu gifts that have no vendor step to wait for (see
++ * RevealService.acceptGift).
++ */
++@Controller('redeem')
++export class RedemptionsController {
++  constructor(private readonly redemptions: RedemptionsService) {}
++
++  @Post()
++  @Throttle({ default: { limit: 10, ttl: 60_000 } })
++  async redeem(
++    @Body() dto: RedeemDto,
++    @Req() request: Request,
++    @Headers('user-agent') userAgent?: string,
++  ) {
++    const redemption = await this.redemptions.complete({
++      redemptionToken: dto.redemptionToken,
++      vendorId: dto.vendorId,
++      vendorConfirmedBy: dto.vendorConfirmedBy,
++      ipAddress: request.ip ?? null,
++      userAgent: userAgent ?? null,
++      actorType: 'vendor',
++    });
++
++    return {
++      redemptionNumber: redemption.redemption_number,
++      status: redemption.status,
++    };
++  }
++}
+diff --git a/apps/api/src/redemptions/redemptions.module.ts b/apps/api/src/redemptions/redemptions.module.ts
+new file mode 100644
+index 0000000..480c354
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.module.ts
+@@ -0,0 +1,13 @@
++import { Module } from '@nestjs/common';
++import { OrdersModule } from '../orders/orders.module';
++import { RedemptionsRepository } from './redemptions.repository';
++import { RedemptionsService } from './redemptions.service';
++import { RedemptionsController } from './redemptions.controller';
++
++@Module({
++  imports: [OrdersModule],
++  controllers: [RedemptionsController],
++  providers: [RedemptionsRepository, RedemptionsService],
++  exports: [RedemptionsService],
++})
++export class RedemptionsModule {}
+diff --git a/apps/api/src/redemptions/redemptions.repository.ts b/apps/api/src/redemptions/redemptions.repository.ts
+new file mode 100644
+index 0000000..811bbbc
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.repository.ts
+@@ -0,0 +1,128 @@
++import { Inject, Injectable } from '@nestjs/common';
++import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
++import { RedemptionStatus } from '@ebun/types';
++import { SUPABASE_CLIENT } from '../supabase/supabase.module';
++
++export interface RedemptionRow {
++  id: string;
++  order_id: string;
++  redemption_number: string;
++  redemption_token: string;
++  fallback_code: string;
++  status: RedemptionStatus;
++  [key: string]: unknown;
++}
++
++/**
++ * Thin wrapper around the redemptions table and its atomic
++ * attempt_redemption() RPC. NOT exported from RedemptionsModule —
++ * RedemptionsService is the sole public surface, same boundary as
++ * every other repository in this codebase.
++ *
++ * UNLIKE GiftFulfillmentsRepository's deliberately-non-idempotent
++ * create(): creating a pending redemption IS plausibly invoked more
++ * than once in completely normal use — a recipient double-tapping
++ * "accept", a flaky mobile connection retrying the POST, or reloading a
++ * page that re-fires the request. There's no automatic-retry-vs-real-bug
++ * ambiguity to worry about here the way there was for internal
++ * orchestration retries; treating a second call as "fetch what's
++ * already there" is simply correct. Hence createPendingOrFetch below,
++ * rather than a bare create() that throws on the second call.
++ */
++@Injectable()
++export class RedemptionsRepository {
++  constructor(
++    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
++  ) {}
++
++  async createPendingOrFetch(
++    orderId: string,
++    expiresAt: string,
++  ): Promise<RedemptionRow> {
++    const insertResponse = (await this.supabase
++      .from('redemptions')
++      .insert({
++        order_id: orderId,
++        status: RedemptionStatus.Pending,
++        expires_at: expiresAt,
++      })
++      .select()
++      .single()) as {
++      data: RedemptionRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (!insertResponse.error && insertResponse.data) {
++      return insertResponse.data;
++    }
++
++    if (insertResponse.error) {
++      if (insertResponse.error.code !== '23505') {
++        throw insertResponse.error;
++      }
++    } else {
++      // No error, but also no data — an empty response the Supabase
++      // client shouldn't normally produce. Thrown as a real Error
++      // rather than falling through, since insertResponse.error is
++      // null here and re-throwing it would throw `null`, not an
++      // inspectable error.
++      throw new Error(
++        `redemptions insert for order ${orderId} returned neither data nor an error`,
++      );
++    }
++
++    // order_id already has a redemption row (UNIQUE(order_id)) — fetch
++    // and return the existing one rather than erroring.
++    const existing = (await this.supabase
++      .from('redemptions')
++      .select()
++      .eq('order_id', orderId)
++      .single()) as {
++      data: RedemptionRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (existing.error) {
++      throw existing.error;
++    }
++    if (!existing.data) {
++      // Shouldn't happen — the 23505 we just caught proves a row exists.
++      // Thrown rather than silently returning something wrong.
++      throw new Error(
++        `redemptions row for order ${orderId} raced out of existence between insert conflict and fetch`,
++      );
++    }
++
++    return existing.data;
++  }
++
++  /**
++   * Wraps the DB's own attempt_redemption() function — per its schema
++   * comment, this is "the ONLY way to mark a redemption as completed".
++   * Returns null if the token is unknown, already completed, or expired
++   * — the RPC's own documented behaviour, not an error condition for
++   * this method to interpret; RedemptionsService decides what null
++   * means to its caller.
++   */
++  async attemptRedemption(params: {
++    redemptionToken: string;
++    vendorId: string | null;
++    vendorConfirmedBy: string | null;
++    ipAddress: string | null;
++    userAgent: string | null;
++  }): Promise<RedemptionRow | null> {
++    const response = (await this.supabase.rpc('attempt_redemption', {
++      p_redemption_token: params.redemptionToken,
++      p_vendor_id: params.vendorId,
++      p_vendor_confirmed_by: params.vendorConfirmedBy,
++      p_ip_address: params.ipAddress,
++      p_user_agent: params.userAgent,
++    })) as { data: RedemptionRow | null; error: PostgrestError | null };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data;
++  }
++}
+diff --git a/apps/api/src/redemptions/redemptions.service.spec.ts b/apps/api/src/redemptions/redemptions.service.spec.ts
+new file mode 100644
+index 0000000..5b20431
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.service.spec.ts
+@@ -0,0 +1,135 @@
++import { Test } from '@nestjs/testing';
++import { OrderStatus } from '@ebun/types';
++import { RedemptionsService } from './redemptions.service';
++import { RedemptionsRepository } from './redemptions.repository';
++import { OrdersService } from '../orders/orders.service';
++import { RedemptionConflictException } from './exceptions/redemption-conflict.exception';
++
++describe('RedemptionsService', () => {
++  let sut: RedemptionsService;
++  let repository: {
++    createPendingOrFetch: jest.Mock;
++    attemptRedemption: jest.Mock;
++  };
++  let ordersService: { transitionNormal: jest.Mock };
++
++  beforeEach(async () => {
++    repository = {
++      createPendingOrFetch: jest.fn(),
++      attemptRedemption: jest.fn(),
++    };
++    ordersService = {
++      transitionNormal: jest.fn().mockResolvedValue(undefined),
++    };
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        RedemptionsService,
++        { provide: RedemptionsRepository, useValue: repository },
++        { provide: OrdersService, useValue: ordersService },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(RedemptionsService);
++  });
++
++  describe('createPendingForOrder', () => {
++    it('delegates straight to the repository', async () => {
++      repository.createPendingOrFetch.mockResolvedValue({ id: 'redemption-1' });
++
++      const result = await sut.createPendingForOrder(
++        'order-1',
++        '2026-10-06T00:00:00.000Z',
++      );
++
++      expect(repository.createPendingOrFetch).toHaveBeenCalledWith(
++        'order-1',
++        '2026-10-06T00:00:00.000Z',
++      );
++      expect(result).toEqual({ id: 'redemption-1' });
++    });
++  });
++
++  describe('complete', () => {
++    const params = {
++      redemptionToken: 'token-1',
++      vendorId: 'vendor-1',
++      vendorConfirmedBy: 'Staff Name',
++      ipAddress: '127.0.0.1',
++      userAgent: 'test-agent',
++      actorType: 'vendor' as const,
++    };
++
++    it('throws RedemptionConflictException when attempt_redemption returns null (unknown/already-used/expired token)', async () => {
++      repository.attemptRedemption.mockResolvedValue(null);
++
++      await expect(sut.complete(params)).rejects.toThrow(
++        RedemptionConflictException,
++      );
++      expect(ordersService.transitionNormal).not.toHaveBeenCalled();
++    });
++
++    it('transitions the order to redeemed after a successful completion', async () => {
++      repository.attemptRedemption.mockResolvedValue({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++
++      const result = await sut.complete(params);
++
++      expect(ordersService.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.RevealOpened,
++        OrderStatus.Redeemed,
++        { type: 'vendor' },
++      );
++      expect(result).toEqual({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++    });
++
++    it('still returns the completed redemption even if the order status transition fails — the redemption itself is already correctly, permanently completed', async () => {
++      repository.attemptRedemption.mockResolvedValue({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++      ordersService.transitionNormal.mockRejectedValue(
++        new Error('order already moved on somehow'),
++      );
++
++      await expect(sut.complete(params)).resolves.toEqual({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++    });
++
++    it('uses actorType "system" for a vendorless (VTU) completion', async () => {
++      repository.attemptRedemption.mockResolvedValue({
++        id: 'redemption-1',
++        order_id: 'order-1',
++        status: 'completed',
++      });
++
++      await sut.complete({
++        redemptionToken: 'token-1',
++        vendorId: null,
++        vendorConfirmedBy: null,
++        ipAddress: null,
++        userAgent: null,
++        actorType: 'system',
++      });
++
++      expect(ordersService.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.RevealOpened,
++        OrderStatus.Redeemed,
++        { type: 'system' },
++      );
++    });
++  });
++});
+diff --git a/apps/api/src/redemptions/redemptions.service.ts b/apps/api/src/redemptions/redemptions.service.ts
+new file mode 100644
+index 0000000..b12fcf7
+--- /dev/null
++++ b/apps/api/src/redemptions/redemptions.service.ts
+@@ -0,0 +1,83 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { OrderStatus } from '@ebun/types';
++import { OrdersService } from '../orders/orders.service';
++import { RedemptionsRepository, RedemptionRow } from './redemptions.repository';
++import { RedemptionConflictException } from './exceptions/redemption-conflict.exception';
++
++export interface CompleteRedemptionParams {
++  redemptionToken: string;
++  vendorId: string | null;
++  vendorConfirmedBy: string | null;
++  ipAddress: string | null;
++  userAgent: string | null;
++  /** Who's completing this — 'vendor' for a real in-person scan, 'system' for a no-vendor-needed type (VTU) auto-completing right after accept. */
++  actorType: 'vendor' | 'system';
++}
++
++/**
++ * Only public surface of RedemptionsModule — RedemptionsRepository
++ * stays internal, same boundary as every other module here.
++ */
++@Injectable()
++export class RedemptionsService {
++  private readonly logger = new Logger(RedemptionsService.name);
++
++  constructor(
++    private readonly repository: RedemptionsRepository,
++    private readonly ordersService: OrdersService,
++  ) {}
++
++  /** Called from POST /reveal/:token/accept — creates (or returns the existing) pending redemption row for an order. Idempotent on purpose; see RedemptionsRepository's doc comment. */
++  async createPendingForOrder(
++    orderId: string,
++    orderExpiresAt: string,
++  ): Promise<RedemptionRow> {
++    return this.repository.createPendingOrFetch(orderId, orderExpiresAt);
++  }
++
++  /**
++   * Completes a redemption. NOT atomic with the order's own status
++   * transition below — attempt_redemption() only touches the
++   * `redemptions` table, by the schema's own explicit design ("Separate
++   * from orders by design"). The redemption itself (the actual
++   * single-use, fraud-relevant control) completes first and is fully
++   * safe the moment this RPC returns non-null; the order's status
++   * transition to `redeemed` is bookkeeping on top of that, done best-
++   * effort afterward. If it fails, the redemption is still correctly,
++   * permanently completed — the order's status would just lag behind
++   * reality until someone notices and reconciles it. Flagged as an
++   * inherent gap given the schema's table separation, not something to
++   * silently paper over.
++   */
++  async complete(params: CompleteRedemptionParams): Promise<RedemptionRow> {
++    const redemption = await this.repository.attemptRedemption({
++      redemptionToken: params.redemptionToken,
++      vendorId: params.vendorId,
++      vendorConfirmedBy: params.vendorConfirmedBy,
++      ipAddress: params.ipAddress,
++      userAgent: params.userAgent,
++    });
++
++    if (!redemption) {
++      throw new RedemptionConflictException();
++    }
++
++    try {
++      await this.ordersService.transitionNormal(
++        redemption.order_id,
++        OrderStatus.RevealOpened,
++        OrderStatus.Redeemed,
++        { type: params.actorType },
++      );
++    } catch (err) {
++      this.logger.error(
++        `Redemption ${redemption.id} (order ${redemption.order_id}) completed successfully, ` +
++          `but the order's own status transition to 'redeemed' failed — order status will ` +
++          `lag behind the real (correctly single-use-enforced) redemption state until reconciled.`,
++        err instanceof Error ? err.stack : err,
++      );
++    }
++
++    return redemption;
++  }
++}
+diff --git a/apps/api/src/reveal/reveal-view.interface.ts b/apps/api/src/reveal/reveal-view.interface.ts
+new file mode 100644
+index 0000000..05f861a
+--- /dev/null
++++ b/apps/api/src/reveal/reveal-view.interface.ts
+@@ -0,0 +1,27 @@
++import { OrderStatus } from '@ebun/types';
++
++/**
++ * PROVISIONAL — built ahead of real mockups, at the person's own
++ * request (backend first). `orderStatus` is included raw specifically
++ * so the frontend isn't boxed in by whatever viewState buckets I
++ * guessed at here; expect this shape to change once real designs
++ * exist, hopefully by relaxing/extending rather than a rewrite.
++ */
++export type RevealViewState = 'not_ready' | 'ready' | 'expired' | 'unavailable';
++
++export interface RevealView {
++  viewState: RevealViewState;
++  orderStatus: OrderStatus;
++  recipientName?: string;
++  senderName?: string | null;
++  giftName?: string;
++  giftDescription?: string | null;
++  giftImageUrl?: string | null;
++  theme?: string;
++  message?: {
++    type: 'text' | 'voice' | 'video';
++    text?: string | null;
++    playbackUrl?: string;
++    durationSecs?: number | null;
++  };
++}
+diff --git a/apps/api/src/reveal/reveal.controller.ts b/apps/api/src/reveal/reveal.controller.ts
+new file mode 100644
+index 0000000..a063ae0
+--- /dev/null
++++ b/apps/api/src/reveal/reveal.controller.ts
+@@ -0,0 +1,27 @@
++import { Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
++import { Throttle } from '@nestjs/throttler';
++import { RevealService } from './reveal.service';
++
++/**
++ * Public, unauthenticated, token-gated — reveal_token is a high-entropy
++ * UUID (per the schema), but this is still the one surface in the app
++ * that takes arbitrary requests from the open internet against a
++ * possibly-enumerable identifier, hence the tighter-than-default
++ * throttling on both routes here specifically.
++ */
++@Controller('reveal')
++export class RevealController {
++  constructor(private readonly reveal: RevealService) {}
++
++  @Get(':token')
++  @Throttle({ default: { limit: 20, ttl: 60_000 } })
++  async view(@Param('token', new ParseUUIDPipe()) token: string) {
++    return this.reveal.view(token);
++  }
++
++  @Post(':token/accept')
++  @Throttle({ default: { limit: 10, ttl: 60_000 } })
++  async accept(@Param('token', new ParseUUIDPipe()) token: string) {
++    return this.reveal.acceptGift(token);
++  }
++}
+diff --git a/apps/api/src/reveal/reveal.module.ts b/apps/api/src/reveal/reveal.module.ts
+new file mode 100644
+index 0000000..ba1d13d
+--- /dev/null
++++ b/apps/api/src/reveal/reveal.module.ts
+@@ -0,0 +1,19 @@
++import { Module } from '@nestjs/common';
++import { OrdersModule } from '../orders/orders.module';
++import { GiftsModule } from '../gifts/gifts.module';
++import { UsersModule } from '../users/users.module';
++import { RedemptionsModule } from '../redemptions/redemptions.module';
++import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
++import { UnimplementedMediaUrlResolver } from '../media/unimplemented-media-url-resolver.service';
++import { RevealController } from './reveal.controller';
++import { RevealService } from './reveal.service';
++
++@Module({
++  imports: [OrdersModule, GiftsModule, UsersModule, RedemptionsModule],
++  controllers: [RevealController],
++  providers: [
++    { provide: MEDIA_URL_RESOLVER, useClass: UnimplementedMediaUrlResolver },
++    RevealService,
++  ],
++})
++export class RevealModule {}
+diff --git a/apps/api/src/reveal/reveal.service.spec.ts b/apps/api/src/reveal/reveal.service.spec.ts
+new file mode 100644
+index 0000000..82baa17
+--- /dev/null
++++ b/apps/api/src/reveal/reveal.service.spec.ts
+@@ -0,0 +1,325 @@
++import { Test } from '@nestjs/testing';
++import { FulfillmentType, OrderStatus } from '@ebun/types';
++import { RevealService } from './reveal.service';
++import { OrdersService } from '../orders/orders.service';
++import { OrderRow } from '../orders/orders.repository';
++import { GiftsService } from '../gifts/gifts.service';
++import { UsersService } from '../users/users.service';
++import { RedemptionsService } from '../redemptions/redemptions.service';
++import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
++import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
++
++function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
++  return {
++    id: 'order-1',
++    status: OrderStatus.ReadyForRedemption,
++    order_number: 'EBN-0001',
++    total_amount: 500000,
++    gift_template_id: 'template-1',
++    gift_value: 500000,
++    recipient_name: 'Ada',
++    recipient_phone: '+2348012345678',
++    reveal_token: 'reveal-token-1',
++    sender_id: 'sender-1',
++    sender_message: null,
++    message_type: null,
++    message_url: null,
++    message_duration_secs: null,
++    reveal_theme: 'gold',
++    scheduled_send_at: null,
++    expires_at: '2099-01-01T00:00:00.000Z', // far future by default
++    ...overrides,
++  };
++}
++
++describe('RevealService', () => {
++  let sut: RevealService;
++  let orders: { findByRevealToken: jest.Mock; transitionNormal: jest.Mock };
++  let gifts: { findById: jest.Mock };
++  let users: { findById: jest.Mock };
++  let redemptions: { createPendingForOrder: jest.Mock; complete: jest.Mock };
++  let mediaResolver: { resolvePlaybackUrl: jest.Mock };
++
++  beforeEach(async () => {
++    orders = { findByRevealToken: jest.fn(), transitionNormal: jest.fn() };
++    gifts = { findById: jest.fn() };
++    users = { findById: jest.fn() };
++    redemptions = {
++      createPendingForOrder: jest.fn(),
++      complete: jest.fn(),
++    };
++    mediaResolver = { resolvePlaybackUrl: jest.fn() };
++
++    gifts.findById.mockResolvedValue({
++      id: 'template-1',
++      name: 'Jollof Rice for Two',
++      description: 'A delicious meal',
++      image_url: 'https://example.com/img.png',
++      delivery_type: FulfillmentType.Vtu,
++    });
++    users.findById.mockResolvedValue({ id: 'sender-1', name: 'Chidi' });
++    orders.transitionNormal.mockResolvedValue(undefined);
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        RevealService,
++        { provide: OrdersService, useValue: orders },
++        { provide: GiftsService, useValue: gifts },
++        { provide: UsersService, useValue: users },
++        { provide: RedemptionsService, useValue: redemptions },
++        { provide: MEDIA_URL_RESOLVER, useValue: mediaResolver },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(RevealService);
++  });
++
++  describe('view', () => {
++    it('throws NotFoundException for an unknown token', async () => {
++      orders.findByRevealToken.mockResolvedValue(null);
++
++      await expect(sut.view('bad-token')).rejects.toThrow('No gift found');
++    });
++
++    it('transitions ready_for_redemption -> reveal_opened on first view and returns gift + sender details', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.ReadyForRedemption }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(orders.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.ReadyForRedemption,
++        OrderStatus.RevealOpened,
++        { type: 'user' },
++      );
++      expect(result.viewState).toBe('ready');
++      expect(result.giftName).toBe('Jollof Rice for Two');
++      expect(result.senderName).toBe('Chidi');
++      expect(result.recipientName).toBe('Ada');
++    });
++
++    it('also transitions voucher_issued -> reveal_opened on first view', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.VoucherIssued }),
++      );
++
++      await sut.view('reveal-token-1');
++
++      expect(orders.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.VoucherIssued,
++        OrderStatus.RevealOpened,
++        { type: 'user' },
++      );
++    });
++
++    it('does not re-transition on a second view — already reveal_opened', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(orders.transitionNormal).not.toHaveBeenCalled();
++      expect(result.viewState).toBe('ready');
++    });
++
++    it('treats a concurrent-request conflict on the reveal transition as success, not an error', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.ReadyForRedemption }),
++      );
++      orders.transitionNormal.mockRejectedValue(
++        new OrderTransitionConflictException(
++          'order-1',
++          OrderStatus.ReadyForRedemption,
++          OrderStatus.RevealOpened,
++        ),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('ready');
++    });
++
++    it('propagates a genuinely unexpected error from the transition attempt', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.ReadyForRedemption }),
++      );
++      orders.transitionNormal.mockRejectedValue(new Error('DB is on fire'));
++
++      await expect(sut.view('reveal-token-1')).rejects.toThrow('DB is on fire');
++    });
++
++    it('treats an order past expires_at as expired regardless of what status currently says (no cron has swept it yet)', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({
++          status: OrderStatus.ReadyForRedemption, // status hasn't caught up
++          expires_at: '2020-01-01T00:00:00.000Z', // long past
++        }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('expired');
++      expect(orders.transitionNormal).not.toHaveBeenCalled();
++      // Minimal payload — no gift/sender details leaked for an expired link.
++      expect(result.giftName).toBeUndefined();
++    });
++
++    it('does not treat an already-redeemed order as expired even if past expires_at', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({
++          status: OrderStatus.Redeemed,
++          expires_at: '2020-01-01T00:00:00.000Z',
++        }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('ready');
++    });
++
++    it('returns "unavailable" for a cancelled/refunded/failed order', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.Cancelled }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('unavailable');
++      expect(result.giftName).toBeUndefined();
++    });
++
++    it('returns "not_ready" for an order still mid-fulfillment', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.FulfillmentInProgress }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.viewState).toBe('not_ready');
++      expect(result.giftName).toBeUndefined();
++    });
++
++    it('resolves a private playback URL for a video message rather than returning message_url raw', async () => {
++      mediaResolver.resolvePlaybackUrl.mockResolvedValue(
++        'https://cdn.example.com/signed/video.mp4',
++      );
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({
++          message_type: 'video',
++          message_url: 'private/bucket/path.mp4',
++          message_duration_secs: 12,
++        }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(mediaResolver.resolvePlaybackUrl).toHaveBeenCalledWith(
++        'private/bucket/path.mp4',
++      );
++      expect(result.message).toEqual({
++        type: 'video',
++        text: null,
++        durationSecs: 12,
++        playbackUrl: 'https://cdn.example.com/signed/video.mp4',
++      });
++    });
++
++    it('does not call the media resolver for a text message', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ message_type: 'text', sender_message: 'Happy birthday!' }),
++      );
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(mediaResolver.resolvePlaybackUrl).not.toHaveBeenCalled();
++      expect(result.message).toEqual({ type: 'text', text: 'Happy birthday!' });
++    });
++  });
++
++  describe('acceptGift', () => {
++    it('auto-completes the redemption for a vtu gift with no vendor step to wait for', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++      redemptions.createPendingForOrder.mockResolvedValue({
++        redemption_token: 'redemption-token-1',
++      });
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        name: 'Airtime',
++        description: null,
++        image_url: null,
++        delivery_type: FulfillmentType.Vtu,
++      });
++
++      await sut.acceptGift('reveal-token-1');
++
++      expect(redemptions.createPendingForOrder).toHaveBeenCalledWith(
++        'order-1',
++        '2099-01-01T00:00:00.000Z',
++      );
++      expect(redemptions.complete).toHaveBeenCalledWith({
++        redemptionToken: 'redemption-token-1',
++        vendorId: null,
++        vendorConfirmedBy: null,
++        ipAddress: null,
++        userAgent: null,
++        actorType: 'system',
++      });
++    });
++
++    it('does NOT auto-complete for a digital_voucher gift — leaves it pending for a real vendor scan', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++      redemptions.createPendingForOrder.mockResolvedValue({
++        redemption_token: 'redemption-token-1',
++      });
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        name: 'Voucher',
++        description: null,
++        image_url: null,
++        delivery_type: FulfillmentType.DigitalVoucher,
++      });
++
++      await sut.acceptGift('reveal-token-1');
++
++      expect(redemptions.complete).not.toHaveBeenCalled();
++    });
++
++    it('implicitly performs the reveal transition if accept is called before any GET', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.ReadyForRedemption }),
++      );
++      redemptions.createPendingForOrder.mockResolvedValue({
++        redemption_token: 'redemption-token-1',
++      });
++
++      await sut.acceptGift('reveal-token-1');
++
++      expect(orders.transitionNormal).toHaveBeenCalledWith(
++        'order-1',
++        OrderStatus.ReadyForRedemption,
++        OrderStatus.RevealOpened,
++        { type: 'user' },
++      );
++      expect(redemptions.createPendingForOrder).toHaveBeenCalled();
++    });
++
++    it('is a no-op (just returns current view) if the gift is already redeemed', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.Redeemed }),
++      );
++
++      const result = await sut.acceptGift('reveal-token-1');
++
++      expect(redemptions.createPendingForOrder).not.toHaveBeenCalled();
++      expect(result.viewState).toBe('ready');
++    });
++  });
++});
+diff --git a/apps/api/src/reveal/reveal.service.ts b/apps/api/src/reveal/reveal.service.ts
+new file mode 100644
+index 0000000..e4ea58a
+--- /dev/null
++++ b/apps/api/src/reveal/reveal.service.ts
+@@ -0,0 +1,228 @@
++import { Inject, Injectable, NotFoundException } from '@nestjs/common';
++import { FulfillmentType, OrderStatus } from '@ebun/types';
++import { OrdersService } from '../orders/orders.service';
++import { OrderRow } from '../orders/orders.repository';
++import { GiftsService } from '../gifts/gifts.service';
++import { UsersService } from '../users/users.service';
++import { RedemptionsService } from '../redemptions/redemptions.service';
++import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
++import type { MediaUrlResolver } from '../media/media-url-resolver.interface';
++import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
++import { RevealView } from './reveal-view.interface';
++
++const PRE_REVEAL_STATES = new Set([
++  OrderStatus.VoucherIssued,
++  OrderStatus.ReadyForRedemption,
++]);
++
++const VIEWABLE_AFTER_REVEAL_STATES = new Set([
++  OrderStatus.RevealOpened,
++  OrderStatus.Redeemed,
++  OrderStatus.Fulfilled,
++]);
++
++const TERMINAL_NEGATIVE_STATES = new Set([
++  OrderStatus.Expired,
++  OrderStatus.Cancelled,
++  OrderStatus.Refunded,
++  OrderStatus.FulfillmentFailed,
++  OrderStatus.RedemptionFailed,
++]);
++
++/**
++ * Only public surface of RevealModule.
++ *
++ * PROVISIONAL BY DESIGN: built ahead of real mockups (Figma incoming),
++ * at the person's explicit request to do backend first. The viewState
++ * bucketing in reveal-view.interface.ts is my best guess at what a
++ * reveal page needs to distinguish, not a locked contract — expect to
++ * revise this once real screens exist.
++ */
++@Injectable()
++export class RevealService {
++  constructor(
++    private readonly ordersService: OrdersService,
++    private readonly giftsService: GiftsService,
++    private readonly usersService: UsersService,
++    private readonly redemptions: RedemptionsService,
++    @Inject(MEDIA_URL_RESOLVER)
++    private readonly mediaResolver: MediaUrlResolver,
++  ) {}
++
++  /**
++   * GET /reveal/:token. Safe to call repeatedly — the first call in a
++   * viewable pre-reveal state transitions the order to reveal_opened;
++   * every call after that (by design, or because a concurrent request
++   * won the race — see the catch below) just serves the same content.
++   */
++  async view(revealToken: string): Promise<RevealView> {
++    const order = await this.ordersService.findByRevealToken(revealToken);
++    if (!order) {
++      throw new NotFoundException('No gift found for this link.');
++    }
++
++    // Checked directly against expires_at, NOT trusted from order.status
++    // alone — no cron runs expire_unclaimed_gifts() yet (see
++    // FulfillmentOrchestratorService's file header for the established
++    // pattern of flagging cron-shaped gaps rather than silently
++    // assuming status is current). An order can be genuinely past its
++    // window while still sitting at ready_for_redemption/voucher_issued
++    // because nothing has swept it yet.
++    const isPastExpiry = new Date(order.expires_at) <= new Date();
++
++    if (
++      isPastExpiry &&
++      order.status !== OrderStatus.Redeemed &&
++      order.status !== OrderStatus.Fulfilled
++    ) {
++      return this.buildView(order, 'expired');
++    }
++
++    if (TERMINAL_NEGATIVE_STATES.has(order.status)) {
++      return this.buildView(order, 'unavailable');
++    }
++
++    if (PRE_REVEAL_STATES.has(order.status)) {
++      try {
++        await this.ordersService.transitionNormal(
++          order.id,
++          order.status,
++          OrderStatus.RevealOpened,
++          { type: 'user' },
++        );
++        order.status = OrderStatus.RevealOpened;
++      } catch (err) {
++        // A concurrent request (e.g. WhatsApp link preview fetchers
++        // hitting it at the same moment as the actual recipient) may
++        // have already won this exact transition. That's not a failure
++        // from this caller's point of view — the content is still
++        // safe to serve as "opened". Anything else is a genuine,
++        // unexpected problem and should propagate.
++        if (!(err instanceof OrderTransitionConflictException)) {
++          throw err;
++        }
++        order.status = OrderStatus.RevealOpened;
++      }
++      return this.buildView(order, 'ready');
++    }
++
++    if (VIEWABLE_AFTER_REVEAL_STATES.has(order.status)) {
++      return this.buildView(order, 'ready');
++    }
++
++    // paid / processing / fulfillment_in_progress / etc — the token
++    // exists (generated at order creation) but the gift genuinely isn't
++    // ready. Shouldn't happen in normal use (NotificationsService only
++    // sends this link once fulfillment completes), but the token could
++    // be probed before then.
++    return this.buildView(order, 'not_ready');
++  }
++
++  /**
++   * POST /reveal/:token/accept. Implicitly performs the reveal
++   * transition too if it hasn't happened yet (an accept without a prior
++   * GET is still a real acceptance, not an error). Creates the pending
++   * redemption record and, for fulfillment types with no vendor step to
++   * wait for (vtu — the money already landed as a top-up at fulfillment
++   * time), completes it immediately rather than leaving the recipient
++   * waiting on a redemption record that nothing else will ever advance.
++   */
++  async acceptGift(revealToken: string): Promise<RevealView> {
++    const order = await this.ordersService.findByRevealToken(revealToken);
++    if (!order) {
++      throw new NotFoundException('No gift found for this link.');
++    }
++
++    if (PRE_REVEAL_STATES.has(order.status)) {
++      await this.view(revealToken); // reuses the same idempotent transition + race handling
++      order.status = OrderStatus.RevealOpened;
++    }
++
++    if (order.status !== OrderStatus.RevealOpened) {
++      // Already redeemed/fulfilled, or expired/cancelled/etc — nothing
++      // new to do. Return the current view rather than erroring; an
++      // "accept" on a gift that's already accepted isn't a client
++      // mistake worth a 4xx.
++      return this.view(revealToken);
++    }
++
++    const giftTemplate = await this.giftsService.findById(
++      order.gift_template_id,
++    );
++
++    const redemption = await this.redemptions.createPendingForOrder(
++      order.id,
++      order.expires_at,
++    );
++
++    if (giftTemplate.delivery_type === FulfillmentType.Vtu) {
++      await this.redemptions.complete({
++        redemptionToken: redemption.redemption_token,
++        vendorId: null,
++        vendorConfirmedBy: null,
++        ipAddress: null,
++        userAgent: null,
++        actorType: 'system',
++      });
++      return this.view(revealToken);
++    }
++
++    // digital_voucher — pending, waiting on a real vendor scan via
++    // POST /redeem (not built into any vendor-facing UI yet). The
++    // recipient's own view of "I've accepted, here's my code" is
++    // reveal-view.interface.ts's job to render once real mockups exist;
++    // for now this just confirms acceptance succeeded.
++    return this.view(revealToken);
++  }
++
++  private async buildView(
++    order: OrderRow,
++    viewState: RevealView['viewState'],
++  ): Promise<RevealView> {
++    if (
++      viewState === 'not_ready' ||
++      viewState === 'expired' ||
++      viewState === 'unavailable'
++    ) {
++      // Deliberately minimal — no gift/sender details for a link that
++      // isn't (or is no longer) valid to view.
++      return { viewState, orderStatus: order.status };
++    }
++
++    const giftTemplate = await this.giftsService.findById(
++      order.gift_template_id,
++    );
++    const sender = order.sender_id
++      ? await this.usersService.findById(order.sender_id)
++      : null;
++
++    const view: RevealView = {
++      viewState,
++      orderStatus: order.status,
++      recipientName: order.recipient_name,
++      senderName: sender?.name ?? null,
++      giftName: giftTemplate.name,
++      giftDescription: giftTemplate.description,
++      giftImageUrl: giftTemplate.image_url,
++      theme: order.reveal_theme,
++    };
++
++    if (order.message_type === 'text') {
++      view.message = { type: 'text', text: order.sender_message };
++    } else if (
++      order.message_type === 'voice' ||
++      order.message_type === 'video'
++    ) {
++      view.message = {
++        type: order.message_type,
++        text: order.sender_message, // optional caption alongside voice/video, if the sender added one
++        durationSecs: order.message_duration_secs,
++        playbackUrl: order.message_url
++          ? await this.mediaResolver.resolvePlaybackUrl(order.message_url)
++          : undefined,
++      };
++    }
++
++    return view;
++  }
++}
+diff --git a/apps/api/src/users/users.repository.ts b/apps/api/src/users/users.repository.ts
+index 1f3dd8a..fc13d69 100644
+--- a/apps/api/src/users/users.repository.ts
++++ b/apps/api/src/users/users.repository.ts
+@@ -31,6 +31,24 @@ export class UsersRepository {
+     return response.data ?? null;
+   }
+ 
++  /** Used by the reveal endpoint to display the sender's name — only ever selects name, never email/phone (this data ends up in a public-facing response). */
++  async findById(id: string): Promise<Pick<UserRow, 'id' | 'name'> | null> {
++    const response = (await this.supabase
++      .from('users')
++      .select('id, name')
++      .eq('id', id)
++      .maybeSingle()) as {
++      data: Pick<UserRow, 'id' | 'name'> | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? null;
++  }
++
+   /**
+    * Creates a GUEST user — auth_id stays null (the column is nullable in the schema specifically for this). If they create a real account later, auth_id can be backfilled onto this same row rather than creating a duplicate — not built yet, but the schema already supports it.
+    */
+diff --git a/apps/api/src/users/users.service.ts b/apps/api/src/users/users.service.ts
+index 6c44caf..fab2850 100644
+--- a/apps/api/src/users/users.service.ts
++++ b/apps/api/src/users/users.service.ts
+@@ -35,6 +35,11 @@ export class UsersService {
+     }
+   }
+ 
++  /** Public-facing display purposes only — see UsersRepository.findById for why this never returns email/phone. */
++  async findById(id: string) {
++    return this.repository.findById(id);
++  }
++
+   private isUniqueViolation(error: unknown): boolean {
+     return (
+       typeof error === 'object' &&
+diff --git a/packages/types/src/index.ts b/packages/types/src/index.ts
+index 8dd99db..c7314b3 100644
+--- a/packages/types/src/index.ts
++++ b/packages/types/src/index.ts
+@@ -2,4 +2,5 @@ export {OrderStatus} from './order-status';
+ export {FulfillmentType} from './fulfillment-type';
+ export {FulfillmentStatus} from './fulfillment-status';
+ export {NotificationChannel} from './notification-channel';
+-export {NotificationStatus} from './notification-status';
+\ No newline at end of file
++export {NotificationStatus} from './notification-status';
++export {RedemptionStatus} from './redemption-status';
+\ No newline at end of file
+diff --git a/packages/types/src/redemption-status.ts b/packages/types/src/redemption-status.ts
+new file mode 100644
+index 0000000..1d7d850
+--- /dev/null
++++ b/packages/types/src/redemption-status.ts
+@@ -0,0 +1,14 @@
++/**
++ * Mirrors the Postgres `redemption_status` enum in
++ * supabase/migrations/20260817040312_ebun_initial_schema.sql exactly.
++ * Vocabulary only — RedemptionsService owns which transitions are legal
++ * (in practice: pending -> initiated -> completed, or -> failed/expired,
++ * enforced by the atomic attempt_redemption() RPC, not by NestJS).
++ */
++export enum RedemptionStatus {
++  Pending = 'pending',
++  Initiated = 'initiated',
++  Completed = 'completed',
++  Failed = 'failed',
++  Expired = 'expired',
++}

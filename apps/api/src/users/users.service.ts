@@ -35,6 +35,11 @@ export class UsersService {
     }
   }
 
+  /** Public-facing display purposes only — see UsersRepository.findById for why this never returns email/phone. */
+  async findById(id: string) {
+    return this.repository.findById(id);
+  }
+
   private isUniqueViolation(error: unknown): boolean {
     return (
       typeof error === 'object' &&

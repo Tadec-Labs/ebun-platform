@@ -59,6 +59,11 @@ export class OrdersService {
     return this.ordersRepository.findById(orderId);
   }
 
+  /** Public-facing — see OrdersRepository.findByRevealToken for why this selects a deliberately narrower, non-payment column set than findById. */
+  async findByRevealToken(revealToken: string) {
+    return this.ordersRepository.findByRevealToken(revealToken);
+  }
+
   /** Delegates straight through — see OrdersRepository.recordRevealSent for why this deliberately doesn't touch order.status. */
   async recordRevealSent(orderId: string, revealUrl: string) {
     return this.ordersRepository.recordRevealSent(orderId, revealUrl);

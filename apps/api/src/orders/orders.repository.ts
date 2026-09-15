@@ -32,6 +32,15 @@ export interface OrderRow {
   recipient_name: string;
   recipient_phone: string;
   reveal_token: string;
+  // Below: only populated by findByRevealToken() — same "typed as
+  // required, but only true for the method that actually selects them"
+  // convention noted above for total_amount/gift_template_id etc.
+  sender_id: string | null; // nullable — guest senders w/ auth_id null still get a users row, but sender_id itself can be null if that user was later deleted (on delete set null)
+  sender_message: string | null;
+  message_type: 'text' | 'voice' | 'video' | null;
+  message_url: string | null; // Cloudflare R2 URL — PRIVATE bucket per architecture decisions; never return this raw to a public endpoint, see MediaUrlResolver
+  message_duration_secs: number | null;
+  reveal_theme: string;
   scheduled_send_at: string | null;
   expires_at: string;
   [key: string]: unknown;
@@ -100,6 +109,33 @@ export class OrdersRepository {
       // translate Postgres/PostgREST errors into HTTP responses once
       // one exists. Swallowing it here would hide real failures
       // (connection errors, bad enum values, etc.) behind a plain null.
+      throw response.error;
+    }
+
+    return response.data ?? null;
+  }
+
+  /**
+   * Public-facing lookup — called from the unauthenticated GET
+   * /reveal/:token endpoint, so this is the one OrdersRepository method
+   * where the caller is the open internet, not an authenticated
+   * subsystem. Selects only reveal-relevant columns; deliberately
+   * excludes payment fields (paystack_reference, total_amount isn't
+   * needed either — recipients see the gift, not the price paid).
+   */
+  async findByRevealToken(revealToken: string): Promise<OrderRow | null> {
+    const response = (await this.supabase
+      .from('orders')
+      .select(
+        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at',
+      )
+      .eq('reveal_token', revealToken)
+      .maybeSingle()) as {
+      data: OrderRow | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
       throw response.error;
     }
 

@@ -31,6 +31,24 @@ export class UsersRepository {
     return response.data ?? null;
   }
 
+  /** Used by the reveal endpoint to display the sender's name — only ever selects name, never email/phone (this data ends up in a public-facing response). */
+  async findById(id: string): Promise<Pick<UserRow, 'id' | 'name'> | null> {
+    const response = (await this.supabase
+      .from('users')
+      .select('id, name')
+      .eq('id', id)
+      .maybeSingle()) as {
+      data: Pick<UserRow, 'id' | 'name'> | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+
+    return response.data ?? null;
+  }
+
   /**
    * Creates a GUEST user — auth_id stays null (the column is nullable in the schema specifically for this). If they create a real account later, auth_id can be backfilled onto this same row rather than creating a duplicate — not built yet, but the schema already supports it.
    */
