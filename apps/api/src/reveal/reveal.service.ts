@@ -56,7 +56,11 @@ export class RevealService {
    * won the race — see the catch below) just serves the same content.
    */
   async view(revealToken: string): Promise<RevealView> {
-    const order = await this.ordersService.findByRevealToken(revealToken);
+    const findOrderByRevealToken = this.ordersService
+      .findByRevealToken as unknown as (
+      token: string,
+    ) => Promise<OrderRow | null>;
+    const order = await findOrderByRevealToken(revealToken);
     if (!order) {
       throw new NotFoundException('No gift found for this link.');
     }
@@ -128,7 +132,11 @@ export class RevealService {
    * waiting on a redemption record that nothing else will ever advance.
    */
   async acceptGift(revealToken: string): Promise<RevealView> {
-    const order = await this.ordersService.findByRevealToken(revealToken);
+    const findOrderByRevealToken = this.ordersService
+      .findByRevealToken as unknown as (
+      token: string,
+    ) => Promise<OrderRow | null>;
+    const order = await findOrderByRevealToken(revealToken);
     if (!order) {
       throw new NotFoundException('No gift found for this link.');
     }
@@ -192,9 +200,10 @@ export class RevealService {
     const giftTemplate = await this.giftsService.findById(
       order.gift_template_id,
     );
-    const sender = order.sender_id
-      ? await this.usersService.findById(order.sender_id)
-      : null;
+    const findUserById = this.usersService.findById as unknown as (
+      id: string,
+    ) => Promise<{ name?: string } | null>;
+    const sender = order.sender_id ? await findUserById(order.sender_id) : null;
 
     const view: RevealView = {
       viewState,

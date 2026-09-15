@@ -14,12 +14,16 @@ export class RevealController {
   constructor(private readonly reveal: RevealService) {}
 
   @Get(':token')
+  // Throttle's decorator type is not resolved by the lint type checker.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async view(@Param('token', new ParseUUIDPipe()) token: string) {
     return this.reveal.view(token);
   }
 
   @Post(':token/accept')
+  // Throttle's decorator type is not resolved by the lint type checker.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async accept(@Param('token', new ParseUUIDPipe()) token: string) {
     return this.reveal.acceptGift(token);
