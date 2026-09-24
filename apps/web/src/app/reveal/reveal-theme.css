@@ -1,0 +1,50 @@
+/*
+ * Scoped under .ebun-reveal-theme rather than :root. The consumer-facing
+ * routes (/send, /reveal) will likely end up sharing this palette, but
+ * /ops is an internal admin dashboard that almost certainly wants a
+ * plainer, denser, utilitarian look — and /send doesn't exist yet. Until
+ * more than one route needs these tokens, keeping them scoped here
+ * costs nothing and avoids deciding the whole app's theme as a side
+ * effect of building one screen.
+ */
+.ebun-reveal-theme {
+  --ink: #0e0d0b;
+  --panel: #161410;
+  --panel-raised: #1a1814;
+  --border: rgba(201, 168, 76, 0.14);
+  --border-strong: rgba(201, 168, 76, 0.32);
+  --gold: #c9a84c;
+  --gold-light: #e2c07a;
+  --gold-dim: #8a6f32;
+  --gold-glow: rgba(201, 168, 76, 0.1);
+  --cream: #f5efe0;
+  --cream-dim: rgba(245, 239, 224, 0.55);
+  --cream-faint: rgba(245, 239, 224, 0.3);
+
+  background: var(--ink);
+  color: var(--cream);
+  min-height: 100dvh;
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.ebun-reveal-theme *,
+.ebun-reveal-theme *::before,
+.ebun-reveal-theme *::after {
+  box-sizing: inherit;
+}
+
+.ebun-reveal-theme .font-display {
+  font-family: var(--font-cormorant), Georgia, serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ebun-reveal-theme * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

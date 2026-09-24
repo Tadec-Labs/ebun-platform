@@ -10,6 +10,7 @@ describe('RedemptionsService', () => {
   let repository: {
     createPendingOrFetch: jest.Mock;
     attemptRedemption: jest.Mock;
+    findByOrderId: jest.Mock;
   };
   let ordersService: { transitionNormal: jest.Mock };
 
@@ -17,6 +18,7 @@ describe('RedemptionsService', () => {
     repository = {
       createPendingOrFetch: jest.fn(),
       attemptRedemption: jest.fn(),
+      findByOrderId: jest.fn(),
     };
     ordersService = {
       transitionNormal: jest.fn().mockResolvedValue(undefined),
@@ -47,6 +49,26 @@ describe('RedemptionsService', () => {
         '2026-10-06T00:00:00.000Z',
       );
       expect(result).toEqual({ id: 'redemption-1' });
+    });
+  });
+
+  describe('findByOrderId', () => {
+    it('delegates straight to the repository and does not create anything', async () => {
+      repository.findByOrderId.mockResolvedValue({ id: 'redemption-1' });
+
+      const result = await sut.findByOrderId('order-1');
+
+      expect(repository.findByOrderId).toHaveBeenCalledWith('order-1');
+      expect(repository.createPendingOrFetch).not.toHaveBeenCalled();
+      expect(result).toEqual({ id: 'redemption-1' });
+    });
+
+    it('returns null when no redemption exists yet for the order', async () => {
+      repository.findByOrderId.mockResolvedValue(null);
+
+      const result = await sut.findByOrderId('order-1');
+
+      expect(result).toBeNull();
     });
   });
 

@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { FulfillmentType, OrderStatus } from '@ebun/types';
+import { FulfillmentType, OrderStatus, RedemptionStatus } from '@ebun/types';
 import { OrdersService } from '../orders/orders.service';
 import { OrderRow } from '../orders/orders.repository';
 import { GiftsService } from '../gifts/gifts.service';
@@ -36,7 +36,9 @@ const TERMINAL_NEGATIVE_STATES = new Set([
  * at the person's explicit request to do backend first. The viewState
  * bucketing in reveal-view.interface.ts is my best guess at what a
  * reveal page needs to distinguish, not a locked contract — expect to
- * revise this once real screens exist.
+ * revise this once real screens exist. fulfillmentType and redemption
+ * were added to close two specific gaps apps/web's reveal screen hit
+ * while building against this contract; see reveal-view.interface.ts.
  */
 @Injectable()
 export class RevealService {
@@ -56,11 +58,7 @@ export class RevealService {
    * won the race — see the catch below) just serves the same content.
    */
   async view(revealToken: string): Promise<RevealView> {
-    const findOrderByRevealToken = this.ordersService
-      .findByRevealToken as unknown as (
-      token: string,
-    ) => Promise<OrderRow | null>;
-    const order = await findOrderByRevealToken(revealToken);
+    const order = await this.ordersService.findByRevealToken(revealToken);
     if (!order) {
       throw new NotFoundException('No gift found for this link.');
     }
@@ -132,11 +130,7 @@ export class RevealService {
    * waiting on a redemption record that nothing else will ever advance.
    */
   async acceptGift(revealToken: string): Promise<RevealView> {
-    const findOrderByRevealToken = this.ordersService
-      .findByRevealToken as unknown as (
-      token: string,
-    ) => Promise<OrderRow | null>;
-    const order = await findOrderByRevealToken(revealToken);
+    const order = await this.ordersService.findByRevealToken(revealToken);
     if (!order) {
       throw new NotFoundException('No gift found for this link.');
     }
@@ -177,9 +171,8 @@ export class RevealService {
 
     // digital_voucher — pending, waiting on a real vendor scan via
     // POST /redeem (not built into any vendor-facing UI yet). The
-    // recipient's own view of "I've accepted, here's my code" is
-    // reveal-view.interface.ts's job to render once real mockups exist;
-    // for now this just confirms acceptance succeeded.
+    // view() call below now returns the fallback code + QR payload
+    // (see buildView) alongside confirming acceptance succeeded.
     return this.view(revealToken);
   }
 
@@ -200,14 +193,14 @@ export class RevealService {
     const giftTemplate = await this.giftsService.findById(
       order.gift_template_id,
     );
-    const findUserById = this.usersService.findById as unknown as (
-      id: string,
-    ) => Promise<{ name?: string } | null>;
-    const sender = order.sender_id ? await findUserById(order.sender_id) : null;
+    const sender = order.sender_id
+      ? await this.usersService.findById(order.sender_id)
+      : null;
 
     const view: RevealView = {
       viewState,
       orderStatus: order.status,
+      fulfillmentType: giftTemplate.delivery_type,
       recipientName: order.recipient_name,
       senderName: sender?.name ?? null,
       giftName: giftTemplate.name,
@@ -230,6 +223,29 @@ export class RevealService {
           ? await this.mediaResolver.resolvePlaybackUrl(order.message_url)
           : undefined,
       };
+    }
+
+    // Only digital_voucher has a vendor-scan step worth showing a
+    // code/QR for — vtu auto-completes with nothing left to show, and
+    // physical doesn't use the redemptions table at all. Completed
+    // redemptions are left out too: that's the terminal "redeemed"
+    // state, not "here's your code", and the order's own status
+    // already carries that.
+    if (
+      giftTemplate.delivery_type === FulfillmentType.DigitalVoucher &&
+      order.status === OrderStatus.RevealOpened
+    ) {
+      const existingRedemption = await this.redemptions.findByOrderId(order.id);
+      if (
+        existingRedemption &&
+        existingRedemption.status !== RedemptionStatus.Completed
+      ) {
+        view.redemption = {
+          status: existingRedemption.status,
+          fallbackCode: existingRedemption.fallback_code,
+          qrPayload: existingRedemption.redemption_token,
+        };
+      }
     }
 
     return view;

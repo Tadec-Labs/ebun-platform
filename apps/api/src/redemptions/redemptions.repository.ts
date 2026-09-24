@@ -97,6 +97,28 @@ export class RedemptionsRepository {
   }
 
   /**
+   * Read-only — unlike createPendingOrFetch, never creates a row.
+   * `.maybeSingle()` rather than `.single()`: zero rows (no redemption
+   * created for this order yet) is an expected, non-error outcome here,
+   * not a fetch-after-insert race to treat as a bug.
+   */
+  async findByOrderId(orderId: string): Promise<RedemptionRow | null> {
+    const response = (await this.supabase
+      .from('redemptions')
+      .select()
+      .eq('order_id', orderId)
+      .maybeSingle()) as {
+      data: RedemptionRow | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data;
+  }
+
+  /**
    * Wraps the DB's own attempt_redemption() function — per its schema
    * comment, this is "the ONLY way to mark a redemption as completed".
    * Returns null if the token is unknown, already completed, or expired

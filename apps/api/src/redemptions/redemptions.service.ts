@@ -27,6 +27,11 @@ export class RedemptionsService {
     private readonly ordersService: OrdersService,
   ) {}
 
+  /** Read-only lookup for GET /reveal/:token — never creates anything, unlike createPendingForOrder. Null if no redemption exists yet for this order. */
+  async findByOrderId(orderId: string): Promise<RedemptionRow | null> {
+    return this.repository.findByOrderId(orderId);
+  }
+
   /** Called from POST /reveal/:token/accept — creates (or returns the existing) pending redemption row for an order. Idempotent on purpose; see RedemptionsRepository's doc comment. */
   async createPendingForOrder(
     orderId: string,
