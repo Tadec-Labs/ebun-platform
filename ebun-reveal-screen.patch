@@ -1,0 +1,2153 @@
+diff --git a/apps/api/src/redemptions/redemptions.repository.ts b/apps/api/src/redemptions/redemptions.repository.ts
+index 811bbbc..68caf35 100644
+--- a/apps/api/src/redemptions/redemptions.repository.ts
++++ b/apps/api/src/redemptions/redemptions.repository.ts
+@@ -96,6 +96,28 @@ export class RedemptionsRepository {
+     return existing.data;
+   }
+ 
++  /**
++   * Read-only — unlike createPendingOrFetch, never creates a row.
++   * `.maybeSingle()` rather than `.single()`: zero rows (no redemption
++   * created for this order yet) is an expected, non-error outcome here,
++   * not a fetch-after-insert race to treat as a bug.
++   */
++  async findByOrderId(orderId: string): Promise<RedemptionRow | null> {
++    const response = (await this.supabase
++      .from('redemptions')
++      .select()
++      .eq('order_id', orderId)
++      .maybeSingle()) as {
++      data: RedemptionRow | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++    return response.data;
++  }
++
+   /**
+    * Wraps the DB's own attempt_redemption() function — per its schema
+    * comment, this is "the ONLY way to mark a redemption as completed".
+diff --git a/apps/api/src/redemptions/redemptions.service.spec.ts b/apps/api/src/redemptions/redemptions.service.spec.ts
+index 5b20431..0f5cedc 100644
+--- a/apps/api/src/redemptions/redemptions.service.spec.ts
++++ b/apps/api/src/redemptions/redemptions.service.spec.ts
+@@ -10,6 +10,7 @@ describe('RedemptionsService', () => {
+   let repository: {
+     createPendingOrFetch: jest.Mock;
+     attemptRedemption: jest.Mock;
++    findByOrderId: jest.Mock;
+   };
+   let ordersService: { transitionNormal: jest.Mock };
+ 
+@@ -17,6 +18,7 @@ describe('RedemptionsService', () => {
+     repository = {
+       createPendingOrFetch: jest.fn(),
+       attemptRedemption: jest.fn(),
++      findByOrderId: jest.fn(),
+     };
+     ordersService = {
+       transitionNormal: jest.fn().mockResolvedValue(undefined),
+@@ -50,6 +52,26 @@ describe('RedemptionsService', () => {
+     });
+   });
+ 
++  describe('findByOrderId', () => {
++    it('delegates straight to the repository and does not create anything', async () => {
++      repository.findByOrderId.mockResolvedValue({ id: 'redemption-1' });
++
++      const result = await sut.findByOrderId('order-1');
++
++      expect(repository.findByOrderId).toHaveBeenCalledWith('order-1');
++      expect(repository.createPendingOrFetch).not.toHaveBeenCalled();
++      expect(result).toEqual({ id: 'redemption-1' });
++    });
++
++    it('returns null when no redemption exists yet for the order', async () => {
++      repository.findByOrderId.mockResolvedValue(null);
++
++      const result = await sut.findByOrderId('order-1');
++
++      expect(result).toBeNull();
++    });
++  });
++
+   describe('complete', () => {
+     const params = {
+       redemptionToken: 'token-1',
+diff --git a/apps/api/src/redemptions/redemptions.service.ts b/apps/api/src/redemptions/redemptions.service.ts
+index b12fcf7..f3cc166 100644
+--- a/apps/api/src/redemptions/redemptions.service.ts
++++ b/apps/api/src/redemptions/redemptions.service.ts
+@@ -27,6 +27,11 @@ export class RedemptionsService {
+     private readonly ordersService: OrdersService,
+   ) {}
+ 
++  /** Read-only lookup for GET /reveal/:token — never creates anything, unlike createPendingForOrder. Null if no redemption exists yet for this order. */
++  async findByOrderId(orderId: string): Promise<RedemptionRow | null> {
++    return this.repository.findByOrderId(orderId);
++  }
++
+   /** Called from POST /reveal/:token/accept — creates (or returns the existing) pending redemption row for an order. Idempotent on purpose; see RedemptionsRepository's doc comment. */
+   async createPendingForOrder(
+     orderId: string,
+diff --git a/apps/api/src/reveal/reveal-view.interface.ts b/apps/api/src/reveal/reveal-view.interface.ts
+index 05f861a..a5735eb 100644
+--- a/apps/api/src/reveal/reveal-view.interface.ts
++++ b/apps/api/src/reveal/reveal-view.interface.ts
+@@ -1,4 +1,4 @@
+-import { OrderStatus } from '@ebun/types';
++import { FulfillmentType, OrderStatus, RedemptionStatus } from '@ebun/types';
+ 
+ /**
+  * PROVISIONAL — built ahead of real mockups, at the person's own
+@@ -6,12 +6,22 @@ import { OrderStatus } from '@ebun/types';
+  * so the frontend isn't boxed in by whatever viewState buckets I
+  * guessed at here; expect this shape to change once real designs
+  * exist, hopefully by relaxing/extending rather than a rewrite.
++ *
++ * `fulfillmentType` and `redemption` added once apps/web's reveal
++ * screen (built against mock data first) made the gap concrete: the
++ * UI has to branch on fulfillment type, and the digital_voucher
++ * "claimed" screen needs the code/QR that acceptGift() was already
++ * creating server-side but never returning. Deliberately still no new
++ * viewState bucket for "claimed" — same reasoning as above: let the
++ * frontend derive it from (orderStatus, fulfillmentType, redemption)
++ * rather than encoding another guess into viewState.
+  */
+ export type RevealViewState = 'not_ready' | 'ready' | 'expired' | 'unavailable';
+ 
+ export interface RevealView {
+   viewState: RevealViewState;
+   orderStatus: OrderStatus;
++  fulfillmentType?: FulfillmentType;
+   recipientName?: string;
+   senderName?: string | null;
+   giftName?: string;
+@@ -24,4 +34,10 @@ export interface RevealView {
+     playbackUrl?: string;
+     durationSecs?: number | null;
+   };
++  /** digital_voucher only, and only while pending/initiated — see RevealService.buildView. */
++  redemption?: {
++    status: RedemptionStatus;
++    fallbackCode: string;
++    qrPayload: string;
++  };
+ }
+diff --git a/apps/api/src/reveal/reveal.service.spec.ts b/apps/api/src/reveal/reveal.service.spec.ts
+index 82baa17..166150f 100644
+--- a/apps/api/src/reveal/reveal.service.spec.ts
++++ b/apps/api/src/reveal/reveal.service.spec.ts
+@@ -1,5 +1,5 @@
+ import { Test } from '@nestjs/testing';
+-import { FulfillmentType, OrderStatus } from '@ebun/types';
++import { FulfillmentType, OrderStatus, RedemptionStatus } from '@ebun/types';
+ import { RevealService } from './reveal.service';
+ import { OrdersService } from '../orders/orders.service';
+ import { OrderRow } from '../orders/orders.repository';
+@@ -37,7 +37,11 @@ describe('RevealService', () => {
+   let orders: { findByRevealToken: jest.Mock; transitionNormal: jest.Mock };
+   let gifts: { findById: jest.Mock };
+   let users: { findById: jest.Mock };
+-  let redemptions: { createPendingForOrder: jest.Mock; complete: jest.Mock };
++  let redemptions: {
++    createPendingForOrder: jest.Mock;
++    complete: jest.Mock;
++    findByOrderId: jest.Mock;
++  };
+   let mediaResolver: { resolvePlaybackUrl: jest.Mock };
+ 
+   beforeEach(async () => {
+@@ -47,6 +51,7 @@ describe('RevealService', () => {
+     redemptions = {
+       createPendingForOrder: jest.fn(),
+       complete: jest.fn(),
++      findByOrderId: jest.fn().mockResolvedValue(null),
+     };
+     mediaResolver = { resolvePlaybackUrl: jest.fn() };
+ 
+@@ -238,6 +243,99 @@ describe('RevealService', () => {
+       expect(mediaResolver.resolvePlaybackUrl).not.toHaveBeenCalled();
+       expect(result.message).toEqual({ type: 'text', text: 'Happy birthday!' });
+     });
++
++    it('always includes fulfillmentType, from the gift template', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++
++      const result = await sut.view('reveal-token-1'); // default mock gift is Vtu
++
++      expect(result.fulfillmentType).toBe(FulfillmentType.Vtu);
++    });
++
++    it('includes the redemption code/QR for a digital_voucher order with a pending redemption', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        name: 'Voucher',
++        description: null,
++        image_url: null,
++        delivery_type: FulfillmentType.DigitalVoucher,
++      });
++      redemptions.findByOrderId.mockResolvedValue({
++        status: RedemptionStatus.Pending,
++        fallback_code: 'EBN-7K2-9XQ',
++        redemption_token: 'redemption-token-1',
++      });
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(redemptions.findByOrderId).toHaveBeenCalledWith('order-1');
++      expect(result.redemption).toEqual({
++        status: RedemptionStatus.Pending,
++        fallbackCode: 'EBN-7K2-9XQ',
++        qrPayload: 'redemption-token-1',
++      });
++    });
++
++    it('does not look up a redemption at all for a non-digital_voucher gift', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      ); // default mock gift is Vtu
++
++      await sut.view('reveal-token-1');
++
++      expect(redemptions.findByOrderId).not.toHaveBeenCalled();
++    });
++
++    it('omits redemption for a digital_voucher order with none created yet', async () => {
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        name: 'Voucher',
++        description: null,
++        image_url: null,
++        delivery_type: FulfillmentType.DigitalVoucher,
++      });
++      redemptions.findByOrderId.mockResolvedValue(null);
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.redemption).toBeUndefined();
++    });
++
++    it('omits redemption once completed, even if the order status is lagging behind at reveal_opened', async () => {
++      // Documents the exact edge case RedemptionsService.complete() flags:
++      // the redemption itself completes atomically, but the order's own
++      // status transition to `redeemed` is best-effort and can fail
++      // separately, leaving order.status stuck at reveal_opened. A
++      // completed redemption is the terminal "redeemed" state either
++      // way — not a code to keep showing.
++      orders.findByRevealToken.mockResolvedValue(
++        makeOrder({ status: OrderStatus.RevealOpened }),
++      );
++      gifts.findById.mockResolvedValue({
++        id: 'template-1',
++        name: 'Voucher',
++        description: null,
++        image_url: null,
++        delivery_type: FulfillmentType.DigitalVoucher,
++      });
++      redemptions.findByOrderId.mockResolvedValue({
++        status: RedemptionStatus.Completed,
++        fallback_code: 'EBN-7K2-9XQ',
++        redemption_token: 'redemption-token-1',
++      });
++
++      const result = await sut.view('reveal-token-1');
++
++      expect(result.redemption).toBeUndefined();
++    });
+   });
+ 
+   describe('acceptGift', () => {
+@@ -272,7 +370,7 @@ describe('RevealService', () => {
+       });
+     });
+ 
+-    it('does NOT auto-complete for a digital_voucher gift — leaves it pending for a real vendor scan', async () => {
++    it('does NOT auto-complete for a digital_voucher gift — leaves it pending for a real vendor scan, and returns its code/QR', async () => {
+       orders.findByRevealToken.mockResolvedValue(
+         makeOrder({ status: OrderStatus.RevealOpened }),
+       );
+@@ -286,10 +384,23 @@ describe('RevealService', () => {
+         image_url: null,
+         delivery_type: FulfillmentType.DigitalVoucher,
+       });
++      // Stands in for view()'s own findByOrderId lookup seeing the row
++      // createPendingForOrder just created — separate mocks because
++      // this is a fake repository, not a real DB the two calls share.
++      redemptions.findByOrderId.mockResolvedValue({
++        status: RedemptionStatus.Pending,
++        fallback_code: 'EBN-7K2-9XQ',
++        redemption_token: 'redemption-token-1',
++      });
+ 
+-      await sut.acceptGift('reveal-token-1');
++      const result = await sut.acceptGift('reveal-token-1');
+ 
+       expect(redemptions.complete).not.toHaveBeenCalled();
++      expect(result.redemption).toEqual({
++        status: RedemptionStatus.Pending,
++        fallbackCode: 'EBN-7K2-9XQ',
++        qrPayload: 'redemption-token-1',
++      });
+     });
+ 
+     it('implicitly performs the reveal transition if accept is called before any GET', async () => {
+diff --git a/apps/api/src/reveal/reveal.service.ts b/apps/api/src/reveal/reveal.service.ts
+index caad910..fc79a53 100644
+--- a/apps/api/src/reveal/reveal.service.ts
++++ b/apps/api/src/reveal/reveal.service.ts
+@@ -1,5 +1,5 @@
+ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+-import { FulfillmentType, OrderStatus } from '@ebun/types';
++import { FulfillmentType, OrderStatus, RedemptionStatus } from '@ebun/types';
+ import { OrdersService } from '../orders/orders.service';
+ import { OrderRow } from '../orders/orders.repository';
+ import { GiftsService } from '../gifts/gifts.service';
+@@ -36,7 +36,9 @@ const TERMINAL_NEGATIVE_STATES = new Set([
+  * at the person's explicit request to do backend first. The viewState
+  * bucketing in reveal-view.interface.ts is my best guess at what a
+  * reveal page needs to distinguish, not a locked contract — expect to
+- * revise this once real screens exist.
++ * revise this once real screens exist. fulfillmentType and redemption
++ * were added to close two specific gaps apps/web's reveal screen hit
++ * while building against this contract; see reveal-view.interface.ts.
+  */
+ @Injectable()
+ export class RevealService {
+@@ -56,11 +58,7 @@ export class RevealService {
+    * won the race — see the catch below) just serves the same content.
+    */
+   async view(revealToken: string): Promise<RevealView> {
+-    const findOrderByRevealToken = this.ordersService
+-      .findByRevealToken as unknown as (
+-      token: string,
+-    ) => Promise<OrderRow | null>;
+-    const order = await findOrderByRevealToken(revealToken);
++    const order = await this.ordersService.findByRevealToken(revealToken);
+     if (!order) {
+       throw new NotFoundException('No gift found for this link.');
+     }
+@@ -132,11 +130,7 @@ export class RevealService {
+    * waiting on a redemption record that nothing else will ever advance.
+    */
+   async acceptGift(revealToken: string): Promise<RevealView> {
+-    const findOrderByRevealToken = this.ordersService
+-      .findByRevealToken as unknown as (
+-      token: string,
+-    ) => Promise<OrderRow | null>;
+-    const order = await findOrderByRevealToken(revealToken);
++    const order = await this.ordersService.findByRevealToken(revealToken);
+     if (!order) {
+       throw new NotFoundException('No gift found for this link.');
+     }
+@@ -177,9 +171,8 @@ export class RevealService {
+ 
+     // digital_voucher — pending, waiting on a real vendor scan via
+     // POST /redeem (not built into any vendor-facing UI yet). The
+-    // recipient's own view of "I've accepted, here's my code" is
+-    // reveal-view.interface.ts's job to render once real mockups exist;
+-    // for now this just confirms acceptance succeeded.
++    // view() call below now returns the fallback code + QR payload
++    // (see buildView) alongside confirming acceptance succeeded.
+     return this.view(revealToken);
+   }
+ 
+@@ -200,14 +193,14 @@ export class RevealService {
+     const giftTemplate = await this.giftsService.findById(
+       order.gift_template_id,
+     );
+-    const findUserById = this.usersService.findById as unknown as (
+-      id: string,
+-    ) => Promise<{ name?: string } | null>;
+-    const sender = order.sender_id ? await findUserById(order.sender_id) : null;
++    const sender = order.sender_id
++      ? await this.usersService.findById(order.sender_id)
++      : null;
+ 
+     const view: RevealView = {
+       viewState,
+       orderStatus: order.status,
++      fulfillmentType: giftTemplate.delivery_type,
+       recipientName: order.recipient_name,
+       senderName: sender?.name ?? null,
+       giftName: giftTemplate.name,
+@@ -232,6 +225,29 @@ export class RevealService {
+       };
+     }
+ 
++    // Only digital_voucher has a vendor-scan step worth showing a
++    // code/QR for — vtu auto-completes with nothing left to show, and
++    // physical doesn't use the redemptions table at all. Completed
++    // redemptions are left out too: that's the terminal "redeemed"
++    // state, not "here's your code", and the order's own status
++    // already carries that.
++    if (
++      giftTemplate.delivery_type === FulfillmentType.DigitalVoucher &&
++      order.status === OrderStatus.RevealOpened
++    ) {
++      const existingRedemption = await this.redemptions.findByOrderId(order.id);
++      if (
++        existingRedemption &&
++        existingRedemption.status !== RedemptionStatus.Completed
++      ) {
++        view.redemption = {
++          status: existingRedemption.status,
++          fallbackCode: existingRedemption.fallback_code,
++          qrPayload: existingRedemption.redemption_token,
++        };
++      }
++    }
++
+     return view;
+   }
+ }
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 82bd6c1..44a69bc 100644
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -6,9 +6,11 @@
+     "dev": "next dev",
+     "build": "next build",
+     "start": "next start",
+-    "lint": "eslint"
++    "lint": "eslint",
++    "typecheck": "next typegen && tsc --noEmit"
+   },
+   "dependencies": {
++    "@ebun/types": "workspace:*",
+     "next": "16.3.1",
+     "react": "19.2.8",
+     "react-dom": "19.2.8"
+diff --git a/apps/web/src/app/reveal/[token]/components/dev-scenario-switcher.tsx b/apps/web/src/app/reveal/[token]/components/dev-scenario-switcher.tsx
+new file mode 100644
+index 0000000..59b5afd
+--- /dev/null
++++ b/apps/web/src/app/reveal/[token]/components/dev-scenario-switcher.tsx
+@@ -0,0 +1,34 @@
++import Link from "next/link";
++import { MOCK_SCENARIOS } from "@/lib/reveal/mock-data";
++
++/**
++ * Only for use while apps/web has no real /reveal endpoint to hit.
++ * `process.env.NODE_ENV !== "production"` is inlined at build time by
++ * Next's bundler, so this whole component (and the import above) is
++ * dead-code-eliminated from production builds — nothing to remember to
++ * remove before wiring the real endpoint, other than deleting the file.
++ */
++export function DevScenarioSwitcher({ current }: { current: string }) {
++  if (process.env.NODE_ENV === "production") return null;
++
++  return (
++    <div
++      className="fixed inset-x-0 bottom-0 z-50 flex flex-wrap justify-center gap-1.5 border-t p-2"
++      style={{ borderColor: "var(--border)", background: "rgba(14,13,11,0.92)" }}
++    >
++      {Object.keys(MOCK_SCENARIOS).map((key) => (
++        <Link
++          key={key}
++          href={`/reveal/${key}`}
++          className="rounded-full border px-2.5 py-1 text-[10px]"
++          style={{
++            borderColor: key === current ? "var(--gold)" : "var(--border)",
++            color: key === current ? "var(--gold-light)" : "var(--cream-faint)",
++          }}
++        >
++          {key.replace("mock-", "")}
++        </Link>
++      ))}
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/reveal/[token]/components/hold-to-unwrap.tsx b/apps/web/src/app/reveal/[token]/components/hold-to-unwrap.tsx
+new file mode 100644
+index 0000000..b48503f
+--- /dev/null
++++ b/apps/web/src/app/reveal/[token]/components/hold-to-unwrap.tsx
+@@ -0,0 +1,144 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++
++interface HoldToUnwrapProps {
++  onUnwrapped: () => void;
++  holdMs?: number;
++  label?: string;
++  fallbackLabel?: string;
++}
++
++/**
++ * The arrival-triggered second reveal for physical gifts. Deliberately a
++ * different gesture from the scratch card (press-and-hold a seal,
++ * rather than scratch foil) — by this point the recipient has the
++ * actual parcel in hand, so "unwrapping" reads truer than "scratching"
++ * a second time would.
++ *
++ * Press-and-hold has no faithful keyboard equivalent, so Enter/Space
++ * trigger it immediately rather than requiring a timed hold — an
++ * accessible equivalent action, not a degraded version of the same one.
++ * A visible text fallback covers pointer users who'd rather not hold.
++ */
++export function HoldToUnwrap({
++  onUnwrapped,
++  holdMs = 1300,
++  label = "Press and hold to open",
++  fallbackLabel = "Open your message",
++}: HoldToUnwrapProps) {
++  const [progress, setProgress] = useState(0);
++  const [unwrapped, setUnwrapped] = useState(false);
++  const rafRef = useRef<number | null>(null);
++  const startRef = useRef<number | null>(null);
++
++  const stop = useCallback(() => {
++    if (rafRef.current) cancelAnimationFrame(rafRef.current);
++    rafRef.current = null;
++    startRef.current = null;
++    setProgress(0);
++  }, []);
++
++  const complete = useCallback(() => {
++    if (rafRef.current) cancelAnimationFrame(rafRef.current);
++    rafRef.current = null;
++    setProgress(1);
++    setUnwrapped(true);
++    window.setTimeout(onUnwrapped, 260);
++  }, [onUnwrapped]);
++
++  // Held in a ref rather than a plain useCallback: the frame callback
++  // recurses on itself (rAF-driven loop), and referencing a useCallback
++  // binding from inside its own initializer trips
++  // react-hooks/immutability (the binding isn't guaranteed updated yet
++  // at that point). Routing the recursive call through a ref sidesteps
++  // that — `tickRef.current` is always a valid reference by the time
++  // it's invoked, regardless of when it was last reassigned.
++  const tickRef = useRef<(timestamp: number) => void>(() => {});
++
++  useEffect(() => {
++    tickRef.current = (timestamp: number) => {
++      if (startRef.current === null) startRef.current = timestamp;
++      const elapsed = timestamp - startRef.current;
++      const pct = Math.min(elapsed / holdMs, 1);
++      setProgress(pct);
++      if (pct >= 1) {
++        complete();
++        return;
++      }
++      rafRef.current = requestAnimationFrame(tickRef.current);
++    };
++  }, [complete, holdMs]);
++
++  const start = useCallback(() => {
++    if (unwrapped) return;
++    startRef.current = null;
++    rafRef.current = requestAnimationFrame(tickRef.current);
++  }, [unwrapped]);
++
++  useEffect(() => {
++    return () => {
++      if (rafRef.current) cancelAnimationFrame(rafRef.current);
++    };
++  }, []);
++
++  const angle = progress * 360;
++
++  return (
++    <div className="flex flex-col items-center gap-5">
++      <button
++        type="button"
++        aria-label={label}
++        onPointerDown={start}
++        onPointerUp={stop}
++        onPointerLeave={stop}
++        onPointerCancel={stop}
++        onKeyDown={(e) => {
++          if (e.key === "Enter" || e.key === " ") {
++            e.preventDefault();
++            complete();
++          }
++        }}
++        className="relative flex h-24 w-24 select-none items-center justify-center rounded-full outline-none"
++        style={{
++          background: `conic-gradient(var(--gold) ${angle}deg, transparent ${angle}deg)`,
++          transform: unwrapped ? "scale(1.08)" : "scale(1)",
++          opacity: unwrapped ? 0 : 1,
++          transition: unwrapped
++            ? "opacity 260ms ease-out, transform 260ms ease-out"
++            : "transform 150ms ease-out",
++        }}
++      >
++        <span
++          className="flex h-[76px] w-[76px] items-center justify-center rounded-full border"
++          style={{ borderColor: "var(--gold-dim)", background: "var(--panel)" }}
++        >
++          <svg
++            viewBox="0 0 24 24"
++            className="h-7 w-7"
++            fill="none"
++            stroke="var(--gold)"
++            strokeWidth={1.3}
++            strokeLinecap="round"
++            strokeLinejoin="round"
++            aria-hidden="true"
++          >
++            <path d="M4 6h16v12H4z" />
++            <path d="M4 7l8 6 8-6" />
++          </svg>
++        </span>
++      </button>
++      <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
++        {label}
++      </p>
++      <button
++        type="button"
++        onClick={complete}
++        className="text-[11px] tracking-wide underline underline-offset-4"
++        style={{ color: "var(--cream-dim)", textDecorationColor: "var(--gold-dim)" }}
++      >
++        {fallbackLabel}
++      </button>
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/reveal/[token]/components/icons.tsx b/apps/web/src/app/reveal/[token]/components/icons.tsx
+new file mode 100644
+index 0000000..a5e450e
+--- /dev/null
++++ b/apps/web/src/app/reveal/[token]/components/icons.tsx
+@@ -0,0 +1,71 @@
++type IconProps = { className?: string };
++
++export function PlayIcon({ className }: IconProps) {
++  return (
++    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
++      <path d="M7 4.5v15l14-7.5-14-7.5Z" />
++    </svg>
++  );
++}
++
++export function PauseIcon({ className }: IconProps) {
++  return (
++    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
++      <path d="M6 4.5h4.2v15H6v-15Zm7.8 0H18v15h-4.2v-15Z" />
++    </svg>
++  );
++}
++
++export function CheckGlyph({ className }: IconProps) {
++  return (
++    <svg
++      viewBox="0 0 24 24"
++      className={className}
++      fill="none"
++      stroke="currentColor"
++      strokeWidth={1.5}
++      strokeLinecap="round"
++      strokeLinejoin="round"
++      aria-hidden="true"
++    >
++      <path d="M4.5 12.5 9.5 17.5 19.5 6.5" />
++    </svg>
++  );
++}
++
++/** Generic placeholder mark for a gift with no photo yet — a wrapped box, not an emoji. */
++export function GiftMark({ className }: IconProps) {
++  return (
++    <svg
++      viewBox="0 0 48 48"
++      className={className}
++      fill="none"
++      stroke="currentColor"
++      strokeWidth={1}
++      aria-hidden="true"
++    >
++      <rect x="8" y="18" width="32" height="22" />
++      <path d="M8 26h32" />
++      <path d="M24 18v22" />
++      <path d="M24 18c-3.5 0-7-2-7-6a4 4 0 0 1 7-2.5A4 4 0 0 1 31 12c0 4-3.5 6-7 6Z" />
++    </svg>
++  );
++}
++
++export function LockGlyph({ className }: IconProps) {
++  return (
++    <svg
++      viewBox="0 0 24 24"
++      className={className}
++      fill="none"
++      stroke="currentColor"
++      strokeWidth={1.3}
++      strokeLinecap="round"
++      strokeLinejoin="round"
++      aria-hidden="true"
++    >
++      <rect x="5.5" y="10.5" width="13" height="9.5" rx="1.5" />
++      <path d="M8.5 10.5V7.75a3.5 3.5 0 0 1 7 0v2.75" />
++    </svg>
++  );
++}
+diff --git a/apps/web/src/app/reveal/[token]/components/message-player.tsx b/apps/web/src/app/reveal/[token]/components/message-player.tsx
+new file mode 100644
+index 0000000..37aa35c
+--- /dev/null
++++ b/apps/web/src/app/reveal/[token]/components/message-player.tsx
+@@ -0,0 +1,163 @@
++"use client";
++
++import { useEffect, useRef, useState } from "react";
++import type { RevealMessage } from "@/lib/reveal/types";
++import { PauseIcon, PlayIcon } from "./icons";
++
++// Fixed rather than randomised so the waveform doesn't reflow on every
++// render — this is a mock shape, not a real amplitude trace. Real
++// waveform data (or a generated one from the uploaded R2 asset) is
++// backend/media-pipeline work, not part of this slice.
++const WAVEFORM_BARS = [5, 11, 7, 16, 10, 20, 8, 14, 6, 12, 9, 18, 7, 11, 15, 6, 13, 9, 17, 8];
++
++function formatDuration(totalSecs: number): string {
++  const m = Math.floor(totalSecs / 60);
++  const s = Math.floor(totalSecs % 60);
++  return `${m}:${s.toString().padStart(2, "0")}`;
++}
++
++interface MessagePlayerProps {
++  message: RevealMessage;
++  senderName?: string | null;
++}
++
++export function MessagePlayer({ message, senderName }: MessagePlayerProps) {
++  const duration = message.durationSecs ?? 0;
++  const [elapsed, setElapsed] = useState(0);
++  const [playing, setPlaying] = useState(false);
++  const intervalRef = useRef<number | null>(null);
++
++  useEffect(() => {
++    return () => {
++      if (intervalRef.current) window.clearInterval(intervalRef.current);
++    };
++  }, []);
++
++  // Mock playback clock — no real playbackUrl exists yet (see
++  // get-reveal-view.ts), so this simulates elapsed time against the
++  // message's stated duration rather than driving an <audio>/<video>
++  // element. Swap this for real media once R2 playback URLs resolve.
++  const toggle = () => {
++    if (playing) {
++      if (intervalRef.current) window.clearInterval(intervalRef.current);
++      setPlaying(false);
++      return;
++    }
++    setPlaying(true);
++    intervalRef.current = window.setInterval(() => {
++      setElapsed((prev) => {
++        const next = prev + 0.2;
++        if (next >= duration) {
++          if (intervalRef.current) window.clearInterval(intervalRef.current);
++          setPlaying(false);
++          return 0;
++        }
++        return next;
++      });
++    }, 200);
++  };
++
++  if (message.type === "text") {
++    return (
++      <div className="flex flex-col gap-2">
++        {senderName && (
++          <p className="text-[11px] tracking-wide" style={{ color: "var(--gold-dim)" }}>
++            A note from {senderName}
++          </p>
++        )}
++        <p className="font-display text-xl italic leading-snug" style={{ color: "var(--cream)" }}>
++          &ldquo;{message.text}&rdquo;
++        </p>
++      </div>
++    );
++  }
++
++  const progressPct = duration > 0 ? Math.min(elapsed / duration, 1) : 0;
++
++  if (message.type === "video") {
++    return (
++      <div className="flex flex-col gap-2">
++        {senderName && (
++          <p className="text-[11px] tracking-wide" style={{ color: "var(--gold-dim)" }}>
++            A video from {senderName}
++          </p>
++        )}
++        <button
++          type="button"
++          onClick={toggle}
++          className="relative flex h-40 w-full items-center justify-center overflow-hidden border"
++          style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}
++        >
++          <span
++            className="absolute inset-0"
++            style={{
++              background:
++                "radial-gradient(ellipse 60% 60% at 50% 40%, var(--gold-glow), transparent 70%)",
++            }}
++          />
++          <span
++            className="relative flex h-12 w-12 items-center justify-center rounded-full"
++            style={{ background: "var(--gold)" }}
++          >
++            {playing ? (
++              <PauseIcon className="h-4 w-4 text-[color:var(--ink)]" />
++            ) : (
++              <PlayIcon className="h-4 w-4 text-[color:var(--ink)]" />
++            )}
++          </span>
++          <span
++            className="absolute bottom-2 right-3 text-[11px]"
++            style={{ color: "var(--cream-dim)" }}
++          >
++            {formatDuration(duration - elapsed)}
++          </span>
++        </button>
++      </div>
++    );
++  }
++
++  return (
++    <div className="flex flex-col gap-2">
++      {senderName && (
++        <p className="text-[11px] tracking-wide" style={{ color: "var(--gold-dim)" }}>
++          A voice note from {senderName}
++        </p>
++      )}
++      <div className="flex items-center gap-4">
++        <button
++          type="button"
++          onClick={toggle}
++          aria-label={playing ? "Pause message" : "Play message"}
++          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full"
++          style={{ background: "var(--gold)" }}
++        >
++          {playing ? (
++            <PauseIcon className="h-4 w-4 text-[color:var(--ink)]" />
++          ) : (
++            <PlayIcon className="ml-0.5 h-4 w-4 text-[color:var(--ink)]" />
++          )}
++        </button>
++        <div className="flex h-8 flex-1 items-center gap-[3px]">
++          {WAVEFORM_BARS.map((h, i) => {
++            const barPct = (i + 1) / WAVEFORM_BARS.length;
++            const played = barPct <= progressPct;
++            return (
++              <span
++                key={i}
++                className="w-[3px] rounded-full transition-colors"
++                style={{
++                  height: `${h}px`,
++                  background: played ? "var(--gold)" : "var(--gold-dim)",
++                  opacity: played ? 1 : 0.5,
++                }}
++              />
++            );
++          })}
++        </div>
++        <span className="w-9 flex-shrink-0 text-right text-[11px]" style={{ color: "var(--cream-dim)" }}>
++          {formatDuration(playing || elapsed > 0 ? duration - elapsed : duration)}
++        </span>
++      </div>
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/reveal/[token]/components/scratch-panel.tsx b/apps/web/src/app/reveal/[token]/components/scratch-panel.tsx
+new file mode 100644
+index 0000000..9b6cd86
+--- /dev/null
++++ b/apps/web/src/app/reveal/[token]/components/scratch-panel.tsx
+@@ -0,0 +1,234 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++
++interface ScratchPanelProps {
++  className?: string;
++  /** Portion of the foil (0..1) that must be cleared before it auto-completes. */
++  revealThreshold?: number;
++  onRevealed: () => void;
++  children: React.ReactNode;
++  fallbackLabel?: string;
++}
++
++/**
++ * A scratch-card mechanic over arbitrary content: `children` renders
++ * underneath a canvas "foil" layer, which the visitor drags a pointer
++ * across to erase (`destination-out` compositing). Crossing
++ * `revealThreshold` auto-clears the remainder.
++ *
++ * The underlying content is NOT aria-hidden — the foil is a visual
++ * flourish, not an access gate, so screen reader / keyboard users get
++ * the content immediately via the always-visible "reveal without
++ * scratching" button rather than being blocked by a gesture they can't
++ * perform. That button is a real requirement here, not a nicety: there
++ * is no keyboard equivalent of a scratch drag.
++ */
++export function ScratchPanel({
++  className,
++  revealThreshold = 0.55,
++  onRevealed,
++  children,
++  fallbackLabel = "Reveal without scratching",
++}: ScratchPanelProps) {
++  const containerRef = useRef<HTMLDivElement | null>(null);
++  const canvasRef = useRef<HTMLCanvasElement | null>(null);
++  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
++  const isDrawingRef = useRef(false);
++  const progressTimerRef = useRef<number | null>(null);
++  const revealedRef = useRef(false);
++  const [revealing, setRevealing] = useState(false);
++  const [foilGone, setFoilGone] = useState(false);
++
++  const drawFoil = useCallback((canvas: HTMLCanvasElement) => {
++    const ctx = canvas.getContext("2d");
++    if (!ctx) return;
++    const { width, height } = canvas;
++    ctx.clearRect(0, 0, width, height);
++
++    const gradient = ctx.createLinearGradient(0, 0, width, height);
++    gradient.addColorStop(0, "#8a6f32");
++    gradient.addColorStop(0.5, "#c9a84c");
++    gradient.addColorStop(1, "#8a6f32");
++    ctx.fillStyle = gradient;
++    ctx.fillRect(0, 0, width, height);
++
++    // Repeated wordmark texture reads as "this is foil", the way a real
++    // scratch ticket's metallic pattern does — not decoration for its
++    // own sake.
++    ctx.save();
++    ctx.globalAlpha = 0.08;
++    ctx.fillStyle = "#0e0d0b";
++    ctx.font = `${Math.max(14, width * 0.045)}px ui-sans-serif, system-ui, sans-serif`;
++    ctx.textBaseline = "middle";
++    const step = Math.max(70, width * 0.22);
++    for (let y = step * 0.5; y < height; y += step * 0.6) {
++      for (let x = -step; x < width + step; x += step) {
++        ctx.save();
++        ctx.translate(x, y);
++        ctx.rotate(-0.35);
++        ctx.fillText("EBUN", 0, 0);
++        ctx.restore();
++      }
++    }
++    ctx.restore();
++
++    ctx.save();
++    ctx.globalAlpha = 0.85;
++    ctx.fillStyle = "#0e0d0b";
++    ctx.textAlign = "center";
++    ctx.textBaseline = "middle";
++    ctx.font = `500 ${Math.max(11, width * 0.03)}px ui-sans-serif, system-ui, sans-serif`;
++    ctx.fillText("SCRATCH TO REVEAL", width / 2, height / 2);
++    ctx.restore();
++  }, []);
++
++  useEffect(() => {
++    const canvas = canvasRef.current;
++    const container = containerRef.current;
++    if (!canvas || !container) return;
++
++    const resize = () => {
++      const rect = container.getBoundingClientRect();
++      const dpr = Math.min(window.devicePixelRatio || 1, 2);
++      canvas.width = Math.round(rect.width * dpr);
++      canvas.height = Math.round(rect.height * dpr);
++      canvas.style.width = `${rect.width}px`;
++      canvas.style.height = `${rect.height}px`;
++      drawFoil(canvas);
++    };
++
++    resize();
++    const observer = new ResizeObserver(resize);
++    observer.observe(container);
++    return () => observer.disconnect();
++  }, [drawFoil]);
++
++  const triggerReveal = useCallback(() => {
++    if (revealedRef.current) return;
++    revealedRef.current = true;
++    if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
++    const prefersReducedMotion =
++      typeof window !== "undefined" &&
++      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
++    setRevealing(true);
++    window.setTimeout(
++      () => {
++        setFoilGone(true);
++        onRevealed();
++      },
++      prefersReducedMotion ? 0 : 420,
++    );
++  }, [onRevealed]);
++
++  const checkProgress = useCallback(() => {
++    const canvas = canvasRef.current;
++    const ctx = canvas?.getContext("2d");
++    if (!canvas || !ctx) return;
++    const { width, height } = canvas;
++    const stride = 6;
++    let transparent = 0;
++    let total = 0;
++    const data = ctx.getImageData(0, 0, width, height).data;
++    for (let y = 0; y < height; y += stride) {
++      for (let x = 0; x < width; x += stride) {
++        const alpha = data[(y * width + x) * 4 + 3];
++        if (alpha < 40) transparent += 1;
++        total += 1;
++      }
++    }
++    if (total > 0 && transparent / total >= revealThreshold) {
++      triggerReveal();
++    }
++  }, [revealThreshold, triggerReveal]);
++
++  const scratchAt = useCallback((clientX: number, clientY: number) => {
++    const canvas = canvasRef.current;
++    const ctx = canvas?.getContext("2d");
++    if (!canvas || !ctx) return;
++    const rect = canvas.getBoundingClientRect();
++    const scaleX = canvas.width / rect.width;
++    const scaleY = canvas.height / rect.height;
++    const x = (clientX - rect.left) * scaleX;
++    const y = (clientY - rect.top) * scaleY;
++    const radius = Math.max(canvas.width, canvas.height) * 0.055;
++
++    ctx.globalCompositeOperation = "destination-out";
++    ctx.lineCap = "round";
++    ctx.lineJoin = "round";
++    ctx.lineWidth = radius * 2;
++
++    if (lastPointRef.current) {
++      ctx.beginPath();
++      ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
++      ctx.lineTo(x, y);
++      ctx.stroke();
++    } else {
++      ctx.beginPath();
++      ctx.arc(x, y, radius, 0, Math.PI * 2);
++      ctx.fill();
++    }
++    lastPointRef.current = { x, y };
++  }, []);
++
++  const handlePointerDown = useCallback(
++    (e: React.PointerEvent<HTMLCanvasElement>) => {
++      if (revealedRef.current) return;
++      e.currentTarget.setPointerCapture(e.pointerId);
++      isDrawingRef.current = true;
++      lastPointRef.current = null;
++      scratchAt(e.clientX, e.clientY);
++      if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
++      progressTimerRef.current = window.setInterval(checkProgress, 180);
++    },
++    [checkProgress, scratchAt],
++  );
++
++  const handlePointerMove = useCallback(
++    (e: React.PointerEvent<HTMLCanvasElement>) => {
++      if (!isDrawingRef.current || revealedRef.current) return;
++      scratchAt(e.clientX, e.clientY);
++    },
++    [scratchAt],
++  );
++
++  const endStroke = useCallback(() => {
++    isDrawingRef.current = false;
++    lastPointRef.current = null;
++  }, []);
++
++  useEffect(() => {
++    return () => {
++      if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
++    };
++  }, []);
++
++  return (
++    <div ref={containerRef} className={`relative ${className ?? ""}`}>
++      <div className="absolute inset-0">{children}</div>
++      {!foilGone && (
++        <>
++          <canvas
++            ref={canvasRef}
++            onPointerDown={handlePointerDown}
++            onPointerMove={handlePointerMove}
++            onPointerUp={endStroke}
++            onPointerCancel={endStroke}
++            onPointerLeave={endStroke}
++            className="absolute inset-0 h-full w-full touch-none transition-opacity duration-[420ms] ease-out"
++            style={{ opacity: revealing ? 0 : 1, cursor: "pointer" }}
++            aria-hidden="true"
++          />
++          <button
++            type="button"
++            onClick={triggerReveal}
++            className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[11px] tracking-wide underline underline-offset-4"
++            style={{ color: "var(--cream-dim)", textDecorationColor: "var(--gold-dim)" }}
++          >
++            {fallbackLabel}
++          </button>
++        </>
++      )}
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/reveal/[token]/components/status-line.tsx b/apps/web/src/app/reveal/[token]/components/status-line.tsx
+new file mode 100644
+index 0000000..e79c9e6
+--- /dev/null
++++ b/apps/web/src/app/reveal/[token]/components/status-line.tsx
+@@ -0,0 +1,54 @@
++import { CheckGlyph } from "./icons";
++
++type StepState = "done" | "current" | "upcoming";
++
++interface StatusLineProps {
++  steps: { label: string; state: StepState }[];
++}
++
++export function StatusLine({ steps }: StatusLineProps) {
++  return (
++    <div className="flex w-full items-start">
++      {steps.map((step, i) => (
++        <div key={step.label} className="flex flex-1 flex-col items-center gap-2 last:flex-none">
++          <div className="flex w-full items-center">
++            {i > 0 && (
++              <span
++                className="h-px flex-1"
++                style={{
++                  background:
++                    step.state === "upcoming" ? "var(--border)" : "var(--gold-dim)",
++                }}
++              />
++            )}
++            <span
++              className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border"
++              style={{
++                borderColor: step.state === "upcoming" ? "var(--border-strong)" : "var(--gold)",
++                background: step.state === "current" ? "var(--gold)" : "transparent",
++              }}
++            >
++              {step.state === "done" && (
++                <CheckGlyph className="h-3 w-3 text-[color:var(--gold)]" />
++              )}
++              {step.state === "current" && (
++                <span
++                  className="h-1.5 w-1.5 rounded-full"
++                  style={{ background: "var(--ink)" }}
++                />
++              )}
++            </span>
++          </div>
++          <span
++            className="text-center text-[10px] tracking-wide"
++            style={{
++              color: step.state === "upcoming" ? "var(--cream-faint)" : "var(--cream-dim)",
++            }}
++          >
++            {step.label}
++          </span>
++        </div>
++      ))}
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/reveal/[token]/page.tsx b/apps/web/src/app/reveal/[token]/page.tsx
+new file mode 100644
+index 0000000..69c88f7
+--- /dev/null
++++ b/apps/web/src/app/reveal/[token]/page.tsx
+@@ -0,0 +1,15 @@
++import type { Metadata } from "next";
++import { getRevealView } from "@/lib/reveal/get-reveal-view";
++import { RevealExperience } from "./reveal-experience";
++
++export const metadata: Metadata = {
++  title: "A gift for you — Ebun",
++  description: "Someone sent you something.",
++};
++
++export default async function RevealPage({ params }: PageProps<"/reveal/[token]">) {
++  const { token } = await params;
++  const payload = await getRevealView(token);
++
++  return <RevealExperience token={token} initial={payload} />;
++}
+diff --git a/apps/web/src/app/reveal/[token]/reveal-experience.tsx b/apps/web/src/app/reveal/[token]/reveal-experience.tsx
+new file mode 100644
+index 0000000..90164c6
+--- /dev/null
++++ b/apps/web/src/app/reveal/[token]/reveal-experience.tsx
+@@ -0,0 +1,562 @@
++"use client";
++
++import { useState } from "react";
++import { FulfillmentType } from "@ebun/types";
++import type { RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
++import { DevScenarioSwitcher } from "./components/dev-scenario-switcher";
++import { HoldToUnwrap } from "./components/hold-to-unwrap";
++import { GiftMark, LockGlyph } from "./components/icons";
++import { MessagePlayer } from "./components/message-player";
++import { ScratchPanel } from "./components/scratch-panel";
++import { StatusLine } from "./components/status-line";
++
++/**
++ * Phase transitions below are local component state — nothing here
++ * calls a real endpoint yet. When wiring the API:
++ *  - reveal -> claimed:        POST /reveal/:token/accept (exists today)
++ *  - reveal -> address:        no endpoint yet (physical fulfillment work, separate thread)
++ *  - address -> transit:       no endpoint yet — needs somewhere to persist orders.delivery_address
++ *  - arrival-message -> fulfilled: no endpoint yet — needs a way to record "recipient opened it"
++ * transit/arrival-lock are reached directly on page load for a
++ * returning visitor (see initialPhase), not via a button here.
++ */
++type Phase =
++  | "entry"
++  | "reveal"
++  | "address"
++  | "transit"
++  | "arrival-lock"
++  | "arrival-message"
++  | "claimed"
++  | "redeemed"
++  | "fulfilled"
++  | "not_ready"
++  | "expired"
++  | "unavailable";
++
++function initialPhase(payload: RevealPayload): Phase {
++  switch (payload.screenState) {
++    case "not_ready":
++      return "not_ready";
++    case "expired":
++      return "expired";
++    case "unavailable":
++      return "unavailable";
++    case "claimed":
++      return "claimed";
++    case "redeemed":
++      return "redeemed";
++    case "awaiting_address":
++      return "address"; // scratched on an earlier visit — no need to make them scratch again
++    case "in_transit":
++      return "transit";
++    case "arrived":
++      return "arrival-lock";
++    case "fulfilled":
++      return "fulfilled";
++    case "ready":
++    default:
++      return "entry";
++  }
++}
++
++/**
++ * The real redemption record is created server-side by
++ * POST /reveal/:token/accept (see RevealService.acceptGift), but that
++ * endpoint doesn't return it in the response yet (see ./lib/reveal/types.ts).
++ * This stands in for that response so the claimed screen has something
++ * to render when reached via the on-page "Claim" action rather than a
++ * pre-seeded mock scenario. Delete once the real endpoint returns it.
++ */
++function mockRedemption(): RedemptionDetails {
++  return {
++    fallbackCode: "EBN-4M8-2LP",
++    qrPayload: "ebun:redeem:local-mock-token",
++    vendorHint: "Any Ebun founding-partner spot — full list sent in your next message.",
++    validUntil: undefined,
++  };
++}
++
++export function RevealExperience({ token, initial }: { token: string; initial: RevealPayload }) {
++  const [phase, setPhase] = useState<Phase>(() => initialPhase(initial));
++  const [scratched, setScratched] = useState(
++    !["ready", "not_ready", "expired", "unavailable"].includes(initial.screenState),
++  );
++  const [address, setAddress] = useState("");
++  // mockRedemption() returns fixed literal values (no randomness), so
++  // deriving it inline is safe and stable — no need to stash it in
++  // state just to avoid recomputing.
++  const redemption = initial.redemption ?? mockRedemption();
++  const isPhysical = initial.fulfillmentType === FulfillmentType.Physical;
++
++  return (
++    <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7 pb-10">
++      <div
++        className="font-display pt-6 pb-2 text-center text-base tracking-[0.2em]"
++        style={{ color: "var(--gold)" }}
++      >
++        EBUN
++      </div>
++
++      <div className="flex flex-1 flex-col">
++        {phase === "not_ready" && <StatusScreen kind="not_ready" />}
++        {phase === "expired" && <StatusScreen kind="expired" />}
++        {phase === "unavailable" && <StatusScreen kind="unavailable" />}
++
++        {phase === "entry" && (
++          <EntryScreen
++            recipientName={initial.recipientName}
++            onBegin={() => setPhase("reveal")}
++          />
++        )}
++
++        {phase === "reveal" && (
++          <RevealScreen
++            payload={initial}
++            scratched={scratched}
++            onScratched={() => setScratched(true)}
++            onPrimaryAction={() => setPhase(isPhysical ? "address" : "claimed")}
++          />
++        )}
++
++        {phase === "address" && (
++          <AddressScreen
++            giftName={initial.giftName}
++            address={address}
++            onChangeAddress={setAddress}
++            onSubmit={() => setPhase("transit")}
++          />
++        )}
++
++        {phase === "transit" && (
++          <TransitScreen
++            giftName={initial.giftName}
++            senderName={initial.senderName}
++            etaLabel={initial.deliveryEtaLabel}
++          />
++        )}
++
++        {phase === "arrival-lock" && (
++          <ArrivalLockScreen onUnwrapped={() => setPhase("arrival-message")} />
++        )}
++
++        {phase === "arrival-message" && initial.message && (
++          <ArrivalMessageScreen
++            payload={initial}
++            onDone={() => setPhase("fulfilled")}
++          />
++        )}
++
++        {phase === "claimed" && (
++          <ClaimedScreen giftName={initial.giftName} redemption={redemption} />
++        )}
++
++        {phase === "redeemed" && (
++          <TerminalScreen
++            title="Already collected"
++            body="This gift has already been redeemed at a vendor."
++            giftName={initial.giftName}
++          />
++        )}
++
++        {phase === "fulfilled" && (
++          <TerminalScreen
++            title="Delivered, and opened"
++            body="You've already unwrapped this one."
++            giftName={initial.giftName}
++          />
++        )}
++      </div>
++
++      <DevScenarioSwitcher current={token} />
++    </div>
++  );
++}
++
++// ---------------------------------------------------------------------------
++
++function EntryScreen({
++  recipientName,
++  onBegin,
++}: {
++  recipientName?: string;
++  onBegin: () => void;
++}) {
++  return (
++    <div className="flex flex-1 flex-col items-center justify-center gap-8 text-center">
++      <div
++        className="flex h-20 w-20 items-center justify-center rounded-full border"
++        style={{ borderColor: "var(--gold-dim)" }}
++      >
++        <svg
++          viewBox="0 0 24 24"
++          className="h-7 w-7"
++          fill="none"
++          stroke="var(--gold)"
++          strokeWidth={1.3}
++          strokeLinecap="round"
++          strokeLinejoin="round"
++          aria-hidden="true"
++        >
++          <path d="M4 6h16v12H4z" />
++          <path d="M4 7l8 6 8-6" />
++        </svg>
++      </div>
++      <div className="flex flex-col gap-3">
++        <h1 className="font-display text-4xl font-normal leading-tight" style={{ color: "var(--cream)" }}>
++          {recipientName ? `${recipientName}, someone's` : "Someone's"}
++          <br />
++          thinking of you.
++        </h1>
++        <p className="mx-auto max-w-[26ch] text-sm leading-relaxed" style={{ color: "var(--cream-dim)" }}>
++          A gift is waiting, with a message attached.
++        </p>
++      </div>
++      <button
++        type="button"
++        onClick={onBegin}
++        className="px-10 py-3.5 text-sm font-medium tracking-wide"
++        style={{ background: "var(--gold)", color: "var(--ink)" }}
++      >
++        Open it
++      </button>
++    </div>
++  );
++}
++
++function GiftBlock({
++  giftName,
++  giftDescription,
++  giftImageUrl,
++}: {
++  giftName?: string;
++  giftDescription?: string | null;
++  giftImageUrl?: string | null;
++}) {
++  return (
++    <div className="flex flex-col gap-4">
++      <div
++        className="flex h-44 w-full items-center justify-center border"
++        style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}
++      >
++        {giftImageUrl ? (
++          // eslint-disable-next-line @next/next/no-img-element -- mock data only; swap for next/image once real R2 URLs exist
++          <img src={giftImageUrl} alt="" className="h-full w-full object-cover" />
++        ) : (
++          <GiftMark className="h-14 w-14 text-[color:var(--gold-dim)]" />
++        )}
++      </div>
++      <div className="flex flex-col gap-1.5">
++        <h2 className="font-display text-2xl font-normal" style={{ color: "var(--cream)" }}>
++          {giftName ?? "A gift"}
++        </h2>
++        {giftDescription && (
++          <p className="text-sm leading-relaxed" style={{ color: "var(--cream-dim)" }}>
++            {giftDescription}
++          </p>
++        )}
++      </div>
++    </div>
++  );
++}
++
++function RevealScreen({
++  payload,
++  scratched,
++  onScratched,
++  onPrimaryAction,
++}: {
++  payload: RevealPayload;
++  scratched: boolean;
++  onScratched: () => void;
++  onPrimaryAction: () => void;
++}) {
++  const isPhysical = payload.fulfillmentType === FulfillmentType.Physical;
++
++  const content = (
++    <div className="flex h-full flex-col gap-6 py-2">
++      {payload.senderName && (
++        <p className="text-center text-xs" style={{ color: "var(--cream-dim)" }}>
++          From <span style={{ color: "var(--gold-light)" }}>{payload.senderName}</span>
++        </p>
++      )}
++
++      {!isPhysical && payload.message && (
++        <MessagePlayer message={payload.message} />
++      )}
++
++      <GiftBlock
++        giftName={payload.giftName}
++        giftDescription={payload.giftDescription}
++        giftImageUrl={payload.giftImageUrl}
++      />
++
++      {isPhysical && (
++        <div
++          className="flex items-center gap-3 border px-4 py-3"
++          style={{ borderColor: "var(--border)" }}
++        >
++          <LockGlyph className="h-4 w-4 flex-shrink-0 text-[color:var(--gold-dim)]" />
++          <p className="text-xs leading-snug" style={{ color: "var(--cream-dim)" }}>
++            A message from {payload.senderName ?? "the sender"} unlocks the moment this arrives
++            at your door.
++          </p>
++        </div>
++      )}
++    </div>
++  );
++
++  return (
++    <div className="flex flex-1 flex-col gap-6 pt-4">
++      <ScratchPanel className="min-h-[360px] flex-1" onRevealed={onScratched}>
++        {content}
++      </ScratchPanel>
++
++      {scratched && (
++        <button
++          type="button"
++          onClick={onPrimaryAction}
++          className="w-full py-3.5 text-sm font-medium tracking-wide"
++          style={{ background: "var(--gold)", color: "var(--ink)" }}
++        >
++          {isPhysical ? "Continue" : "Claim your gift"}
++        </button>
++      )}
++    </div>
++  );
++}
++
++function AddressScreen({
++  giftName,
++  address,
++  onChangeAddress,
++  onSubmit,
++}: {
++  giftName?: string;
++  address: string;
++  onChangeAddress: (v: string) => void;
++  onSubmit: () => void;
++}) {
++  return (
++    <div className="flex flex-1 flex-col justify-center gap-7">
++      <div className="flex flex-col gap-2 text-center">
++        <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          Where should this go?
++        </h2>
++        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
++          {giftName ? `${giftName} is ready to be sent your way.` : "Your gift is ready to send."}
++        </p>
++      </div>
++      <textarea
++        value={address}
++        onChange={(e) => onChangeAddress(e.target.value)}
++        placeholder="House number, street, area, city"
++        rows={4}
++        className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
++        style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
++      />
++      <button
++        type="button"
++        onClick={onSubmit}
++        disabled={address.trim().length < 6}
++        className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
++        style={{ background: "var(--gold)", color: "var(--ink)" }}
++      >
++        Confirm delivery address
++      </button>
++    </div>
++  );
++}
++
++function TransitScreen({
++  giftName,
++  senderName,
++  etaLabel,
++}: {
++  giftName?: string;
++  senderName?: string | null;
++  etaLabel?: string;
++}) {
++  return (
++    <div className="flex flex-1 flex-col justify-center gap-10">
++      <div className="flex flex-col gap-2 text-center">
++        <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          It&rsquo;s on its way.
++        </h2>
++        {etaLabel && (
++          <p className="text-sm" style={{ color: "var(--gold-light)" }}>
++            {etaLabel}
++          </p>
++        )}
++        {giftName && (
++          <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
++            {giftName}
++          </p>
++        )}
++      </div>
++
++      <StatusLine
++        steps={[
++          { label: "Confirmed", state: "done" },
++          { label: "On its way", state: "current" },
++          { label: "Arriving", state: "upcoming" },
++        ]}
++      />
++
++      <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: "var(--border)" }}>
++        <LockGlyph className="h-4 w-4 flex-shrink-0 text-[color:var(--gold-dim)]" />
++        <p className="text-xs leading-snug" style={{ color: "var(--cream-dim)" }}>
++          {senderName ? `${senderName}'s` : "Their"} message opens with it, the moment it
++          arrives.
++        </p>
++      </div>
++    </div>
++  );
++}
++
++function ArrivalLockScreen({ onUnwrapped }: { onUnwrapped: () => void }) {
++  return (
++    <div className="flex flex-1 flex-col items-center justify-center gap-8 text-center">
++      <div className="flex flex-col gap-2">
++        <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          It&rsquo;s here.
++        </h2>
++        <p className="mx-auto max-w-[28ch] text-sm" style={{ color: "var(--cream-dim)" }}>
++          Your message has been waiting for this moment.
++        </p>
++      </div>
++      <HoldToUnwrap onUnwrapped={onUnwrapped} />
++    </div>
++  );
++}
++
++function ArrivalMessageScreen({
++  payload,
++  onDone,
++}: {
++  payload: RevealPayload;
++  onDone: () => void;
++}) {
++  return (
++    <div className="flex flex-1 flex-col justify-center gap-8">
++      <div className="flex flex-col gap-1 text-center">
++        <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          {payload.giftName ?? "For you"}
++        </h2>
++      </div>
++      {payload.message && <MessagePlayer message={payload.message} senderName={payload.senderName} />}
++      <button
++        type="button"
++        onClick={onDone}
++        className="w-full py-3.5 text-sm font-medium tracking-wide"
++        style={{ background: "var(--gold)", color: "var(--ink)" }}
++      >
++        That&rsquo;s everything
++      </button>
++    </div>
++  );
++}
++
++function ClaimedScreen({
++  giftName,
++  redemption,
++}: {
++  giftName?: string;
++  redemption: RedemptionDetails;
++}) {
++  return (
++    <div className="flex flex-1 flex-col justify-center gap-8">
++      <div className="flex flex-col gap-2 text-center">
++        <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          It&rsquo;s yours.
++        </h2>
++        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
++          Show this at the counter to collect {giftName ?? "it"}.
++        </p>
++      </div>
++
++      <div
++        className="flex flex-col items-center gap-4 border border-dashed px-6 py-8"
++        style={{ borderColor: "var(--gold-dim)" }}
++      >
++        <div
++          className="flex h-36 w-36 items-center justify-center text-[10px] tracking-wide"
++          style={{ background: "var(--cream)", color: "var(--ink)" }}
++        >
++          QR CODE
++        </div>
++        <div className="text-center">
++          <p className="font-display text-2xl tracking-[0.1em]" style={{ color: "var(--gold-light)" }}>
++            {redemption.fallbackCode}
++          </p>
++          <p className="mt-1 text-[10px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
++            CODE, IF THE SCAN DOESN&rsquo;T WORK
++          </p>
++        </div>
++      </div>
++
++      {redemption.vendorHint && (
++        <div className="border px-4 py-3.5" style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}>
++          <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
++            <span style={{ color: "var(--cream)" }}>Where to use it: </span>
++            {redemption.vendorHint}
++          </p>
++        </div>
++      )}
++    </div>
++  );
++}
++
++function TerminalScreen({
++  title,
++  body,
++  giftName,
++}: {
++  title: string;
++  body: string;
++  giftName?: string;
++}) {
++  return (
++    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
++      <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++        {title}
++      </h2>
++      <p className="max-w-[28ch] text-sm" style={{ color: "var(--cream-dim)" }}>
++        {body}
++      </p>
++      {giftName && (
++        <p className="mt-2 text-xs tracking-wide" style={{ color: "var(--gold-dim)" }}>
++          {giftName}
++        </p>
++      )}
++    </div>
++  );
++}
++
++function StatusScreen({ kind }: { kind: "not_ready" | "expired" | "unavailable" }) {
++  const copy = {
++    not_ready: {
++      title: "Not quite ready",
++      body: "This gift isn't ready to open just yet. Check back a little later.",
++    },
++    expired: {
++      title: "This link has expired",
++      body: "This gift is no longer available to open.",
++    },
++    unavailable: {
++      title: "No longer available",
++      body: "This gift can't be opened. If that seems wrong, ask the sender to check in.",
++    },
++  }[kind];
++
++  return (
++    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
++      <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++        {copy.title}
++      </h2>
++      <p className="max-w-[28ch] text-sm" style={{ color: "var(--cream-dim)" }}>
++        {copy.body}
++      </p>
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/reveal/layout.tsx b/apps/web/src/app/reveal/layout.tsx
+new file mode 100644
+index 0000000..804419e
+--- /dev/null
++++ b/apps/web/src/app/reveal/layout.tsx
+@@ -0,0 +1,37 @@
++import type { Viewport } from "next";
++import { Cormorant_Garamond, DM_Sans } from "next/font/google";
++import "./reveal-theme.css";
++
++const cormorant = Cormorant_Garamond({
++  subsets: ["latin"],
++  weight: ["300", "400", "500", "600"],
++  style: ["normal", "italic"],
++  variable: "--font-cormorant",
++  display: "swap",
++});
++
++const dmSans = DM_Sans({
++  subsets: ["latin"],
++  weight: ["300", "400", "500", "700"],
++  variable: "--font-dm-sans",
++  display: "swap",
++});
++
++// Overrides the root layout's viewport for this route tree only. The
++// reveal screen is a full-bleed, phone-shaped experience opened from a
++// WhatsApp link, so it needs safe-area awareness the marketing/app
++// shell doesn't.
++export const viewport: Viewport = {
++  width: "device-width",
++  initialScale: 1,
++  viewportFit: "cover",
++  themeColor: "#0e0d0b",
++};
++
++export default function RevealLayout({ children }: LayoutProps<"/reveal">) {
++  return (
++    <div className={`ebun-reveal-theme ${cormorant.variable} ${dmSans.variable}`}>
++      {children}
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/reveal/reveal-theme.css b/apps/web/src/app/reveal/reveal-theme.css
+new file mode 100644
+index 0000000..14d8e49
+--- /dev/null
++++ b/apps/web/src/app/reveal/reveal-theme.css
+@@ -0,0 +1,50 @@
++/*
++ * Scoped under .ebun-reveal-theme rather than :root. The consumer-facing
++ * routes (/send, /reveal) will likely end up sharing this palette, but
++ * /ops is an internal admin dashboard that almost certainly wants a
++ * plainer, denser, utilitarian look — and /send doesn't exist yet. Until
++ * more than one route needs these tokens, keeping them scoped here
++ * costs nothing and avoids deciding the whole app's theme as a side
++ * effect of building one screen.
++ */
++.ebun-reveal-theme {
++  --ink: #0e0d0b;
++  --panel: #161410;
++  --panel-raised: #1a1814;
++  --border: rgba(201, 168, 76, 0.14);
++  --border-strong: rgba(201, 168, 76, 0.32);
++  --gold: #c9a84c;
++  --gold-light: #e2c07a;
++  --gold-dim: #8a6f32;
++  --gold-glow: rgba(201, 168, 76, 0.1);
++  --cream: #f5efe0;
++  --cream-dim: rgba(245, 239, 224, 0.55);
++  --cream-faint: rgba(245, 239, 224, 0.3);
++
++  background: var(--ink);
++  color: var(--cream);
++  min-height: 100dvh;
++  font-family: var(--font-dm-sans), system-ui, sans-serif;
++  -webkit-font-smoothing: antialiased;
++  box-sizing: border-box;
++  padding-top: env(safe-area-inset-top, 0px);
++  padding-bottom: env(safe-area-inset-bottom, 0px);
++}
++
++.ebun-reveal-theme *,
++.ebun-reveal-theme *::before,
++.ebun-reveal-theme *::after {
++  box-sizing: inherit;
++}
++
++.ebun-reveal-theme .font-display {
++  font-family: var(--font-cormorant), Georgia, serif;
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .ebun-reveal-theme * {
++    animation-duration: 0.001ms !important;
++    animation-iteration-count: 1 !important;
++    transition-duration: 0.001ms !important;
++  }
++}
+diff --git a/apps/web/src/lib/reveal/get-reveal-view.ts b/apps/web/src/lib/reveal/get-reveal-view.ts
+new file mode 100644
+index 0000000..fb00c30
+--- /dev/null
++++ b/apps/web/src/lib/reveal/get-reveal-view.ts
+@@ -0,0 +1,26 @@
++import { DEFAULT_MOCK_SCENARIO, MOCK_SCENARIOS } from "./mock-data";
++import type { RevealPayload } from "./types";
++
++/**
++ * The one function this whole feature calls to get its data. Swapping
++ * mock data for the real endpoint later means changing this function's
++ * body only — every screen component takes a plain RevealPayload and
++ * has no idea it came from a mock.
++ *
++ * Real version will be:
++ *   const res = await fetch(`${API_BASE_URL}/reveal/${token}`, { cache: "no-store" });
++ *   if (!res.ok) throw new Error(...);
++ *   return res.json();
++ * — the backend's RevealView now includes fulfillmentType and
++ * redemption (see ./types.ts's header for what changed), so the two
++ * contracts agree on those fields. What's still missing is anything
++ * for the physical journey's address capture or arrival-triggered
++ * reveal — that fulfillment path doesn't have a backend contract yet.
++ *
++ * Unrecognised tokens fall back to the happy-path voucher scenario
++ * rather than 404ing, so any placeholder link dropped into the app
++ * still renders something during review.
++ */
++export async function getRevealView(token: string): Promise<RevealPayload> {
++  return MOCK_SCENARIOS[token] ?? MOCK_SCENARIOS[DEFAULT_MOCK_SCENARIO];
++}
+diff --git a/apps/web/src/lib/reveal/mock-data.ts b/apps/web/src/lib/reveal/mock-data.ts
+new file mode 100644
+index 0000000..81d9c9b
+--- /dev/null
++++ b/apps/web/src/lib/reveal/mock-data.ts
+@@ -0,0 +1,136 @@
++import { FulfillmentType, OrderStatus } from "@ebun/types";
++import type { RevealPayload } from "./types";
++
++/**
++ * Keyed by a fake "token" so each scenario is reachable at its own URL
++ * during development, e.g. /reveal/mock-physical-transit. See
++ * get-reveal-view.ts for the fallback behaviour on an unrecognised
++ * token, and dev-scenario-switcher.tsx for the on-screen picker.
++ */
++export const MOCK_SCENARIOS: Record<string, RevealPayload> = {
++  "mock-voucher-ready": {
++    screenState: "ready",
++    orderStatus: OrderStatus.ReadyForRedemption,
++    fulfillmentType: FulfillmentType.DigitalVoucher,
++    recipientName: "Ada",
++    senderName: "Segun",
++    giftName: "A Pizza, On Him",
++    giftDescription:
++      "Redeemable at any partner pizza spot near you — pick your own toppings when you get there.",
++    giftImageUrl: null,
++    theme: "gold",
++    message: {
++      type: "voice",
++      durationSecs: 14,
++      playbackUrl: undefined,
++    },
++  },
++
++  "mock-voucher-claimed": {
++    screenState: "claimed",
++    orderStatus: OrderStatus.ReadyForRedemption,
++    fulfillmentType: FulfillmentType.DigitalVoucher,
++    recipientName: "Ada",
++    senderName: "Segun",
++    giftName: "A Pizza, On Him",
++    giftDescription: "Show this at the counter to collect it.",
++    theme: "gold",
++    message: { type: "voice", durationSecs: 14 },
++    redemption: {
++      fallbackCode: "EBN-7K2-9XQ",
++      qrPayload: "ebun:redeem:mock-redemption-token-abc123",
++      vendorHint: "Any Ebun founding-partner pizza spot — full list sent in your next message.",
++      validUntil: "2026-10-23",
++    },
++  },
++
++  "mock-voucher-redeemed": {
++    screenState: "redeemed",
++    orderStatus: OrderStatus.Redeemed,
++    fulfillmentType: FulfillmentType.DigitalVoucher,
++    recipientName: "Ada",
++    senderName: "Segun",
++    giftName: "A Pizza, On Him",
++    theme: "gold",
++  },
++
++  "mock-physical-ready": {
++    screenState: "ready",
++    orderStatus: OrderStatus.RevealOpened,
++    fulfillmentType: FulfillmentType.Physical,
++    recipientName: "Chidi",
++    senderName: "Ngozi",
++    giftName: "A Burger, Delivered",
++    giftDescription: "A full combo, delivered straight to your door — on the house.",
++    theme: "gold",
++    // Deliberately no `message` yet — the emotional message is withheld
++    // for physical gifts until the item actually arrives.
++  },
++
++  "mock-physical-address": {
++    screenState: "awaiting_address",
++    orderStatus: OrderStatus.RevealOpened,
++    fulfillmentType: FulfillmentType.Physical,
++    recipientName: "Chidi",
++    senderName: "Ngozi",
++    giftName: "A Burger, Delivered",
++    giftDescription: "A full combo, delivered straight to your door — on the house.",
++    theme: "gold",
++  },
++
++  "mock-physical-transit": {
++    screenState: "in_transit",
++    orderStatus: OrderStatus.Dispatched,
++    fulfillmentType: FulfillmentType.Physical,
++    recipientName: "Chidi",
++    senderName: "Ngozi",
++    giftName: "A Burger, Delivered",
++    theme: "gold",
++    deliveryEtaLabel: "Arriving this evening",
++  },
++
++  "mock-physical-arrived": {
++    screenState: "arrived",
++    orderStatus: OrderStatus.Delivered,
++    fulfillmentType: FulfillmentType.Physical,
++    recipientName: "Chidi",
++    senderName: "Ngozi",
++    giftName: "A Burger, Delivered",
++    theme: "gold",
++    message: {
++      type: "video",
++      durationSecs: 22,
++      playbackUrl: undefined,
++    },
++  },
++
++  "mock-physical-fulfilled": {
++    screenState: "fulfilled",
++    orderStatus: OrderStatus.Fulfilled,
++    fulfillmentType: FulfillmentType.Physical,
++    recipientName: "Chidi",
++    senderName: "Ngozi",
++    giftName: "A Burger, Delivered",
++    theme: "gold",
++  },
++
++  "mock-not-ready": {
++    screenState: "not_ready",
++    orderStatus: OrderStatus.Processing,
++    fulfillmentType: FulfillmentType.DigitalVoucher,
++  },
++
++  "mock-expired": {
++    screenState: "expired",
++    orderStatus: OrderStatus.Expired,
++    fulfillmentType: FulfillmentType.DigitalVoucher,
++  },
++
++  "mock-unavailable": {
++    screenState: "unavailable",
++    orderStatus: OrderStatus.Cancelled,
++    fulfillmentType: FulfillmentType.DigitalVoucher,
++  },
++};
++
++export const DEFAULT_MOCK_SCENARIO = "mock-voucher-ready";
+diff --git a/apps/web/src/lib/reveal/types.ts b/apps/web/src/lib/reveal/types.ts
+new file mode 100644
+index 0000000..f91ee44
+--- /dev/null
++++ b/apps/web/src/lib/reveal/types.ts
+@@ -0,0 +1,103 @@
++import { FulfillmentType, OrderStatus } from "@ebun/types";
++
++/**
++ * Frontend view model for GET /reveal/:token.
++ *
++ * Was deliberately NOT the same shape as apps/api's RevealView
++ * (apps/api/src/reveal/reveal-view.interface.ts) when this file was
++ * first written — that interface was missing `fulfillmentType` and
++ * `redemption`, which this screen needs to branch on and to render the
++ * claimed/voucher state. Both have since been added server-side (same
++ * gaps this comment used to describe), so the two contracts now agree
++ * on those two fields. Still not wired to the real endpoint — see
++ * get-reveal-view.ts — and the physical journey's delivery-address
++ * capture and arrival-triggered reveal still have no backend contract
++ * at all, since that fulfillment path is being built separately.
++ * `awaiting_address` / `in_transit` / `arrived` below remain this UI's
++ * best guess at what that work will need to produce.
++ *
++ * Once the real contract is settled end-to-end, promote the parts that
++ * hold up to packages/types (order-status.ts's header already calls
++ * that package "the single vocabulary both apps/api and apps/web
++ * import from" — this file is upstream of that, not a replacement).
++ */
++export type RevealScreenState =
++  | "not_ready" // token is real but the order hasn't reached a viewable state yet
++  | "expired" // past expires_at, never opened/redeemed
++  | "unavailable" // cancelled / refunded / failed — terminal, negative
++  | "ready" // viewable, pre-claim/pre-address — the scratch moment lives here
++  | "claimed" // digital_voucher: redemption code issued, not yet scanned
++  | "redeemed" // digital_voucher: scanned by a vendor — terminal, positive
++  | "awaiting_address" // physical: scratched, needs a delivery address
++  | "in_transit" // physical: address confirmed, item + message both en route
++  | "arrived" // physical: item delivered, full message unlockable
++  | "fulfilled"; // physical: message opened — terminal, positive
++
++export interface RevealMessage {
++  type: "text" | "voice" | "video";
++  text?: string | null;
++  playbackUrl?: string;
++  durationSecs?: number | null;
++}
++
++/** Only ever populated once a digital_voucher order reaches "claimed". */
++export interface RedemptionDetails {
++  fallbackCode: string;
++  qrPayload: string;
++  vendorHint?: string;
++  validUntil?: string; // ISO date, display only
++}
++
++export interface RevealPayload {
++  screenState: RevealScreenState;
++  orderStatus: OrderStatus;
++  fulfillmentType: FulfillmentType;
++  recipientName?: string;
++  senderName?: string | null;
++  giftName?: string;
++  giftDescription?: string | null;
++  giftImageUrl?: string | null;
++  theme?: "gold" | "red" | "white" | "green";
++  message?: RevealMessage;
++  redemption?: RedemptionDetails;
++  /** Physical, in_transit only — e.g. "Arriving this evening". Display copy, not a timestamp to compute against. */
++  deliveryEtaLabel?: string;
++}
++
++/**
++ * Illustrative only — mock data below sets `screenState` directly rather
++ * than deriving it, since the real inputs (order + redemption + address
++ * presence) don't exist yet. Kept here so the mapping is written down
++ * once, in one place, ahead of wiring the real endpoint — not because
++ * anything currently calls it.
++ */
++export function deriveScreenState(
++  orderStatus: OrderStatus,
++  fulfillmentType: FulfillmentType,
++  hasDeliveryAddress: boolean,
++): RevealScreenState {
++  switch (orderStatus) {
++    case OrderStatus.Expired:
++      return "expired";
++    case OrderStatus.Cancelled:
++    case OrderStatus.Refunded:
++    case OrderStatus.FulfillmentFailed:
++    case OrderStatus.RedemptionFailed:
++      return "unavailable";
++    case OrderStatus.Redeemed:
++      return "redeemed";
++    case OrderStatus.Fulfilled:
++      return fulfillmentType === FulfillmentType.Physical ? "fulfilled" : "redeemed";
++    case OrderStatus.Dispatched:
++      return "in_transit";
++    case OrderStatus.Delivered:
++      return "arrived";
++    case OrderStatus.VoucherIssued:
++    case OrderStatus.ReadyForRedemption:
++    case OrderStatus.RevealOpened:
++      if (fulfillmentType !== FulfillmentType.Physical) return "ready";
++      return hasDeliveryAddress ? "in_transit" : "awaiting_address";
++    default:
++      return "not_ready";
++  }
++}
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 2f45925..f3aeef9 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -329,6 +329,9 @@ importers:
+ 
+   apps/web:
+     dependencies:
++      '@ebun/types':
++        specifier: workspace:*
++        version: link:../../packages/types
+       next:
+         specifier: 16.3.1
+         version: 16.3.1(@babel/core@7.29.7(supports-color@8.1.1))(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
