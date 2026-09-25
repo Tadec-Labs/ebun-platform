@@ -1,0 +1,767 @@
+diff --git a/apps/api/src/gifts/gift-templates.repository.ts b/apps/api/src/gifts/gift-templates.repository.ts
+index c5cf1b9..8303b40 100644
+--- a/apps/api/src/gifts/gift-templates.repository.ts
++++ b/apps/api/src/gifts/gift-templates.repository.ts
+@@ -7,9 +7,12 @@ export interface GiftTemplateRow {
+   id: string;
+   name: string;
+   description: string | null;
++  category: 'food' | 'experience' | 'keepsake' | 'utility'; // matches the schema's check constraint
+   image_url: string | null;
+   base_price: number; // kobo
+   available: boolean;
++  featured: boolean;
++  delivery_window: string | null; // human-readable, e.g. '2-4hrs', 'instant'
+   requires_address: boolean;
+   // Column name is `delivery_type` in the schema; typed here as
+   // FulfillmentType (not a bespoke string union) since it's the same
+@@ -41,4 +44,28 @@ export class GiftTemplatesRepository {
+ 
+     return response.data ?? null;
+   }
++
++  /**
++   * Backs GET /gifts — the public catalog. `available` is the seller-
++   * facing flag (a template ops has pulled from sale entirely); this
++   * is deliberately NOT the same check as findAvailableById's, which
++   * exists to guard a single order-creation attempt rather than decide
++   * what's worth listing.
++   */
++  async findAllAvailable(): Promise<GiftTemplateRow[]> {
++    const response = (await this.supabase
++      .from('gift_templates')
++      .select('*')
++      .eq('available', true)
++      .order('sort_order', { ascending: true })) as {
++      data: GiftTemplateRow[] | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? [];
++  }
+ }
+diff --git a/apps/api/src/gifts/gifts.controller.ts b/apps/api/src/gifts/gifts.controller.ts
+new file mode 100644
+index 0000000..71888b8
+--- /dev/null
++++ b/apps/api/src/gifts/gifts.controller.ts
+@@ -0,0 +1,17 @@
++import { Controller, Get } from '@nestjs/common';
++import { GiftCatalogItem, GiftsService } from './gifts.service';
++
++/**
++ * Public — no auth. Senders don't register before choosing a gift (see
++ * the Product Brief's sender flow: email/phone are only collected at
++ * order creation), so this can't require a JWT.
++ */
++@Controller('gifts')
++export class GiftsController {
++  constructor(private readonly giftsService: GiftsService) {}
++
++  @Get()
++  async list(): Promise<GiftCatalogItem[]> {
++    return this.giftsService.listAvailable();
++  }
++}
+diff --git a/apps/api/src/gifts/gifts.module.ts b/apps/api/src/gifts/gifts.module.ts
+index 723c92e..1d693e1 100644
+--- a/apps/api/src/gifts/gifts.module.ts
++++ b/apps/api/src/gifts/gifts.module.ts
+@@ -1,8 +1,10 @@
+ import { Module } from '@nestjs/common';
+ import { GiftTemplatesRepository } from './gift-templates.repository';
++import { GiftsController } from './gifts.controller';
+ import { GiftsService } from './gifts.service';
+ 
+ @Module({
++  controllers: [GiftsController],
+   providers: [GiftTemplatesRepository, GiftsService],
+   exports: [GiftsService],
+ })
+diff --git a/apps/api/src/gifts/gifts.service.spec.ts b/apps/api/src/gifts/gifts.service.spec.ts
+new file mode 100644
+index 0000000..b05c1cd
+--- /dev/null
++++ b/apps/api/src/gifts/gifts.service.spec.ts
+@@ -0,0 +1,103 @@
++import { NotFoundException } from '@nestjs/common';
++import { Test } from '@nestjs/testing';
++import { FulfillmentType } from '@ebun/types';
++import { GiftTemplateRow, GiftTemplatesRepository } from './gift-templates.repository';
++import { GiftsService } from './gifts.service';
++
++function makeTemplate(overrides: Partial<GiftTemplateRow> = {}): GiftTemplateRow {
++  return {
++    id: 'template-1',
++    name: 'A Pizza, On Him',
++    description: 'Redeemable at any partner pizza spot.',
++    category: 'food',
++    image_url: null,
++    base_price: 800000,
++    available: true,
++    featured: true,
++    delivery_window: null,
++    requires_address: false,
++    delivery_type: FulfillmentType.DigitalVoucher,
++    ...overrides,
++  };
++}
++
++describe('GiftsService', () => {
++  let sut: GiftsService;
++  let repository: { findById: jest.Mock; findAllAvailable: jest.Mock };
++
++  beforeEach(async () => {
++    repository = { findById: jest.fn(), findAllAvailable: jest.fn() };
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        GiftsService,
++        { provide: GiftTemplatesRepository, useValue: repository },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(GiftsService);
++  });
++
++  describe('listAvailable', () => {
++    it('maps repository rows to the public catalog shape', async () => {
++      repository.findAllAvailable.mockResolvedValue([
++        makeTemplate({
++          id: 'template-1',
++          delivery_window: '2-4hrs',
++        }),
++      ]);
++
++      const result = await sut.listAvailable();
++
++      expect(result).toEqual([
++        {
++          id: 'template-1',
++          name: 'A Pizza, On Him',
++          description: 'Redeemable at any partner pizza spot.',
++          category: 'food',
++          imageUrl: null,
++          basePrice: 800000,
++          deliveryType: FulfillmentType.DigitalVoucher,
++          deliveryWindow: '2-4hrs',
++          requiresAddress: false,
++          featured: true,
++        },
++      ]);
++    });
++
++    it('returns an empty array when nothing is available, rather than throwing', async () => {
++      repository.findAllAvailable.mockResolvedValue([]);
++
++      const result = await sut.listAvailable();
++
++      expect(result).toEqual([]);
++    });
++  });
++
++  describe('findAvailableById', () => {
++    it('returns the raw row when the template exists and is available', async () => {
++      const template = makeTemplate();
++      repository.findById.mockResolvedValue(template);
++
++      const result = await sut.findAvailableById('template-1');
++
++      expect(result).toBe(template);
++    });
++
++    it('throws NotFoundException when the template does not exist', async () => {
++      repository.findById.mockResolvedValue(null);
++
++      await expect(sut.findAvailableById('missing')).rejects.toThrow(
++        NotFoundException,
++      );
++    });
++
++    it('throws NotFoundException when the template exists but is not available — same as not existing, from a sender\'s perspective', async () => {
++      repository.findById.mockResolvedValue(makeTemplate({ available: false }));
++
++      await expect(sut.findAvailableById('template-1')).rejects.toThrow(
++        NotFoundException,
++      );
++    });
++  });
++});
+diff --git a/apps/api/src/gifts/gifts.service.ts b/apps/api/src/gifts/gifts.service.ts
+index f30b7f6..5d82777 100644
+--- a/apps/api/src/gifts/gifts.service.ts
++++ b/apps/api/src/gifts/gifts.service.ts
+@@ -4,10 +4,53 @@ import {
+   GiftTemplatesRepository,
+ } from './gift-templates.repository';
+ 
++/**
++ * What GET /gifts actually returns — deliberately not the raw
++ * GiftTemplateRow. Every current column happens to be safe to expose
++ * (base_price IS the sender-facing price; vendor economics live in
++ * vendor_gift_offerings, a different table this never touches), but
++ * shaping the response explicitly means a column added to the table
++ * later doesn't leak to the public catalog without a deliberate choice
++ * to add it here too.
++ */
++export interface GiftCatalogItem {
++  id: string;
++  name: string;
++  description: string | null;
++  category: GiftTemplateRow['category'];
++  imageUrl: string | null;
++  basePrice: number; // kobo
++  deliveryType: GiftTemplateRow['delivery_type'];
++  deliveryWindow: string | null;
++  requiresAddress: boolean;
++  featured: boolean;
++}
++
++function toCatalogItem(template: GiftTemplateRow): GiftCatalogItem {
++  return {
++    id: template.id,
++    name: template.name,
++    description: template.description,
++    category: template.category,
++    imageUrl: template.image_url,
++    basePrice: template.base_price,
++    deliveryType: template.delivery_type,
++    deliveryWindow: template.delivery_window,
++    requiresAddress: template.requires_address,
++    featured: template.featured,
++  };
++}
++
+ @Injectable()
+ export class GiftsService {
+   constructor(private readonly repository: GiftTemplatesRepository) {}
+ 
++  /** Backs GET /gifts. */
++  async listAvailable(): Promise<GiftCatalogItem[]> {
++    const templates = await this.repository.findAllAvailable();
++    return templates.map(toCatalogItem);
++  }
++
+   /** Throws if the template doesn't exist OR exists but isn't currently available — CreateOrderService should never have to check `.available` itself. */
+   async findAvailableById(id: string): Promise<GiftTemplateRow> {
+     const template = await this.repository.findById(id);
+diff --git a/apps/web/src/app/reveal/layout.tsx b/apps/web/src/app/(consumer)/layout.tsx
+similarity index 57%
+rename from apps/web/src/app/reveal/layout.tsx
+rename to apps/web/src/app/(consumer)/layout.tsx
+index 804419e..ce8fdf0 100644
+--- a/apps/web/src/app/reveal/layout.tsx
++++ b/apps/web/src/app/(consumer)/layout.tsx
+@@ -1,6 +1,6 @@
+ import type { Viewport } from "next";
+ import { Cormorant_Garamond, DM_Sans } from "next/font/google";
+-import "./reveal-theme.css";
++import "@/styles/ebun-consumer-theme.css";
+ 
+ const cormorant = Cormorant_Garamond({
+   subsets: ["latin"],
+@@ -17,10 +17,10 @@ const dmSans = DM_Sans({
+   display: "swap",
+ });
+ 
+-// Overrides the root layout's viewport for this route tree only. The
+-// reveal screen is a full-bleed, phone-shaped experience opened from a
+-// WhatsApp link, so it needs safe-area awareness the marketing/app
+-// shell doesn't.
++// Overrides the root layout's viewport for every route in this group.
++// These are phone-shaped experiences reached from a WhatsApp link (or,
++// for /send, used from any phone), so they need safe-area awareness
++// the marketing/app shell doesn't.
+ export const viewport: Viewport = {
+   width: "device-width",
+   initialScale: 1,
+@@ -28,9 +28,9 @@ export const viewport: Viewport = {
+   themeColor: "#0e0d0b",
+ };
+ 
+-export default function RevealLayout({ children }: LayoutProps<"/reveal">) {
++export default function ConsumerLayout({ children }: LayoutProps<"/">) {
+   return (
+-    <div className={`ebun-reveal-theme ${cormorant.variable} ${dmSans.variable}`}>
++    <div className={`ebun-consumer-theme ${cormorant.variable} ${dmSans.variable}`}>
+       {children}
+     </div>
+   );
+diff --git a/apps/web/src/app/reveal/[token]/components/dev-scenario-switcher.tsx b/apps/web/src/app/(consumer)/reveal/[token]/components/dev-scenario-switcher.tsx
+similarity index 100%
+rename from apps/web/src/app/reveal/[token]/components/dev-scenario-switcher.tsx
+rename to apps/web/src/app/(consumer)/reveal/[token]/components/dev-scenario-switcher.tsx
+diff --git a/apps/web/src/app/reveal/[token]/components/hold-to-unwrap.tsx b/apps/web/src/app/(consumer)/reveal/[token]/components/hold-to-unwrap.tsx
+similarity index 100%
+rename from apps/web/src/app/reveal/[token]/components/hold-to-unwrap.tsx
+rename to apps/web/src/app/(consumer)/reveal/[token]/components/hold-to-unwrap.tsx
+diff --git a/apps/web/src/app/reveal/[token]/components/message-player.tsx b/apps/web/src/app/(consumer)/reveal/[token]/components/message-player.tsx
+similarity index 98%
+rename from apps/web/src/app/reveal/[token]/components/message-player.tsx
+rename to apps/web/src/app/(consumer)/reveal/[token]/components/message-player.tsx
+index 37aa35c..ce06310 100644
+--- a/apps/web/src/app/reveal/[token]/components/message-player.tsx
++++ b/apps/web/src/app/(consumer)/reveal/[token]/components/message-player.tsx
+@@ -2,7 +2,7 @@
+ 
+ import { useEffect, useRef, useState } from "react";
+ import type { RevealMessage } from "@/lib/reveal/types";
+-import { PauseIcon, PlayIcon } from "./icons";
++import { PauseIcon, PlayIcon } from "@/components/icons";
+ 
+ // Fixed rather than randomised so the waveform doesn't reflow on every
+ // render — this is a mock shape, not a real amplitude trace. Real
+diff --git a/apps/web/src/app/reveal/[token]/components/scratch-panel.tsx b/apps/web/src/app/(consumer)/reveal/[token]/components/scratch-panel.tsx
+similarity index 100%
+rename from apps/web/src/app/reveal/[token]/components/scratch-panel.tsx
+rename to apps/web/src/app/(consumer)/reveal/[token]/components/scratch-panel.tsx
+diff --git a/apps/web/src/app/reveal/[token]/components/status-line.tsx b/apps/web/src/app/(consumer)/reveal/[token]/components/status-line.tsx
+similarity index 97%
+rename from apps/web/src/app/reveal/[token]/components/status-line.tsx
+rename to apps/web/src/app/(consumer)/reveal/[token]/components/status-line.tsx
+index e79c9e6..d9e50b5 100644
+--- a/apps/web/src/app/reveal/[token]/components/status-line.tsx
++++ b/apps/web/src/app/(consumer)/reveal/[token]/components/status-line.tsx
+@@ -1,4 +1,4 @@
+-import { CheckGlyph } from "./icons";
++import { CheckGlyph } from "@/components/icons";
+ 
+ type StepState = "done" | "current" | "upcoming";
+ 
+diff --git a/apps/web/src/app/reveal/[token]/page.tsx b/apps/web/src/app/(consumer)/reveal/[token]/page.tsx
+similarity index 100%
+rename from apps/web/src/app/reveal/[token]/page.tsx
+rename to apps/web/src/app/(consumer)/reveal/[token]/page.tsx
+diff --git a/apps/web/src/app/reveal/[token]/reveal-experience.tsx b/apps/web/src/app/(consumer)/reveal/[token]/reveal-experience.tsx
+similarity index 99%
+rename from apps/web/src/app/reveal/[token]/reveal-experience.tsx
+rename to apps/web/src/app/(consumer)/reveal/[token]/reveal-experience.tsx
+index 90164c6..53c0eeb 100644
+--- a/apps/web/src/app/reveal/[token]/reveal-experience.tsx
++++ b/apps/web/src/app/(consumer)/reveal/[token]/reveal-experience.tsx
+@@ -5,7 +5,7 @@ import { FulfillmentType } from "@ebun/types";
+ import type { RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
+ import { DevScenarioSwitcher } from "./components/dev-scenario-switcher";
+ import { HoldToUnwrap } from "./components/hold-to-unwrap";
+-import { GiftMark, LockGlyph } from "./components/icons";
++import { GiftMark, LockGlyph } from "@/components/icons";
+ import { MessagePlayer } from "./components/message-player";
+ import { ScratchPanel } from "./components/scratch-panel";
+ import { StatusLine } from "./components/status-line";
+diff --git a/apps/web/src/app/(consumer)/send/gift-selector.tsx b/apps/web/src/app/(consumer)/send/gift-selector.tsx
+new file mode 100644
+index 0000000..97ce2d5
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/gift-selector.tsx
+@@ -0,0 +1,164 @@
++"use client";
++
++import { useState } from "react";
++import { FulfillmentType } from "@ebun/types";
++import { GiftMark } from "@/components/icons";
++import { formatNaira } from "@/lib/format-money";
++import type { GiftCatalogItem } from "@/lib/gifts/types";
++
++/**
++ * This screen is the first of four in the sender flow (see the Product
++ * Brief: choose occasion -> pick a gift -> personalise -> pay). Occasion
++ * selection is deliberately skipped for this slice — it doesn't gate
++ * anything downstream yet and adds a screen before there's anywhere
++ * for it to lead. Personalise (video/voice/text message, reveal theme)
++ * and pay (Paystack redirect) are separate slices; "Continue" below is
++ * intentionally a dead end for now, and says so.
++ */
++export function GiftSelector({ catalog }: { catalog: GiftCatalogItem[] }) {
++  const [selectedId, setSelectedId] = useState<string | null>(null);
++  const selected = catalog.find((item) => item.id === selectedId) ?? null;
++
++  return (
++    <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
++      <div
++        className="font-display pt-6 pb-8 text-center text-base tracking-[0.2em]"
++        style={{ color: "var(--gold)" }}
++      >
++        EBUN
++      </div>
++
++      <div className="flex flex-col gap-1.5 pb-6 text-center">
++        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          What are you sending?
++        </h1>
++        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
++          Every gift comes with a message attached.
++        </p>
++      </div>
++
++      <div className={selected ? "pb-40" : "pb-10"}>
++        {catalog.map((item) => (
++          <GiftRow
++            key={item.id}
++            item={item}
++            selected={item.id === selectedId}
++            onSelect={() => setSelectedId(item.id)}
++          />
++        ))}
++      </div>
++
++      {selected && (
++        <div
++          className="fixed inset-x-0 bottom-0 border-t px-7 pt-4"
++          style={{
++            borderColor: "var(--border)",
++            background: "rgba(14, 13, 11, 0.95)",
++            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.25rem)",
++          }}
++        >
++          <div className="mx-auto flex max-w-[440px] items-center justify-between gap-4">
++            <div className="min-w-0">
++              <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
++                Selected
++              </p>
++              <p className="font-display truncate text-lg" style={{ color: "var(--cream)" }}>
++                {selected.name}
++              </p>
++            </div>
++            <button
++              type="button"
++              disabled
++              className="flex-shrink-0 px-6 py-3 text-sm font-medium tracking-wide opacity-40"
++              style={{ background: "var(--gold)", color: "var(--ink)" }}
++            >
++              Continue
++            </button>
++          </div>
++          <p
++            className="mx-auto mt-2 max-w-[440px] text-center text-[10px] leading-relaxed"
++            style={{ color: "var(--cream-faint)" }}
++          >
++            Message and payment aren&rsquo;t built yet — this is as far as it goes for now.
++          </p>
++        </div>
++      )}
++    </div>
++  );
++}
++
++function GiftRow({
++  item,
++  selected,
++  onSelect,
++}: {
++  item: GiftCatalogItem;
++  selected: boolean;
++  onSelect: () => void;
++}) {
++  const journeyLabel =
++    item.deliveryType === FulfillmentType.Physical ? "Delivered" : "Pickup";
++
++  return (
++    <button
++      type="button"
++      onClick={onSelect}
++      aria-pressed={selected}
++      className="flex w-full items-start gap-4 border-b py-5 text-left"
++      style={{ borderColor: "var(--border)" }}
++    >
++      <div
++        className="flex h-20 w-20 flex-shrink-0 items-center justify-center border"
++        style={{
++          borderColor: selected ? "var(--gold)" : "var(--border)",
++          background: "var(--panel-raised)",
++        }}
++      >
++        {item.imageUrl ? (
++          // eslint-disable-next-line @next/next/no-img-element -- mock data only; swap for next/image once real R2/CDN URLs exist
++          <img src={item.imageUrl} alt="" className="h-full w-full object-cover" />
++        ) : (
++          <GiftMark className="h-8 w-8 text-[color:var(--gold-dim)]" />
++        )}
++      </div>
++
++      <div className="min-w-0 flex-1">
++        <div className="flex items-baseline justify-between gap-3">
++          <h3 className="font-display truncate text-xl" style={{ color: "var(--cream)" }}>
++            {item.name}
++          </h3>
++          <span
++            className="flex-shrink-0 text-sm"
++            style={{ color: "var(--gold-light)" }}
++          >
++            {formatNaira(item.basePrice)}
++          </span>
++        </div>
++        {item.description && (
++          <p
++            className="mt-1 text-xs leading-relaxed"
++            style={{ color: "var(--cream-dim)" }}
++          >
++            {item.description}
++          </p>
++        )}
++        <p
++          className="mt-2 text-[10px] tracking-wide uppercase"
++          style={{ color: "var(--gold-dim)" }}
++        >
++          {journeyLabel}
++          {item.deliveryWindow ? ` · ${item.deliveryWindow}` : ""}
++        </p>
++      </div>
++
++      <div
++        className="mt-1.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border"
++        style={{ borderColor: selected ? "var(--gold)" : "var(--border-strong)" }}
++      >
++        {selected && (
++          <span className="h-2 w-2 rounded-full" style={{ background: "var(--gold)" }} />
++        )}
++      </div>
++    </button>
++  );
++}
+diff --git a/apps/web/src/app/(consumer)/send/page.tsx b/apps/web/src/app/(consumer)/send/page.tsx
+new file mode 100644
+index 0000000..4582adf
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/page.tsx
+@@ -0,0 +1,14 @@
++import type { Metadata } from "next";
++import { getGiftCatalog } from "@/lib/gifts/get-gift-catalog";
++import { GiftSelector } from "./gift-selector";
++
++export const metadata: Metadata = {
++  title: "Send a gift — Ebun",
++  description: "Choose a gift to send.",
++};
++
++export default async function SendPage() {
++  const catalog = await getGiftCatalog();
++
++  return <GiftSelector catalog={catalog} />;
++}
+diff --git a/apps/web/src/app/reveal/[token]/components/icons.tsx b/apps/web/src/components/icons.tsx
+similarity index 100%
+rename from apps/web/src/app/reveal/[token]/components/icons.tsx
+rename to apps/web/src/components/icons.tsx
+diff --git a/apps/web/src/lib/format-money.ts b/apps/web/src/lib/format-money.ts
+new file mode 100644
+index 0000000..0c0b6fd
+--- /dev/null
++++ b/apps/web/src/lib/format-money.ts
+@@ -0,0 +1,5 @@
++/** All prices in the schema are kobo (bigint). Formats as e.g. "₦8,000". */
++export function formatNaira(kobo: number): string {
++  const naira = kobo / 100;
++  return `₦${naira.toLocaleString("en-NG", { maximumFractionDigits: 0 })}`;
++}
+diff --git a/apps/web/src/lib/gifts/get-gift-catalog.ts b/apps/web/src/lib/gifts/get-gift-catalog.ts
+new file mode 100644
+index 0000000..7b6e2d7
+--- /dev/null
++++ b/apps/web/src/lib/gifts/get-gift-catalog.ts
+@@ -0,0 +1,17 @@
++import { MOCK_CATALOG } from "./mock-data";
++import type { GiftCatalogItem } from "./types";
++
++/**
++ * Unlike lib/reveal/get-reveal-view.ts, the real endpoint here
++ * (GET /gifts, apps/api/src/gifts/gifts.controller.ts) already returns
++ * exactly this shape — this is mock-first for iteration speed and
++ * because the seed data behind it hasn't been run against a live
++ * database from this environment, not because the contract is missing
++ * anything. Real version will be:
++ *   const res = await fetch(`${API_BASE_URL}/gifts`, { cache: "no-store" });
++ *   if (!res.ok) throw new Error(...);
++ *   return res.json();
++ */
++export async function getGiftCatalog(): Promise<GiftCatalogItem[]> {
++  return MOCK_CATALOG;
++}
+diff --git a/apps/web/src/lib/gifts/mock-data.ts b/apps/web/src/lib/gifts/mock-data.ts
+new file mode 100644
+index 0000000..30d1521
+--- /dev/null
++++ b/apps/web/src/lib/gifts/mock-data.ts
+@@ -0,0 +1,61 @@
++import { FulfillmentType } from "@ebun/types";
++import type { GiftCatalogItem } from "./types";
++
++/**
++ * Mirrors supabase/seed.sql's actual launch-catalog rows exactly (same
++ * names, prices, copy) so switching to the real GET /gifts later is a
++ * pure data-source swap — nothing about what's on screen should change
++ * just because the source did.
++ */
++export const MOCK_CATALOG: GiftCatalogItem[] = [
++  {
++    id: "mock-pizza-voucher",
++    name: "A Pizza, On Him",
++    description:
++      "Redeemable at any partner pizza spot near you — pick your own toppings when you get there.",
++    category: "food",
++    imageUrl: null,
++    basePrice: 800000,
++    deliveryType: FulfillmentType.DigitalVoucher,
++    deliveryWindow: "Redeemable anytime this week",
++    requiresAddress: false,
++    featured: true,
++  },
++  {
++    id: "mock-pizza-delivered",
++    name: "A Pizza, Delivered",
++    description: "A full pizza, delivered straight to their door.",
++    category: "food",
++    imageUrl: null,
++    basePrice: 950000,
++    deliveryType: FulfillmentType.Physical,
++    deliveryWindow: "2-4hrs",
++    requiresAddress: true,
++    featured: true,
++  },
++  {
++    id: "mock-burger-voucher",
++    name: "A Burger, On Him",
++    description:
++      "Redeemable at any partner burger spot near you — fries and a drink included.",
++    category: "food",
++    imageUrl: null,
++    basePrice: 600000,
++    deliveryType: FulfillmentType.DigitalVoucher,
++    deliveryWindow: "Redeemable anytime this week",
++    requiresAddress: false,
++    featured: false,
++  },
++  {
++    id: "mock-burger-delivered",
++    name: "A Burger, Delivered",
++    description: "A full burger combo, delivered straight to their door.",
++    category: "food",
++    imageUrl: null,
++    basePrice: 750000,
++    deliveryType: FulfillmentType.Physical,
++    deliveryWindow: "2-4hrs",
++    requiresAddress: true,
++    featured: false,
++  },
++];
+diff --git a/apps/web/src/lib/gifts/types.ts b/apps/web/src/lib/gifts/types.ts
+new file mode 100644
+index 0000000..c0847a1
+--- /dev/null
++++ b/apps/web/src/lib/gifts/types.ts
+@@ -0,0 +1,20 @@
++import { FulfillmentType } from "@ebun/types";
++
++/**
++ * Mirrors apps/api's GiftCatalogItem (apps/api/src/gifts/gifts.service.ts)
++ * field-for-field on purpose — unlike reveal's view model, this one CAN
++ * match exactly, since GET /gifts already returns exactly what a
++ * catalog screen needs. No known gaps here the way reveal had.
++ */
++export interface GiftCatalogItem {
++  id: string;
++  name: string;
++  description: string | null;
++  category: "food" | "experience" | "keepsake" | "utility";
++  imageUrl: string | null;
++  basePrice: number; // kobo
++  deliveryType: FulfillmentType;
++  deliveryWindow: string | null;
++  requiresAddress: boolean;
++  featured: boolean;
++}
+diff --git a/apps/web/src/app/reveal/reveal-theme.css b/apps/web/src/styles/ebun-consumer-theme.css
+similarity index 56%
+rename from apps/web/src/app/reveal/reveal-theme.css
+rename to apps/web/src/styles/ebun-consumer-theme.css
+index 14d8e49..e6e163e 100644
+--- a/apps/web/src/app/reveal/reveal-theme.css
++++ b/apps/web/src/styles/ebun-consumer-theme.css
+@@ -1,13 +1,14 @@
+ /*
+- * Scoped under .ebun-reveal-theme rather than :root. The consumer-facing
+- * routes (/send, /reveal) will likely end up sharing this palette, but
+- * /ops is an internal admin dashboard that almost certainly wants a
+- * plainer, denser, utilitarian look — and /send doesn't exist yet. Until
+- * more than one route needs these tokens, keeping them scoped here
+- * costs nothing and avoids deciding the whole app's theme as a side
+- * effect of building one screen.
++ * Shared by every consumer-facing route (reveal, send) — NOT /ops,
++ * which is an internal admin dashboard that almost certainly wants a
++ * plainer, denser, utilitarian look. Originally lived under app/reveal/
++ * as .ebun-reveal-theme; promoted here and renamed once app/send became
++ * a second consumer, per the reasoning that comment gave for not
++ * sharing it prematurely. If /ops or anything else non-consumer-facing
++ * ever wants these tokens, that's the point to reconsider scoping this
++ * to :root instead — not before.
+  */
+-.ebun-reveal-theme {
++.ebun-consumer-theme {
+   --ink: #0e0d0b;
+   --panel: #161410;
+   --panel-raised: #1a1814;
+@@ -31,18 +32,18 @@
+   padding-bottom: env(safe-area-inset-bottom, 0px);
+ }
+ 
+-.ebun-reveal-theme *,
+-.ebun-reveal-theme *::before,
+-.ebun-reveal-theme *::after {
++.ebun-consumer-theme *,
++.ebun-consumer-theme *::before,
++.ebun-consumer-theme *::after {
+   box-sizing: inherit;
+ }
+ 
+-.ebun-reveal-theme .font-display {
++.ebun-consumer-theme .font-display {
+   font-family: var(--font-cormorant), Georgia, serif;
+ }
+ 
+ @media (prefers-reduced-motion: reduce) {
+-  .ebun-reveal-theme * {
++  .ebun-consumer-theme * {
+     animation-duration: 0.001ms !important;
+     animation-iteration-count: 1 !important;
+     transition-duration: 0.001ms !important;
+diff --git a/supabase/seed.sql b/supabase/seed.sql
+index 22f99a1..1975e0c 100644
+--- a/supabase/seed.sql
++++ b/supabase/seed.sql
+@@ -1,2 +1,30 @@
+ -- Ebun local development seed data.
+--- Intentionally empty for the initial scaffold.
+\ No newline at end of file
++--
++-- Launch catalog is food-only, per the actual MVP scope — not the
++-- Product Brief's full four-category vision (experience/keepsake/
++-- utility gift templates don't exist yet, on purpose). Both journeys
++-- ship at launch, so each food item gets two rows: a digital_voucher
++-- (pickup, redeem in person) and a physical (delivered) variant, since
++-- delivery_type lives on the template, not chosen separately by the
++-- sender. Prices are placeholders in kobo — ops owns the real numbers;
++-- the small pickup/delivery gap here is just delivery_fee=0 baked into
++-- base_price until a real fee schedule exists (see CreateOrderService's
++-- own placeholder-fee comment).
++insert into public.gift_templates
++  (name, description, category, base_price, delivery_type, delivery_window, requires_address, featured, sort_order)
++values
++  ('A Pizza, On Him',
++   'Redeemable at any partner pizza spot near you — pick your own toppings when you get there.',
++   'food', 800000, 'digital_voucher', 'Redeemable anytime this week', false, true, 1),
++
++  ('A Pizza, Delivered',
++   'A full pizza, delivered straight to their door.',
++   'food', 950000, 'physical', '2-4hrs', true, true, 2),
++
++  ('A Burger, On Him',
++   'Redeemable at any partner burger spot near you — fries and a drink included.',
++   'food', 600000, 'digital_voucher', 'Redeemable anytime this week', false, false, 3),
++
++  ('A Burger, Delivered',
++   'A full burger combo, delivered straight to their door.',
++   'food', 750000, 'physical', '2-4hrs', true, false, 4);
+\ No newline at end of file
