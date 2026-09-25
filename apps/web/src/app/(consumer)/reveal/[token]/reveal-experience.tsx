@@ -5,7 +5,7 @@ import { FulfillmentType } from "@ebun/types";
 import type { RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
 import { DevScenarioSwitcher } from "./components/dev-scenario-switcher";
 import { HoldToUnwrap } from "./components/hold-to-unwrap";
-import { GiftMark, LockGlyph } from "./components/icons";
+import { GiftMark, LockGlyph } from "@/components/icons";
 import { MessagePlayer } from "./components/message-player";
 import { ScratchPanel } from "./components/scratch-panel";
 import { StatusLine } from "./components/status-line";

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { RevealMessage } from "@/lib/reveal/types";
-import { PauseIcon, PlayIcon } from "./icons";
+import { PauseIcon, PlayIcon } from "@/components/icons";
 
 // Fixed rather than randomised so the waveform doesn't reflow on every
 // render — this is a mock shape, not a real amplitude trace. Real

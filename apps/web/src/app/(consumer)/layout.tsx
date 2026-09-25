@@ -1,6 +1,6 @@
 import type { Viewport } from "next";
 import { Cormorant_Garamond, DM_Sans } from "next/font/google";
-import "./reveal-theme.css";
+import "@/styles/ebun-consumer-theme.css";
 
 const cormorant = Cormorant_Garamond({
   subsets: ["latin"],
@@ -17,10 +17,10 @@ const dmSans = DM_Sans({
   display: "swap",
 });
 
-// Overrides the root layout's viewport for this route tree only. The
-// reveal screen is a full-bleed, phone-shaped experience opened from a
-// WhatsApp link, so it needs safe-area awareness the marketing/app
-// shell doesn't.
+// Overrides the root layout's viewport for every route in this group.
+// These are phone-shaped experiences reached from a WhatsApp link (or,
+// for /send, used from any phone), so they need safe-area awareness
+// the marketing/app shell doesn't.
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
@@ -28,9 +28,9 @@ export const viewport: Viewport = {
   themeColor: "#0e0d0b",
 };
 
-export default function RevealLayout({ children }: LayoutProps<"/reveal">) {
+export default function ConsumerLayout({ children }: LayoutProps<"/">) {
   return (
-    <div className={`ebun-reveal-theme ${cormorant.variable} ${dmSans.variable}`}>
+    <div className={`ebun-consumer-theme ${cormorant.variable} ${dmSans.variable}`}>
       {children}
     </div>
   );

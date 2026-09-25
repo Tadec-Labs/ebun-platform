@@ -1,13 +1,14 @@
 /*
- * Scoped under .ebun-reveal-theme rather than :root. The consumer-facing
- * routes (/send, /reveal) will likely end up sharing this palette, but
- * /ops is an internal admin dashboard that almost certainly wants a
- * plainer, denser, utilitarian look — and /send doesn't exist yet. Until
- * more than one route needs these tokens, keeping them scoped here
- * costs nothing and avoids deciding the whole app's theme as a side
- * effect of building one screen.
+ * Shared by every consumer-facing route (reveal, send) — NOT /ops,
+ * which is an internal admin dashboard that almost certainly wants a
+ * plainer, denser, utilitarian look. Originally lived under app/reveal/
+ * as .ebun-reveal-theme; promoted here and renamed once app/send became
+ * a second consumer, per the reasoning that comment gave for not
+ * sharing it prematurely. If /ops or anything else non-consumer-facing
+ * ever wants these tokens, that's the point to reconsider scoping this
+ * to :root instead — not before.
  */
-.ebun-reveal-theme {
+.ebun-consumer-theme {
   --ink: #0e0d0b;
   --panel: #161410;
   --panel-raised: #1a1814;
@@ -31,18 +32,18 @@
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-.ebun-reveal-theme *,
-.ebun-reveal-theme *::before,
-.ebun-reveal-theme *::after {
+.ebun-consumer-theme *,
+.ebun-consumer-theme *::before,
+.ebun-consumer-theme *::after {
   box-sizing: inherit;
 }
 
-.ebun-reveal-theme .font-display {
+.ebun-consumer-theme .font-display {
   font-family: var(--font-cormorant), Georgia, serif;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ebun-reveal-theme * {
+  .ebun-consumer-theme * {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;

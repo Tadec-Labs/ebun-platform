@@ -1,4 +1,4 @@
-import { CheckGlyph } from "./icons";
+import { CheckGlyph } from "@/components/icons";
 
 type StepState = "done" | "current" | "upcoming";
 
