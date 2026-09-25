@@ -124,7 +124,7 @@ function GiftRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-3">
-          <h3 className="font-display truncate text-xl" style={{ color: "var(--cream)" }}>
+          <h3 className="font-display min-w-0 truncate text-xl" style={{ color: "var(--cream)" }}>
             {item.name}
           </h3>
           <span
