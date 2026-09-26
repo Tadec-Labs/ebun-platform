@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { getGiftCatalog } from "@/lib/gifts/get-gift-catalog";
-import { GiftSelector } from "./gift-selector";
+import { SendExperience } from "./send-experience";
 
 export const metadata: Metadata = {
   title: "Send a gift — Ebun",
@@ -10,5 +10,5 @@ export const metadata: Metadata = {
 export default async function SendPage() {
   const catalog = await getGiftCatalog();
 
-  return <GiftSelector catalog={catalog} />;
+  return <SendExperience catalog={catalog} />;
 }

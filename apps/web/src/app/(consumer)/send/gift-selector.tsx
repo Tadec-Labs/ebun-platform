@@ -7,27 +7,25 @@ import { formatNaira } from "@/lib/format-money";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 
 /**
- * This screen is the first of four in the sender flow (see the Product
- * Brief: choose occasion -> pick a gift -> personalise -> pay). Occasion
- * selection is deliberately skipped for this slice — it doesn't gate
- * anything downstream yet and adds a screen before there's anywhere
- * for it to lead. Personalise (video/voice/text message, reveal theme)
- * and pay (Paystack redirect) are separate slices; "Continue" below is
- * intentionally a dead end for now, and says so.
+ * First of the sender flow's phases (see the Product Brief: choose
+ * occasion -> pick a gift -> personalise -> pay). Occasion selection is
+ * deliberately skipped — it doesn't gate anything downstream and adds
+ * a screen before there's anywhere for it to lead.
  */
-export function GiftSelector({ catalog }: { catalog: GiftCatalogItem[] }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+export function GiftSelector({
+  catalog,
+  initialSelectedId,
+  onContinue,
+}: {
+  catalog: GiftCatalogItem[];
+  initialSelectedId: string | null;
+  onContinue: (gift: GiftCatalogItem) => void;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const selected = catalog.find((item) => item.id === selectedId) ?? null;
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
-      <div
-        className="font-display pt-6 pb-8 text-center text-base tracking-[0.2em]"
-        style={{ color: "var(--gold)" }}
-      >
-        EBUN
-      </div>
-
+    <>
       <div className="flex flex-col gap-1.5 pb-6 text-center">
         <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
           What are you sending?
@@ -37,7 +35,7 @@ export function GiftSelector({ catalog }: { catalog: GiftCatalogItem[] }) {
         </p>
       </div>
 
-      <div className={selected ? "pb-40" : "pb-10"}>
+      <div className={selected ? "pb-32" : "pb-10"}>
         {catalog.map((item) => (
           <GiftRow
             key={item.id}
@@ -68,22 +66,16 @@ export function GiftSelector({ catalog }: { catalog: GiftCatalogItem[] }) {
             </div>
             <button
               type="button"
-              disabled
-              className="flex-shrink-0 px-6 py-3 text-sm font-medium tracking-wide opacity-40"
+              onClick={() => onContinue(selected)}
+              className="flex-shrink-0 px-6 py-3 text-sm font-medium tracking-wide"
               style={{ background: "var(--gold)", color: "var(--ink)" }}
             >
               Continue
             </button>
           </div>
-          <p
-            className="mx-auto mt-2 max-w-[440px] text-center text-[10px] leading-relaxed"
-            style={{ color: "var(--cream-faint)" }}
-          >
-            Message and payment aren&rsquo;t built yet — this is as far as it goes for now.
-          </p>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
