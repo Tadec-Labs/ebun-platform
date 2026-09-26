@@ -1,16 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { LockGlyph } from "@/components/icons";
+import type { RecordedMedia } from "@/lib/media-recording/use-media-recorder";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
+import { MediaRecorderPanel } from "./media-recorder-panel";
 
 export type MessageType = "text" | "voice" | "video";
 export type SendTiming = "now" | "scheduled";
 
+// Recording durations match the Product Brief exactly: 60s voice, 30s video.
+const MAX_VOICE_SECS = 60;
+const MAX_VIDEO_SECS = 30;
+
 export interface MessageDraft {
   recipientName: string;
   recipientPhone: string;
+  messageType: MessageType;
   text: string;
+  recordedMedia: RecordedMedia | null;
   sendTiming: SendTiming;
   scheduledFor: string; // datetime-local string, only meaningful when sendTiming === "scheduled"
 }
@@ -40,6 +47,8 @@ export function MessageComposer({
     onChangeDraft({ ...draft, [key]: value });
   }
 
+  const isRecordingMode = draft.messageType === "voice" || draft.messageType === "video";
+
   return (
     <>
       <button
@@ -60,7 +69,7 @@ export function MessageComposer({
         </p>
       </div>
 
-      <div className="flex flex-col gap-8 pb-40">
+      <div className="flex flex-col gap-8 pb-44">
         <section className="flex flex-col gap-4">
           <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
             Who&rsquo;s it for
@@ -99,18 +108,59 @@ export function MessageComposer({
           <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
             Your message
           </h2>
-          <MessageTypeTabs />
-          <textarea
-            value={draft.text}
-            onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
-            rows={5}
-            placeholder="Write what you'd say if you were there..."
-            className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
-            style={{ borderColor: "var(--border)", color: "var(--cream)" }}
-          />
-          <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
-            {draft.text.length}/{MESSAGE_MAX_LENGTH}
-          </p>
+          <div className="flex gap-2">
+            <TabButton
+              label="Text"
+              active={draft.messageType === "text"}
+              onClick={() => set("messageType", "text")}
+            />
+            <TabButton
+              label="Voice"
+              active={draft.messageType === "voice"}
+              onClick={() => set("messageType", "voice")}
+            />
+            <TabButton
+              label="Video"
+              active={draft.messageType === "video"}
+              onClick={() => set("messageType", "video")}
+            />
+          </div>
+
+          {draft.messageType === "text" && (
+            <>
+              <textarea
+                value={draft.text}
+                onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
+                rows={5}
+                placeholder="Write what you'd say if you were there..."
+                className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
+                style={{ borderColor: "var(--border)", color: "var(--cream)" }}
+              />
+              <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
+                {draft.text.length}/{MESSAGE_MAX_LENGTH}
+              </p>
+            </>
+          )}
+
+          {draft.messageType === "voice" && (
+            <MediaRecorderPanel
+              kind="audio"
+              maxDurationSecs={MAX_VOICE_SECS}
+              initial={draft.recordedMedia}
+              onRecorded={(media) => set("recordedMedia", media)}
+              onCleared={() => set("recordedMedia", null)}
+            />
+          )}
+
+          {draft.messageType === "video" && (
+            <MediaRecorderPanel
+              kind="video"
+              maxDurationSecs={MAX_VIDEO_SECS}
+              initial={draft.recordedMedia}
+              onRecorded={(media) => set("recordedMedia", media)}
+              onCleared={() => set("recordedMedia", null)}
+            />
+          )}
         </section>
 
         <section className="flex flex-col gap-4">
@@ -118,12 +168,12 @@ export function MessageComposer({
             When should it land
           </h2>
           <div className="flex gap-2">
-            <TimingOption
+            <TabButton
               label="Send now"
               active={draft.sendTiming === "now"}
               onClick={() => set("sendTiming", "now")}
             />
-            <TimingOption
+            <TabButton
               label="Schedule"
               active={draft.sendTiming === "scheduled"}
               onClick={() => set("sendTiming", "scheduled")}
@@ -162,9 +212,11 @@ export function MessageComposer({
             className="mt-2 text-center text-[10px] leading-relaxed"
             style={{ color: "var(--cream-faint)" }}
           >
-            {canContinue
-              ? "Review and payment aren't built yet — this is as far as it goes for now."
-              : "Fill in the recipient's name and a valid WhatsApp number to continue."}
+            {!canContinue
+              ? "Fill in the recipient's name and a valid WhatsApp number to continue."
+              : isRecordingMode
+                ? "Recording works — but sending a voice or video message needs a Cloudflare R2 upload step that isn't built yet. Text is the only type the backend can accept today."
+                : "Review and payment aren't built yet — this is as far as it goes for now."}
           </p>
         </div>
       </div>
@@ -196,44 +248,7 @@ function Field({
   );
 }
 
-function MessageTypeTabs() {
-  return (
-    <div className="flex gap-2">
-      <TabButton label="Text" active />
-      <TabButton label="Voice" locked />
-      <TabButton label="Video" locked />
-    </div>
-  );
-}
-
 function TabButton({
-  label,
-  active,
-  locked,
-}: {
-  label: string;
-  active?: boolean;
-  locked?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={locked}
-      title={locked ? "Recording isn't built yet — text only, for now" : undefined}
-      className="flex flex-1 items-center justify-center gap-1.5 border py-2.5 text-xs tracking-wide"
-      style={{
-        borderColor: active ? "var(--gold)" : "var(--border)",
-        color: active ? "var(--gold-light)" : "var(--cream-faint)",
-        opacity: locked ? 0.6 : 1,
-      }}
-    >
-      {locked && <LockGlyph className="h-3 w-3" />}
-      {label}
-    </button>
-  );
-}
-
-function TimingOption({
   label,
   active,
   onClick,

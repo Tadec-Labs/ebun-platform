@@ -15,7 +15,9 @@ export interface SendDraft {
 const EMPTY_MESSAGE: MessageDraft = {
   recipientName: "",
   recipientPhone: "",
+  messageType: "text",
   text: "",
+  recordedMedia: null,
   sendTiming: "now",
   scheduledFor: "",
 };

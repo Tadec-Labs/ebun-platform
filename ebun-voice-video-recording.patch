@@ -1,0 +1,596 @@
+diff --git a/apps/web/src/app/(consumer)/send/media-recorder-panel.tsx b/apps/web/src/app/(consumer)/send/media-recorder-panel.tsx
+new file mode 100644
+index 0000000..67eb20b
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/media-recorder-panel.tsx
+@@ -0,0 +1,214 @@
++"use client";
++
++import { useEffect, useRef, useState } from "react";
++import { PauseIcon, PlayIcon } from "@/components/icons";
++import {
++  type RecordedMedia,
++  type RecorderKind,
++  useMediaRecorder,
++} from "@/lib/media-recording/use-media-recorder";
++
++function formatDuration(totalSecs: number): string {
++  const m = Math.floor(totalSecs / 60);
++  const s = Math.floor(totalSecs % 60);
++  return `${m}:${s.toString().padStart(2, "0")}`;
++}
++
++export function MediaRecorderPanel({
++  kind,
++  maxDurationSecs,
++  initial,
++  onRecorded,
++  onCleared,
++}: {
++  kind: RecorderKind;
++  maxDurationSecs: number;
++  initial: RecordedMedia | null;
++  onRecorded: (media: RecordedMedia) => void;
++  onCleared: () => void;
++}) {
++  const { status, elapsedSecs, recorded, stream, start, stop, reset } = useMediaRecorder({
++    kind,
++    maxDurationSecs,
++    initial,
++  });
++
++  // Lift a completed recording up to the wizard's draft state the
++  // moment it's ready — this hook's own `recorded` is the source of
++  // truth while on this screen, but the parent needs a copy to survive
++  // switching message types and coming back.
++  const liftedRef = useRef<RecordedMedia | null>(initial ?? null);
++  useEffect(() => {
++    if (recorded && recorded !== liftedRef.current) {
++      liftedRef.current = recorded;
++      onRecorded(recorded);
++    }
++  }, [recorded, onRecorded]);
++
++  const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
++  useEffect(() => {
++    if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream;
++  }, [stream]);
++
++  const noun = kind === "video" ? "video" : "voice note";
++
++  if (status === "unsupported") {
++    return (
++      <PanelMessage>
++        Recording isn&rsquo;t supported in this browser. Text still works below.
++      </PanelMessage>
++    );
++  }
++
++  if (status === "permission-denied") {
++    return (
++      <PanelMessage>
++        Camera/microphone access was denied or unavailable.{" "}
++        <button type="button" onClick={() => void start()} className="underline" style={{ color: "var(--gold-light)" }}>
++          Try again
++        </button>{" "}
++        — or use text below.
++      </PanelMessage>
++    );
++  }
++
++  if (status === "idle" || status === "requesting-permission") {
++    return (
++      <div
++        className="flex flex-col items-center justify-center gap-3 border py-10"
++        style={{ borderColor: "var(--border)" }}
++      >
++        <button
++          type="button"
++          onClick={() => void start()}
++          disabled={status === "requesting-permission"}
++          aria-label={`Record a ${noun}`}
++          className="flex h-14 w-14 items-center justify-center rounded-full"
++          style={{ background: "var(--gold)", color: "var(--ink)" }}
++        >
++          <span className="h-4 w-4 rounded-full" style={{ background: "var(--ink)" }} />
++        </button>
++        <p className="text-xs" style={{ color: "var(--cream-dim)" }}>
++          {status === "requesting-permission"
++            ? "Requesting access…"
++            : `Tap to record — up to ${maxDurationSecs}s`}
++        </p>
++      </div>
++    );
++  }
++
++  if (status === "recording") {
++    return (
++      <div className="flex flex-col gap-3 border p-4" style={{ borderColor: "var(--gold)" }}>
++        {kind === "video" && (
++          <video
++            ref={videoPreviewRef}
++            autoPlay
++            muted
++            playsInline
++            className="w-full"
++            style={{ transform: "scaleX(-1)", background: "var(--panel-raised)" }}
++          />
++        )}
++        <div className="flex items-center justify-between">
++          <span className="flex items-center gap-2 text-xs" style={{ color: "var(--gold-light)" }}>
++            <span className="h-2 w-2 animate-pulse rounded-full" style={{ background: "#c94c4c" }} />
++            {formatDuration(elapsedSecs)} / {formatDuration(maxDurationSecs)}
++          </span>
++          <button
++            type="button"
++            onClick={stop}
++            className="px-4 py-2 text-xs tracking-wide"
++            style={{ background: "var(--gold)", color: "var(--ink)" }}
++          >
++            Stop
++          </button>
++        </div>
++      </div>
++    );
++  }
++
++  // status === "recorded"
++  if (!recorded) return null;
++
++  return (
++    <div className="flex flex-col gap-3">
++      {kind === "video" ? (
++        <video
++          controls
++          playsInline
++          src={recorded.url}
++          className="w-full border"
++          style={{ borderColor: "var(--border)" }}
++        />
++      ) : (
++        <RecordedAudioPlayer media={recorded} />
++      )}
++      <button
++        type="button"
++        onClick={() => {
++          reset();
++          onCleared();
++        }}
++        className="self-start text-[11px] tracking-wide underline underline-offset-4"
++        style={{ color: "var(--cream-dim)", textDecorationColor: "var(--gold-dim)" }}
++      >
++        Re-record
++      </button>
++    </div>
++  );
++}
++
++function PanelMessage({ children }: { children: React.ReactNode }) {
++  return (
++    <div className="border p-4 text-xs leading-relaxed" style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}>
++      {children}
++    </div>
++  );
++}
++
++/** Real playback of a real recorded Blob — an actual <audio> element, unlike reveal's MessagePlayer (which fakes elapsed time because it has no real media source yet). */
++function RecordedAudioPlayer({ media }: { media: RecordedMedia }) {
++  const audioRef = useRef<HTMLAudioElement | null>(null);
++  const [playing, setPlaying] = useState(false);
++  const [elapsed, setElapsed] = useState(0);
++
++  return (
++    <div className="flex items-center gap-4 border p-4" style={{ borderColor: "var(--border)" }}>
++      <audio
++        ref={audioRef}
++        src={media.url}
++        onTimeUpdate={(e) => setElapsed(e.currentTarget.currentTime)}
++        onEnded={() => {
++          setPlaying(false);
++          setElapsed(0);
++        }}
++        className="hidden"
++      />
++      <button
++        type="button"
++        onClick={() => {
++          if (!audioRef.current) return;
++          if (playing) {
++            audioRef.current.pause();
++          } else {
++            void audioRef.current.play();
++          }
++          setPlaying(!playing);
++        }}
++        aria-label={playing ? "Pause" : "Play"}
++        className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full"
++        style={{ background: "var(--gold)" }}
++      >
++        {playing ? (
++          <PauseIcon className="h-4 w-4 text-[color:var(--ink)]" />
++        ) : (
++          <PlayIcon className="ml-0.5 h-4 w-4 text-[color:var(--ink)]" />
++        )}
++      </button>
++      <span className="text-xs" style={{ color: "var(--cream-dim)" }}>
++        {formatDuration(elapsed)} / {formatDuration(media.durationSecs)}
++      </span>
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/(consumer)/send/message-composer.tsx b/apps/web/src/app/(consumer)/send/message-composer.tsx
+index ad99d77..7d78f85 100644
+--- a/apps/web/src/app/(consumer)/send/message-composer.tsx
++++ b/apps/web/src/app/(consumer)/send/message-composer.tsx
+@@ -1,16 +1,23 @@
+ "use client";
+ 
+ import { useState } from "react";
+-import { LockGlyph } from "@/components/icons";
++import type { RecordedMedia } from "@/lib/media-recording/use-media-recorder";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
++import { MediaRecorderPanel } from "./media-recorder-panel";
+ 
+ export type MessageType = "text" | "voice" | "video";
+ export type SendTiming = "now" | "scheduled";
+ 
++// Recording durations match the Product Brief exactly: 60s voice, 30s video.
++const MAX_VOICE_SECS = 60;
++const MAX_VIDEO_SECS = 30;
++
+ export interface MessageDraft {
+   recipientName: string;
+   recipientPhone: string;
++  messageType: MessageType;
+   text: string;
++  recordedMedia: RecordedMedia | null;
+   sendTiming: SendTiming;
+   scheduledFor: string; // datetime-local string, only meaningful when sendTiming === "scheduled"
+ }
+@@ -40,6 +47,8 @@ export function MessageComposer({
+     onChangeDraft({ ...draft, [key]: value });
+   }
+ 
++  const isRecordingMode = draft.messageType === "voice" || draft.messageType === "video";
++
+   return (
+     <>
+       <button
+@@ -60,7 +69,7 @@ export function MessageComposer({
+         </p>
+       </div>
+ 
+-      <div className="flex flex-col gap-8 pb-40">
++      <div className="flex flex-col gap-8 pb-44">
+         <section className="flex flex-col gap-4">
+           <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
+             Who&rsquo;s it for
+@@ -99,18 +108,59 @@ export function MessageComposer({
+           <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
+             Your message
+           </h2>
+-          <MessageTypeTabs />
+-          <textarea
+-            value={draft.text}
+-            onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
+-            rows={5}
+-            placeholder="Write what you'd say if you were there..."
+-            className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
+-            style={{ borderColor: "var(--border)", color: "var(--cream)" }}
+-          />
+-          <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
+-            {draft.text.length}/{MESSAGE_MAX_LENGTH}
+-          </p>
++          <div className="flex gap-2">
++            <TabButton
++              label="Text"
++              active={draft.messageType === "text"}
++              onClick={() => set("messageType", "text")}
++            />
++            <TabButton
++              label="Voice"
++              active={draft.messageType === "voice"}
++              onClick={() => set("messageType", "voice")}
++            />
++            <TabButton
++              label="Video"
++              active={draft.messageType === "video"}
++              onClick={() => set("messageType", "video")}
++            />
++          </div>
++
++          {draft.messageType === "text" && (
++            <>
++              <textarea
++                value={draft.text}
++                onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
++                rows={5}
++                placeholder="Write what you'd say if you were there..."
++                className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
++                style={{ borderColor: "var(--border)", color: "var(--cream)" }}
++              />
++              <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
++                {draft.text.length}/{MESSAGE_MAX_LENGTH}
++              </p>
++            </>
++          )}
++
++          {draft.messageType === "voice" && (
++            <MediaRecorderPanel
++              kind="audio"
++              maxDurationSecs={MAX_VOICE_SECS}
++              initial={draft.recordedMedia}
++              onRecorded={(media) => set("recordedMedia", media)}
++              onCleared={() => set("recordedMedia", null)}
++            />
++          )}
++
++          {draft.messageType === "video" && (
++            <MediaRecorderPanel
++              kind="video"
++              maxDurationSecs={MAX_VIDEO_SECS}
++              initial={draft.recordedMedia}
++              onRecorded={(media) => set("recordedMedia", media)}
++              onCleared={() => set("recordedMedia", null)}
++            />
++          )}
+         </section>
+ 
+         <section className="flex flex-col gap-4">
+@@ -118,12 +168,12 @@ export function MessageComposer({
+             When should it land
+           </h2>
+           <div className="flex gap-2">
+-            <TimingOption
++            <TabButton
+               label="Send now"
+               active={draft.sendTiming === "now"}
+               onClick={() => set("sendTiming", "now")}
+             />
+-            <TimingOption
++            <TabButton
+               label="Schedule"
+               active={draft.sendTiming === "scheduled"}
+               onClick={() => set("sendTiming", "scheduled")}
+@@ -162,9 +212,11 @@ export function MessageComposer({
+             className="mt-2 text-center text-[10px] leading-relaxed"
+             style={{ color: "var(--cream-faint)" }}
+           >
+-            {canContinue
+-              ? "Review and payment aren't built yet — this is as far as it goes for now."
+-              : "Fill in the recipient's name and a valid WhatsApp number to continue."}
++            {!canContinue
++              ? "Fill in the recipient's name and a valid WhatsApp number to continue."
++              : isRecordingMode
++                ? "Recording works — but sending a voice or video message needs a Cloudflare R2 upload step that isn't built yet. Text is the only type the backend can accept today."
++                : "Review and payment aren't built yet — this is as far as it goes for now."}
+           </p>
+         </div>
+       </div>
+@@ -196,44 +248,7 @@ function Field({
+   );
+ }
+ 
+-function MessageTypeTabs() {
+-  return (
+-    <div className="flex gap-2">
+-      <TabButton label="Text" active />
+-      <TabButton label="Voice" locked />
+-      <TabButton label="Video" locked />
+-    </div>
+-  );
+-}
+-
+ function TabButton({
+-  label,
+-  active,
+-  locked,
+-}: {
+-  label: string;
+-  active?: boolean;
+-  locked?: boolean;
+-}) {
+-  return (
+-    <button
+-      type="button"
+-      disabled={locked}
+-      title={locked ? "Recording isn't built yet — text only, for now" : undefined}
+-      className="flex flex-1 items-center justify-center gap-1.5 border py-2.5 text-xs tracking-wide"
+-      style={{
+-        borderColor: active ? "var(--gold)" : "var(--border)",
+-        color: active ? "var(--gold-light)" : "var(--cream-faint)",
+-        opacity: locked ? 0.6 : 1,
+-      }}
+-    >
+-      {locked && <LockGlyph className="h-3 w-3" />}
+-      {label}
+-    </button>
+-  );
+-}
+-
+-function TimingOption({
+   label,
+   active,
+   onClick,
+diff --git a/apps/web/src/app/(consumer)/send/send-experience.tsx b/apps/web/src/app/(consumer)/send/send-experience.tsx
+index 89ae363..8cd0497 100644
+--- a/apps/web/src/app/(consumer)/send/send-experience.tsx
++++ b/apps/web/src/app/(consumer)/send/send-experience.tsx
+@@ -15,7 +15,9 @@ export interface SendDraft {
+ const EMPTY_MESSAGE: MessageDraft = {
+   recipientName: "",
+   recipientPhone: "",
++  messageType: "text",
+   text: "",
++  recordedMedia: null,
+   sendTiming: "now",
+   scheduledFor: "",
+ };
+diff --git a/apps/web/src/lib/media-recording/use-media-recorder.ts b/apps/web/src/lib/media-recording/use-media-recorder.ts
+new file mode 100644
+index 0000000..1ea532d
+--- /dev/null
++++ b/apps/web/src/lib/media-recording/use-media-recorder.ts
+@@ -0,0 +1,162 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++
++export type RecorderKind = "audio" | "video";
++
++export type RecorderStatus =
++  | "idle"
++  | "requesting-permission"
++  | "recording"
++  | "recorded"
++  | "permission-denied"
++  | "unsupported";
++
++export interface RecordedMedia {
++  blob: Blob;
++  url: string;
++  durationSecs: number;
++}
++
++interface UseMediaRecorderOptions {
++  kind: RecorderKind;
++  maxDurationSecs: number;
++  /** Pre-populate the "recorded" state, e.g. returning to this screen after navigating away. */
++  initial?: RecordedMedia | null;
++}
++
++function pickMimeType(kind: RecorderKind): string | undefined {
++  const candidates =
++    kind === "video"
++      ? ["video/webm;codecs=vp9,opus", "video/webm", "video/mp4"]
++      : ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
++
++  if (typeof MediaRecorder === "undefined") return undefined;
++  return candidates.find((type) => MediaRecorder.isTypeSupported(type));
++}
++
++function isRecordingSupported(): boolean {
++  return (
++    typeof navigator !== "undefined" &&
++    !!navigator.mediaDevices?.getUserMedia &&
++    typeof MediaRecorder !== "undefined"
++  );
++}
++
++/**
++ * Wraps MediaRecorder for a fixed-length voice or video note. Entirely
++ * client-side — the output is a local Blob + object URL, nothing is
++ * uploaded anywhere. Wiring that Blob to a real upload is separate,
++ * R2-dependent work (see message-composer.tsx's comment on this).
++ */
++export function useMediaRecorder({ kind, maxDurationSecs, initial }: UseMediaRecorderOptions) {
++  const [status, setStatus] = useState<RecorderStatus>(() =>
++    initial ? "recorded" : isRecordingSupported() ? "idle" : "unsupported",
++  );
++  const [elapsedSecs, setElapsedSecs] = useState(0);
++  const [recorded, setRecorded] = useState<RecordedMedia | null>(initial ?? null);
++  const [stream, setStream] = useState<MediaStream | null>(null);
++
++  const recorderRef = useRef<MediaRecorder | null>(null);
++  const chunksRef = useRef<Blob[]>([]);
++  const startedAtRef = useRef<number>(0);
++  const timerRef = useRef<number | null>(null);
++  const streamRef = useRef<MediaStream | null>(null);
++
++  const clearTimer = useCallback(() => {
++    if (timerRef.current) window.clearInterval(timerRef.current);
++    timerRef.current = null;
++  }, []);
++
++  const releaseStream = useCallback(() => {
++    streamRef.current?.getTracks().forEach((track) => track.stop());
++    streamRef.current = null;
++    setStream(null);
++  }, []);
++
++  const stop = useCallback(() => {
++    clearTimer();
++    if (recorderRef.current && recorderRef.current.state !== "inactive") {
++      recorderRef.current.stop(); // onstop handler (below) finishes the job
++    }
++  }, [clearTimer]);
++
++  const start = useCallback(async () => {
++    if (!isRecordingSupported()) {
++      setStatus("unsupported");
++      return;
++    }
++
++    setStatus("requesting-permission");
++    try {
++      const mediaStream = await navigator.mediaDevices.getUserMedia({
++        audio: true,
++        video: kind === "video" ? { facingMode: "user" } : false,
++      });
++      streamRef.current = mediaStream;
++      setStream(mediaStream);
++
++      chunksRef.current = [];
++      const mimeType = pickMimeType(kind);
++      const recorder = new MediaRecorder(
++        mediaStream,
++        mimeType ? { mimeType } : undefined,
++      );
++      recorder.ondataavailable = (e) => {
++        if (e.data.size > 0) chunksRef.current.push(e.data);
++      };
++      recorder.onstop = () => {
++        const blob = new Blob(chunksRef.current, {
++          type: mimeType ?? (kind === "video" ? "video/webm" : "audio/webm"),
++        });
++        const url = URL.createObjectURL(blob);
++        const durationSecs = Math.round((Date.now() - startedAtRef.current) / 1000);
++        setRecorded({ blob, url, durationSecs });
++        setStatus("recorded");
++        releaseStream();
++      };
++
++      recorderRef.current = recorder;
++      startedAtRef.current = Date.now();
++      recorder.start();
++      setStatus("recording");
++      setElapsedSecs(0);
++
++      timerRef.current = window.setInterval(() => {
++        const secs = (Date.now() - startedAtRef.current) / 1000;
++        setElapsedSecs(secs);
++        if (secs >= maxDurationSecs) stop();
++      }, 200);
++    } catch {
++      // Covers permission denial, no device present, and insecure-context
++      // failures alike — MediaRecorder's error variety isn't worth
++      // surfacing distinctly here; "text still works" is the actionable
++      // message regardless of which one it was.
++      setStatus("permission-denied");
++      releaseStream();
++    }
++  }, [kind, maxDurationSecs, releaseStream, stop]);
++
++  const reset = useCallback(() => {
++    if (recorded) URL.revokeObjectURL(recorded.url);
++    setRecorded(null);
++    setElapsedSecs(0);
++    setStatus(isRecordingSupported() ? "idle" : "unsupported");
++  }, [recorded]);
++
++  useEffect(() => {
++    return () => {
++      clearTimer();
++      releaseStream();
++      if (recorderRef.current && recorderRef.current.state !== "inactive") {
++        recorderRef.current.stop();
++      }
++      // Deliberately not revoking `recorded`'s object URL on unmount —
++      // ownership of that Blob/URL passes to the caller via onRecorded,
++      // and this hook doesn't know whether they still need it (e.g.
++      // navigating between wizard phases and back).
++    };
++  }, [clearTimer, releaseStream]);
++
++  return { status, elapsedSecs, recorded, stream, start, stop, reset };
++}
