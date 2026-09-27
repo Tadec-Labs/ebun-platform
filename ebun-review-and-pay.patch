@@ -1,0 +1,526 @@
+diff --git a/apps/api/src/main.ts b/apps/api/src/main.ts
+index b7843eb..504cc53 100644
+--- a/apps/api/src/main.ts
++++ b/apps/api/src/main.ts
+@@ -1,10 +1,25 @@
+ import { ValidationPipe } from '@nestjs/common';
++import { ConfigService } from '@nestjs/config';
+ import { NestFactory } from '@nestjs/core';
+ import { AppModule } from './app.module';
+ 
+ async function bootstrap() {
+   const app = await NestFactory.create(AppModule, { rawBody: true });
+ 
++  // apps/web (Vercel) and apps/api (Railway) are different origins, so
++  // this is required, not optional — without it every browser request
++  // fails with an opaque CORS error rather than anything actionable.
++  // Scoped to the real web app origin (already a required env var for
++  // reveal links) plus localhost for local dev, not a wildcard: these
++  // endpoints create real orders and initiate real payments.
++  const configService = app.get(ConfigService);
++  const webAppBaseUrl = configService.get<string>('WEB_APP_BASE_URL');
++  app.enableCors({
++    origin: [webAppBaseUrl, 'http://localhost:3000'].filter(
++      (origin): origin is string => Boolean(origin),
++    ),
++  });
++
+   app.useGlobalPipes(
+     new ValidationPipe({
+       whitelist: true,
+diff --git a/apps/web/src/app/(consumer)/send/gift-selector.tsx b/apps/web/src/app/(consumer)/send/gift-selector.tsx
+index 3523847..56689ea 100644
+--- a/apps/web/src/app/(consumer)/send/gift-selector.tsx
++++ b/apps/web/src/app/(consumer)/send/gift-selector.tsx
+@@ -36,6 +36,15 @@ export function GiftSelector({
+       </div>
+ 
+       <div className={selected ? "pb-32" : "pb-10"}>
++        {catalog.length === 0 && (
++          <div
++            className="border p-5 text-center text-sm leading-relaxed"
++            style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
++          >
++            Couldn&rsquo;t load the gift catalog right now. Check your connection and reload
++            the page.
++          </div>
++        )}
+         {catalog.map((item) => (
+           <GiftRow
+             key={item.id}
+diff --git a/apps/web/src/app/(consumer)/send/message-composer.tsx b/apps/web/src/app/(consumer)/send/message-composer.tsx
+index 7d78f85..492ad49 100644
+--- a/apps/web/src/app/(consumer)/send/message-composer.tsx
++++ b/apps/web/src/app/(consumer)/send/message-composer.tsx
+@@ -33,11 +33,13 @@ export function MessageComposer({
+   draft,
+   onChangeDraft,
+   onBack,
++  onContinue,
+ }: {
+   gift: GiftCatalogItem;
+   draft: MessageDraft;
+   onChangeDraft: (draft: MessageDraft) => void;
+   onBack: () => void;
++  onContinue: () => void;
+ }) {
+   const [touchedPhone, setTouchedPhone] = useState(false);
+   const phoneIsValid = PHONE_PATTERN.test(draft.recipientPhone.trim());
+@@ -48,6 +50,13 @@ export function MessageComposer({
+   }
+ 
+   const isRecordingMode = draft.messageType === "voice" || draft.messageType === "video";
++  // Recording works (see media-recorder-panel.tsx), but sending a
++  // recorded message doesn't — CreateOrderService rejects any
++  // messageType besides "text" today (no R2 upload step exists yet).
++  // Blocking here, before the review screen, rather than letting a
++  // real submit attempt fail with a 400 the sender can't do anything
++  // about.
++  const readyForPayment = canContinue && !isRecordingMode;
+ 
+   return (
+     <>
+@@ -202,22 +211,23 @@ export function MessageComposer({
+         <div className="mx-auto max-w-[440px]">
+           <button
+             type="button"
+-            disabled
+-            className="w-full py-3.5 text-sm font-medium tracking-wide opacity-40"
++            onClick={onContinue}
++            disabled={!readyForPayment}
++            className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
+             style={{ background: "var(--gold)", color: "var(--ink)" }}
+           >
+             Continue to payment
+           </button>
+-          <p
+-            className="mt-2 text-center text-[10px] leading-relaxed"
+-            style={{ color: "var(--cream-faint)" }}
+-          >
+-            {!canContinue
+-              ? "Fill in the recipient's name and a valid WhatsApp number to continue."
+-              : isRecordingMode
+-                ? "Recording works — but sending a voice or video message needs a Cloudflare R2 upload step that isn't built yet. Text is the only type the backend can accept today."
+-                : "Review and payment aren't built yet — this is as far as it goes for now."}
+-          </p>
++          {!readyForPayment && (
++            <p
++              className="mt-2 text-center text-[10px] leading-relaxed"
++              style={{ color: "var(--cream-faint)" }}
++            >
++              {!canContinue
++                ? "Fill in the recipient's name and a valid WhatsApp number to continue."
++                : "Recording works — but sending a voice or video message needs a Cloudflare R2 upload step that isn't built yet. Switch to Text above to continue."}
++            </p>
++          )}
+         </div>
+       </div>
+     </>
+diff --git a/apps/web/src/app/(consumer)/send/review-and-pay.tsx b/apps/web/src/app/(consumer)/send/review-and-pay.tsx
+new file mode 100644
+index 0000000..0c7afda
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/review-and-pay.tsx
+@@ -0,0 +1,220 @@
++"use client";
++
++import { useState } from "react";
++import { CreateOrderError, createOrder } from "@/lib/orders/create-order";
++import { formatNaira } from "@/lib/format-money";
++import type { GiftCatalogItem } from "@/lib/gifts/types";
++import type { MessageDraft } from "./message-composer";
++
++const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
++
++export function ReviewAndPay({
++  gift,
++  message,
++  onBack,
++}: {
++  gift: GiftCatalogItem;
++  message: MessageDraft;
++  onBack: () => void;
++}) {
++  const [senderName, setSenderName] = useState("");
++  const [senderEmail, setSenderEmail] = useState("");
++  const [touched, setTouched] = useState(false);
++  const [submitting, setSubmitting] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++
++  const emailIsValid = EMAIL_PATTERN.test(senderEmail.trim());
++  const canSubmit = senderName.trim().length > 0 && emailIsValid;
++
++  async function handlePay() {
++    if (!canSubmit || submitting) return;
++    setSubmitting(true);
++    setError(null);
++
++    try {
++      const result = await createOrder({
++        giftTemplateId: gift.id,
++        recipientName: message.recipientName.trim(),
++        recipientPhone: message.recipientPhone.trim(),
++        senderName: senderName.trim(),
++        senderEmail: senderEmail.trim(),
++        senderMessage: message.text.trim() || undefined,
++        messageType: "text",
++        scheduledSendAt:
++          message.sendTiming === "scheduled" && message.scheduledFor
++            ? new Date(message.scheduledFor).toISOString()
++            : undefined,
++      });
++      // Real redirect to Paystack's hosted checkout — this is the
++      // actual payment, not a mock. Nothing to do after this beyond
++      // leaving the page; Paystack returns the sender to
++      // WEB_APP_BASE_URL's configured callback once they've paid (or
++      // abandoned), independent of this component's lifecycle.
++      window.location.href = result.checkoutUrl;
++    } catch (e) {
++      setError(
++        e instanceof CreateOrderError
++          ? e.message
++          : "Something went wrong. Please try again.",
++      );
++      setSubmitting(false);
++    }
++  }
++
++  return (
++    <>
++      <button
++        type="button"
++        onClick={onBack}
++        className="mb-2 self-start text-xs tracking-wide"
++        style={{ color: "var(--cream-dim)" }}
++      >
++        ← Edit message
++      </button>
++
++      <div className="flex flex-col gap-1.5 pb-7 text-center">
++        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          Review &amp; pay
++        </h1>
++        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
++          One last check before it&rsquo;s on its way.
++        </p>
++      </div>
++
++      <div className="flex flex-col gap-8 pb-40">
++        <section
++          className="flex flex-col gap-3 border p-4"
++          style={{ borderColor: "var(--border)" }}
++        >
++          <SummaryRow label="Gift" value={gift.name} />
++          <SummaryRow label="For" value={message.recipientName} />
++          <SummaryRow label="To" value={message.recipientPhone} />
++          <SummaryRow
++            label="Message"
++            value={message.text.trim() ? `"${message.text.trim()}"` : "No message attached"}
++          />
++          <SummaryRow
++            label="Timing"
++            value={
++              message.sendTiming === "scheduled" && message.scheduledFor
++                ? new Date(message.scheduledFor).toLocaleString("en-NG", {
++                    dateStyle: "medium",
++                    timeStyle: "short",
++                  })
++                : "Sent immediately"
++            }
++          />
++          <div
++            className="mt-1 flex items-baseline justify-between border-t pt-3"
++            style={{ borderColor: "var(--border)" }}
++          >
++            <span className="text-xs uppercase tracking-wide" style={{ color: "var(--gold-dim)" }}>
++              Total
++            </span>
++            <span className="font-display text-2xl" style={{ color: "var(--gold-light)" }}>
++              {formatNaira(gift.basePrice)}
++            </span>
++          </div>
++        </section>
++
++        <section className="flex flex-col gap-4">
++          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
++            Your details
++          </h2>
++          <Field label="Your name">
++            <input
++              value={senderName}
++              onChange={(e) => setSenderName(e.target.value)}
++              maxLength={200}
++              placeholder="Segun"
++              className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
++              style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
++            />
++          </Field>
++          <Field
++            label="Your email"
++            error={
++              touched && senderEmail.trim().length > 0 && !emailIsValid
++                ? "That doesn't look like a valid email"
++                : undefined
++            }
++          >
++            <input
++              type="email"
++              value={senderEmail}
++              onChange={(e) => setSenderEmail(e.target.value)}
++              onBlur={() => setTouched(true)}
++              placeholder="you@example.com"
++              className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
++              style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
++            />
++          </Field>
++          <p className="text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
++            Your receipt goes here. We don&rsquo;t share it with the recipient.
++          </p>
++        </section>
++      </div>
++
++      <div
++        className="fixed inset-x-0 bottom-0 border-t px-7 pt-4"
++        style={{
++          borderColor: "var(--border)",
++          background: "rgba(14, 13, 11, 0.95)",
++          paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.25rem)",
++        }}
++      >
++        <div className="mx-auto max-w-[440px]">
++          {error && (
++            <p className="mb-2 text-center text-xs" style={{ color: "#e08a8a" }}>
++              {error}
++            </p>
++          )}
++          <button
++            type="button"
++            onClick={() => void handlePay()}
++            disabled={!canSubmit || submitting}
++            className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
++            style={{ background: "var(--gold)", color: "var(--ink)" }}
++          >
++            {submitting ? "Redirecting to Paystack…" : `Pay ${formatNaira(gift.basePrice)}`}
++          </button>
++        </div>
++      </div>
++    </>
++  );
++}
++
++function SummaryRow({ label, value }: { label: string; value: string }) {
++  return (
++    <div className="flex items-start justify-between gap-4 text-sm">
++      <span style={{ color: "var(--cream-dim)" }}>{label}</span>
++      <span className="text-right" style={{ color: "var(--cream)" }}>
++        {value}
++      </span>
++    </div>
++  );
++}
++
++function Field({
++  label,
++  error,
++  children,
++}: {
++  label: string;
++  error?: string;
++  children: React.ReactNode;
++}) {
++  return (
++    <label className="flex flex-col gap-1.5">
++      <span className="text-xs" style={{ color: "var(--cream-dim)" }}>
++        {label}
++      </span>
++      {children}
++      {error && (
++        <span className="text-[11px]" style={{ color: "var(--gold-light)" }}>
++          {error}
++        </span>
++      )}
++    </label>
++  );
++}
+diff --git a/apps/web/src/app/(consumer)/send/send-experience.tsx b/apps/web/src/app/(consumer)/send/send-experience.tsx
+index 8cd0497..494acdf 100644
+--- a/apps/web/src/app/(consumer)/send/send-experience.tsx
++++ b/apps/web/src/app/(consumer)/send/send-experience.tsx
+@@ -4,8 +4,9 @@ import { useState } from "react";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
+ import { GiftSelector } from "./gift-selector";
+ import { MessageComposer, type MessageDraft } from "./message-composer";
++import { ReviewAndPay } from "./review-and-pay";
+ 
+-type Phase = "gift" | "message";
++type Phase = "gift" | "message" | "review";
+ 
+ export interface SendDraft {
+   gift: GiftCatalogItem | null;
+@@ -26,9 +27,9 @@ const EMPTY_MESSAGE: MessageDraft = {
+  * Owns the whole sender-flow wizard's state — one client component
+  * across phases, same reasoning as reveal-experience.tsx: this is
+  * fundamentally one form that submits together as a single
+- * POST /orders call eventually, not several independently-navigable
+- * pages, so there's no reason to fight Next.js routing to pass state
+- * between separate route segments.
++ * POST /orders call, not several independently-navigable pages, so
++ * there's no reason to fight Next.js routing to pass state between
++ * separate route segments.
+  */
+ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+   const [phase, setPhase] = useState<Phase>("gift");
+@@ -63,6 +64,15 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+           draft={draft.message}
+           onChangeDraft={(message) => setDraft((prev) => ({ ...prev, message }))}
+           onBack={() => setPhase("gift")}
++          onContinue={() => setPhase("review")}
++        />
++      )}
++
++      {phase === "review" && draft.gift && (
++        <ReviewAndPay
++          gift={draft.gift}
++          message={draft.message}
++          onBack={() => setPhase("message")}
+         />
+       )}
+     </div>
+diff --git a/apps/web/src/lib/api-config.ts b/apps/web/src/lib/api-config.ts
+new file mode 100644
+index 0000000..bbee818
+--- /dev/null
++++ b/apps/web/src/lib/api-config.ts
+@@ -0,0 +1,8 @@
++// Defaults to :3001 for local dev specifically because apps/api's own
++// default (3000) collides with Next's dev server default — run the API
++// locally with `PORT=3001 pnpm --filter api start:dev` to match this.
++// In deployment, NEXT_PUBLIC_API_BASE_URL must be set explicitly
++// (Vercel Project Settings -> Environment Variables) to the real API
++// URL — there's no sensible production default to fall back to.
++export const API_BASE_URL =
++  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+diff --git a/apps/web/src/lib/gifts/get-gift-catalog.ts b/apps/web/src/lib/gifts/get-gift-catalog.ts
+index 7b6e2d7..305732e 100644
+--- a/apps/web/src/lib/gifts/get-gift-catalog.ts
++++ b/apps/web/src/lib/gifts/get-gift-catalog.ts
+@@ -1,17 +1,28 @@
+-import { MOCK_CATALOG } from "./mock-data";
++import { API_BASE_URL } from "@/lib/api-config";
+ import type { GiftCatalogItem } from "./types";
+ 
+ /**
+- * Unlike lib/reveal/get-reveal-view.ts, the real endpoint here
+- * (GET /gifts, apps/api/src/gifts/gifts.controller.ts) already returns
+- * exactly this shape — this is mock-first for iteration speed and
+- * because the seed data behind it hasn't been run against a live
+- * database from this environment, not because the contract is missing
+- * anything. Real version will be:
+- *   const res = await fetch(`${API_BASE_URL}/gifts`, { cache: "no-store" });
+- *   if (!res.ok) throw new Error(...);
+- *   return res.json();
++ * Real endpoint now (apps/api/src/gifts/gifts.controller.ts) — no
++ * longer mock data. This has to be real, not mock: the gift IDs
++ * flowing through this wizard end up in a real POST /orders call
++ * later, and a mock ID like "mock-pizza-voucher" isn't a UUID the real
++ * database has a row for. Mixing mock catalog data with a real order
++ * submission would just produce a confusing 400 at the worst possible
++ * moment (checkout), so this was wired for real before the payment
++ * screen was, not after.
++ *
++ * On fetch failure, returns an empty array rather than falling back to
++ * mock data — showing a "couldn't load gifts" state (see gift-selector.tsx)
++ * is honest; silently serving fake catalog items that can't actually be
++ * ordered is not.
+  */
+ export async function getGiftCatalog(): Promise<GiftCatalogItem[]> {
+-  return MOCK_CATALOG;
++  try {
++    const res = await fetch(`${API_BASE_URL}/gifts`, { cache: "no-store" });
++    if (!res.ok) return [];
++    return await res.json();
++  } catch {
++    // Network error, API not reachable, etc. — same fallback as above.
++    return [];
++  }
+ }
+diff --git a/apps/web/src/lib/orders/create-order.ts b/apps/web/src/lib/orders/create-order.ts
+new file mode 100644
+index 0000000..3c16db7
+--- /dev/null
++++ b/apps/web/src/lib/orders/create-order.ts
+@@ -0,0 +1,74 @@
++import { API_BASE_URL } from "@/lib/api-config";
++
++export interface CreateOrderPayload {
++  giftTemplateId: string;
++  recipientName: string;
++  recipientPhone: string;
++  senderName: string;
++  senderEmail: string;
++  senderMessage?: string;
++  messageType?: "text";
++  scheduledSendAt?: string;
++}
++
++export interface CreateOrderResult {
++  orderId: string;
++  orderNumber: string | null;
++  checkoutUrl: string;
++}
++
++export class CreateOrderError extends Error {
++  constructor(
++    message: string,
++    public readonly status?: number,
++  ) {
++    super(message);
++    this.name = "CreateOrderError";
++  }
++}
++
++/**
++ * Mirrors apps/api/src/orders/dto/create-order.dto.ts exactly. Nothing
++ * here computes a price — total_amount is server-derived from
++ * gift_templates.base_price, same "backend never trusts frontend"
++ * principle as payment status itself.
++ *
++ * NestJS's class-validator failures come back as
++ * { statusCode, message: string | string[], error }. The array case is
++ * one message per failed field — joined here rather than picking just
++ * the first, so a sender fixing one typo isn't surprised by a second
++ * rejection right after.
++ */
++export async function createOrder(
++  payload: CreateOrderPayload,
++): Promise<CreateOrderResult> {
++  let res: Response;
++  try {
++    res = await fetch(`${API_BASE_URL}/orders`, {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify(payload),
++    });
++  } catch {
++    throw new CreateOrderError(
++      "Couldn't reach the server. Check your connection and try again.",
++    );
++  }
++
++  if (!res.ok) {
++    let message = `Something went wrong (${res.status}). Please try again.`;
++    try {
++      const body: unknown = await res.json();
++      if (body && typeof body === "object" && "message" in body) {
++        const m = (body as { message: unknown }).message;
++        if (typeof m === "string") message = m;
++        else if (Array.isArray(m)) message = m.filter((x) => typeof x === "string").join(" ");
++      }
++    } catch {
++      // Response wasn't JSON — keep the generic message.
++    }
++    throw new CreateOrderError(message, res.status);
++  }
++
++  return res.json();
++}

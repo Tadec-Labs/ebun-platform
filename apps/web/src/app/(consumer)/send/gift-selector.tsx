@@ -36,6 +36,15 @@ export function GiftSelector({
       </div>
 
       <div className={selected ? "pb-32" : "pb-10"}>
+        {catalog.length === 0 && (
+          <div
+            className="border p-5 text-center text-sm leading-relaxed"
+            style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
+          >
+            Couldn&rsquo;t load the gift catalog right now. Check your connection and reload
+            the page.
+          </div>
+        )}
         {catalog.map((item) => (
           <GiftRow
             key={item.id}

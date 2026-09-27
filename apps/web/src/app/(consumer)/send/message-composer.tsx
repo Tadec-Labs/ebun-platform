@@ -33,11 +33,13 @@ export function MessageComposer({
   draft,
   onChangeDraft,
   onBack,
+  onContinue,
 }: {
   gift: GiftCatalogItem;
   draft: MessageDraft;
   onChangeDraft: (draft: MessageDraft) => void;
   onBack: () => void;
+  onContinue: () => void;
 }) {
   const [touchedPhone, setTouchedPhone] = useState(false);
   const phoneIsValid = PHONE_PATTERN.test(draft.recipientPhone.trim());
@@ -48,6 +50,13 @@ export function MessageComposer({
   }
 
   const isRecordingMode = draft.messageType === "voice" || draft.messageType === "video";
+  // Recording works (see media-recorder-panel.tsx), but sending a
+  // recorded message doesn't — CreateOrderService rejects any
+  // messageType besides "text" today (no R2 upload step exists yet).
+  // Blocking here, before the review screen, rather than letting a
+  // real submit attempt fail with a 400 the sender can't do anything
+  // about.
+  const readyForPayment = canContinue && !isRecordingMode;
 
   return (
     <>
@@ -202,22 +211,23 @@ export function MessageComposer({
         <div className="mx-auto max-w-[440px]">
           <button
             type="button"
-            disabled
-            className="w-full py-3.5 text-sm font-medium tracking-wide opacity-40"
+            onClick={onContinue}
+            disabled={!readyForPayment}
+            className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
             style={{ background: "var(--gold)", color: "var(--ink)" }}
           >
             Continue to payment
           </button>
-          <p
-            className="mt-2 text-center text-[10px] leading-relaxed"
-            style={{ color: "var(--cream-faint)" }}
-          >
-            {!canContinue
-              ? "Fill in the recipient's name and a valid WhatsApp number to continue."
-              : isRecordingMode
-                ? "Recording works — but sending a voice or video message needs a Cloudflare R2 upload step that isn't built yet. Text is the only type the backend can accept today."
-                : "Review and payment aren't built yet — this is as far as it goes for now."}
-          </p>
+          {!readyForPayment && (
+            <p
+              className="mt-2 text-center text-[10px] leading-relaxed"
+              style={{ color: "var(--cream-faint)" }}
+            >
+              {!canContinue
+                ? "Fill in the recipient's name and a valid WhatsApp number to continue."
+                : "Recording works — but sending a voice or video message needs a Cloudflare R2 upload step that isn't built yet. Switch to Text above to continue."}
+            </p>
+          )}
         </div>
       </div>
     </>

@@ -4,8 +4,9 @@ import { useState } from "react";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 import { GiftSelector } from "./gift-selector";
 import { MessageComposer, type MessageDraft } from "./message-composer";
+import { ReviewAndPay } from "./review-and-pay";
 
-type Phase = "gift" | "message";
+type Phase = "gift" | "message" | "review";
 
 export interface SendDraft {
   gift: GiftCatalogItem | null;
@@ -26,9 +27,9 @@ const EMPTY_MESSAGE: MessageDraft = {
  * Owns the whole sender-flow wizard's state — one client component
  * across phases, same reasoning as reveal-experience.tsx: this is
  * fundamentally one form that submits together as a single
- * POST /orders call eventually, not several independently-navigable
- * pages, so there's no reason to fight Next.js routing to pass state
- * between separate route segments.
+ * POST /orders call, not several independently-navigable pages, so
+ * there's no reason to fight Next.js routing to pass state between
+ * separate route segments.
  */
 export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
   const [phase, setPhase] = useState<Phase>("gift");
@@ -63,6 +64,15 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
           draft={draft.message}
           onChangeDraft={(message) => setDraft((prev) => ({ ...prev, message }))}
           onBack={() => setPhase("gift")}
+          onContinue={() => setPhase("review")}
+        />
+      )}
+
+      {phase === "review" && draft.gift && (
+        <ReviewAndPay
+          gift={draft.gift}
+          message={draft.message}
+          onBack={() => setPhase("message")}
         />
       )}
     </div>
