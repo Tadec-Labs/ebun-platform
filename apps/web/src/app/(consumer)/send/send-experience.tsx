@@ -2,13 +2,16 @@
 
 import { useState } from "react";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
+import type { OccasionId } from "@/lib/occasions";
 import { GiftSelector } from "./gift-selector";
 import { MessageComposer, type MessageDraft } from "./message-composer";
+import { OccasionSelector } from "./occasion-selector";
 import { ReviewAndPay } from "./review-and-pay";
 
-type Phase = "gift" | "message" | "review";
+type Phase = "occasion" | "gift" | "message" | "review";
 
 export interface SendDraft {
+  occasion: OccasionId | null;
   gift: GiftCatalogItem | null;
   message: MessageDraft;
 }
@@ -32,8 +35,9 @@ const EMPTY_MESSAGE: MessageDraft = {
  * separate route segments.
  */
 export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
-  const [phase, setPhase] = useState<Phase>("gift");
+  const [phase, setPhase] = useState<Phase>("occasion");
   const [draft, setDraft] = useState<SendDraft>({
+    occasion: null,
     gift: null,
     message: EMPTY_MESSAGE,
   });
@@ -47,10 +51,21 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
         EBUN
       </div>
 
+      {phase === "occasion" && (
+        <OccasionSelector
+          initialSelected={draft.occasion}
+          onContinue={(occasion) => {
+            setDraft((prev) => ({ ...prev, occasion }));
+            setPhase("gift");
+          }}
+        />
+      )}
+
       {phase === "gift" && (
         <GiftSelector
           catalog={catalog}
           initialSelectedId={draft.gift?.id ?? null}
+          onBack={() => setPhase("occasion")}
           onContinue={(gift) => {
             setDraft((prev) => ({ ...prev, gift }));
             setPhase("message");
@@ -61,6 +76,7 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
       {phase === "message" && draft.gift && (
         <MessageComposer
           gift={draft.gift}
+          occasion={draft.occasion}
           draft={draft.message}
           onChangeDraft={(message) => setDraft((prev) => ({ ...prev, message }))}
           onBack={() => setPhase("gift")}
@@ -71,6 +87,7 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
       {phase === "review" && draft.gift && (
         <ReviewAndPay
           gift={draft.gift}
+          occasion={draft.occasion}
           message={draft.message}
           onBack={() => setPhase("message")}
         />

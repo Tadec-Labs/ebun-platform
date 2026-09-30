@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { RecordedMedia } from "@/lib/media-recording/use-media-recorder";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
+import { type OccasionId, messagePlaceholder } from "@/lib/occasions";
 import { MediaRecorderPanel } from "./media-recorder-panel";
 
 export type MessageType = "text" | "voice" | "video";
@@ -30,12 +31,14 @@ const MESSAGE_MAX_LENGTH = 2000;
 
 export function MessageComposer({
   gift,
+  occasion,
   draft,
   onChangeDraft,
   onBack,
   onContinue,
 }: {
   gift: GiftCatalogItem;
+  occasion: OccasionId | null;
   draft: MessageDraft;
   onChangeDraft: (draft: MessageDraft) => void;
   onBack: () => void;
@@ -141,7 +144,7 @@ export function MessageComposer({
                 value={draft.text}
                 onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
                 rows={5}
-                placeholder="Write what you'd say if you were there..."
+                placeholder={messagePlaceholder(occasion, draft.recipientName)}
                 className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
                 style={{ borderColor: "var(--border)", color: "var(--cream)" }}
               />

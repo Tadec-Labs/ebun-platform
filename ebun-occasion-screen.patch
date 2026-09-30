@@ -1,0 +1,351 @@
+diff --git a/apps/web/src/app/(consumer)/send/gift-selector.tsx b/apps/web/src/app/(consumer)/send/gift-selector.tsx
+index 56689ea..6d51f9a 100644
+--- a/apps/web/src/app/(consumer)/send/gift-selector.tsx
++++ b/apps/web/src/app/(consumer)/send/gift-selector.tsx
+@@ -7,25 +7,34 @@ import { formatNaira } from "@/lib/format-money";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
+ 
+ /**
+- * First of the sender flow's phases (see the Product Brief: choose
+- * occasion -> pick a gift -> personalise -> pay). Occasion selection is
+- * deliberately skipped — it doesn't gate anything downstream and adds
+- * a screen before there's anywhere for it to lead.
++ * Second of the sender flow's phases (see the Product Brief: choose
++ * occasion -> pick a gift -> personalise -> pay).
+  */
+ export function GiftSelector({
+   catalog,
+   initialSelectedId,
+   onContinue,
++  onBack,
+ }: {
+   catalog: GiftCatalogItem[];
+   initialSelectedId: string | null;
+   onContinue: (gift: GiftCatalogItem) => void;
++  onBack: () => void;
+ }) {
+   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
+   const selected = catalog.find((item) => item.id === selectedId) ?? null;
+ 
+   return (
+     <>
++      <button
++        type="button"
++        onClick={onBack}
++        className="mb-2 self-start text-xs tracking-wide"
++        style={{ color: "var(--cream-dim)" }}
++      >
++        ← Change occasion
++      </button>
++
+       <div className="flex flex-col gap-1.5 pb-6 text-center">
+         <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
+           What are you sending?
+diff --git a/apps/web/src/app/(consumer)/send/message-composer.tsx b/apps/web/src/app/(consumer)/send/message-composer.tsx
+index 492ad49..8ebb185 100644
+--- a/apps/web/src/app/(consumer)/send/message-composer.tsx
++++ b/apps/web/src/app/(consumer)/send/message-composer.tsx
+@@ -3,6 +3,7 @@
+ import { useState } from "react";
+ import type { RecordedMedia } from "@/lib/media-recording/use-media-recorder";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
++import { type OccasionId, messagePlaceholder } from "@/lib/occasions";
+ import { MediaRecorderPanel } from "./media-recorder-panel";
+ 
+ export type MessageType = "text" | "voice" | "video";
+@@ -30,12 +31,14 @@ const MESSAGE_MAX_LENGTH = 2000;
+ 
+ export function MessageComposer({
+   gift,
++  occasion,
+   draft,
+   onChangeDraft,
+   onBack,
+   onContinue,
+ }: {
+   gift: GiftCatalogItem;
++  occasion: OccasionId | null;
+   draft: MessageDraft;
+   onChangeDraft: (draft: MessageDraft) => void;
+   onBack: () => void;
+@@ -141,7 +144,7 @@ export function MessageComposer({
+                 value={draft.text}
+                 onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
+                 rows={5}
+-                placeholder="Write what you'd say if you were there..."
++                placeholder={messagePlaceholder(occasion, draft.recipientName)}
+                 className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
+                 style={{ borderColor: "var(--border)", color: "var(--cream)" }}
+               />
+diff --git a/apps/web/src/app/(consumer)/send/occasion-selector.tsx b/apps/web/src/app/(consumer)/send/occasion-selector.tsx
+new file mode 100644
+index 0000000..f576360
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/occasion-selector.tsx
+@@ -0,0 +1,95 @@
++"use client";
++
++import { useState } from "react";
++import { OCCASIONS, type OccasionId } from "@/lib/occasions";
++
++/**
++ * First phase of the sender flow, per the Product Brief (occasion ->
++ * gift -> personalise -> pay). Single-select; "Just Because" is the
++ * catch-all, so there's no separate skip path to design around.
++ */
++export function OccasionSelector({
++  initialSelected,
++  onContinue,
++}: {
++  initialSelected: OccasionId | null;
++  onContinue: (occasion: OccasionId) => void;
++}) {
++  const [selected, setSelected] = useState<OccasionId | null>(initialSelected);
++  const selectedLabel = OCCASIONS.find((o) => o.id === selected)?.label ?? null;
++
++  return (
++    <>
++      <div className="flex flex-col gap-1.5 pb-8 text-center">
++        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          What&rsquo;s the occasion?
++        </h1>
++        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
++          Every gift starts with a reason.
++        </p>
++      </div>
++
++      <div className={`grid grid-cols-2 gap-3 ${selected ? "pb-32" : "pb-10"}`}>
++        {OCCASIONS.map((occasion, i) => {
++          const active = occasion.id === selected;
++          return (
++            <button
++              key={occasion.id}
++              type="button"
++              onClick={() => setSelected(occasion.id)}
++              aria-pressed={active}
++              className="flex min-h-[104px] flex-col justify-between border p-4 text-left"
++              style={{
++                borderColor: active ? "var(--gold)" : "var(--border)",
++                background: active ? "var(--gold-glow)" : "transparent",
++              }}
++            >
++              <span
++                className="text-[10px] tracking-[0.2em]"
++                style={{ color: active ? "var(--gold)" : "var(--gold-dim)" }}
++              >
++                {String(i + 1).padStart(2, "0")}
++              </span>
++              <span
++                className="font-display text-xl leading-tight"
++                style={{ color: active ? "var(--gold-light)" : "var(--cream)" }}
++              >
++                {occasion.label}
++              </span>
++            </button>
++          );
++        })}
++      </div>
++
++      {selected && selectedLabel && (
++        <div
++          className="fixed inset-x-0 bottom-0 border-t px-7 pt-4"
++          style={{
++            borderColor: "var(--border)",
++            background: "rgba(14, 13, 11, 0.95)",
++            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.25rem)",
++          }}
++        >
++          <div className="mx-auto flex max-w-[440px] items-center justify-between gap-4">
++            <div className="min-w-0">
++              <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
++                Occasion
++              </p>
++              <p className="font-display truncate text-lg" style={{ color: "var(--cream)" }}>
++                {selectedLabel}
++              </p>
++            </div>
++            <button
++              type="button"
++              onClick={() => onContinue(selected)}
++              className="flex-shrink-0 px-6 py-3 text-sm font-medium tracking-wide"
++              style={{ background: "var(--gold)", color: "var(--ink)" }}
++            >
++              Continue
++            </button>
++          </div>
++        </div>
++      )}
++    </>
++  );
++}
+diff --git a/apps/web/src/app/(consumer)/send/review-and-pay.tsx b/apps/web/src/app/(consumer)/send/review-and-pay.tsx
+index 0c7afda..39284b9 100644
+--- a/apps/web/src/app/(consumer)/send/review-and-pay.tsx
++++ b/apps/web/src/app/(consumer)/send/review-and-pay.tsx
+@@ -4,16 +4,19 @@ import { useState } from "react";
+ import { CreateOrderError, createOrder } from "@/lib/orders/create-order";
+ import { formatNaira } from "@/lib/format-money";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
++import { type OccasionId, getOccasionLabel } from "@/lib/occasions";
+ import type { MessageDraft } from "./message-composer";
+ 
+ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+ 
+ export function ReviewAndPay({
+   gift,
++  occasion,
+   message,
+   onBack,
+ }: {
+   gift: GiftCatalogItem;
++  occasion: OccasionId | null;
+   message: MessageDraft;
+   onBack: () => void;
+ }) {
+@@ -86,6 +89,10 @@ export function ReviewAndPay({
+           className="flex flex-col gap-3 border p-4"
+           style={{ borderColor: "var(--border)" }}
+         >
++          {getOccasionLabel(occasion) && (
++            // Display only — not submitted; CreateOrderDto has no occasion field.
++            <SummaryRow label="Occasion" value={getOccasionLabel(occasion) as string} />
++          )}
+           <SummaryRow label="Gift" value={gift.name} />
+           <SummaryRow label="For" value={message.recipientName} />
+           <SummaryRow label="To" value={message.recipientPhone} />
+diff --git a/apps/web/src/app/(consumer)/send/send-experience.tsx b/apps/web/src/app/(consumer)/send/send-experience.tsx
+index 494acdf..0c96a7c 100644
+--- a/apps/web/src/app/(consumer)/send/send-experience.tsx
++++ b/apps/web/src/app/(consumer)/send/send-experience.tsx
+@@ -2,13 +2,16 @@
+ 
+ import { useState } from "react";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
++import type { OccasionId } from "@/lib/occasions";
+ import { GiftSelector } from "./gift-selector";
+ import { MessageComposer, type MessageDraft } from "./message-composer";
++import { OccasionSelector } from "./occasion-selector";
+ import { ReviewAndPay } from "./review-and-pay";
+ 
+-type Phase = "gift" | "message" | "review";
++type Phase = "occasion" | "gift" | "message" | "review";
+ 
+ export interface SendDraft {
++  occasion: OccasionId | null;
+   gift: GiftCatalogItem | null;
+   message: MessageDraft;
+ }
+@@ -32,8 +35,9 @@ const EMPTY_MESSAGE: MessageDraft = {
+  * separate route segments.
+  */
+ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+-  const [phase, setPhase] = useState<Phase>("gift");
++  const [phase, setPhase] = useState<Phase>("occasion");
+   const [draft, setDraft] = useState<SendDraft>({
++    occasion: null,
+     gift: null,
+     message: EMPTY_MESSAGE,
+   });
+@@ -47,10 +51,21 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+         EBUN
+       </div>
+ 
++      {phase === "occasion" && (
++        <OccasionSelector
++          initialSelected={draft.occasion}
++          onContinue={(occasion) => {
++            setDraft((prev) => ({ ...prev, occasion }));
++            setPhase("gift");
++          }}
++        />
++      )}
++
+       {phase === "gift" && (
+         <GiftSelector
+           catalog={catalog}
+           initialSelectedId={draft.gift?.id ?? null}
++          onBack={() => setPhase("occasion")}
+           onContinue={(gift) => {
+             setDraft((prev) => ({ ...prev, gift }));
+             setPhase("message");
+@@ -61,6 +76,7 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+       {phase === "message" && draft.gift && (
+         <MessageComposer
+           gift={draft.gift}
++          occasion={draft.occasion}
+           draft={draft.message}
+           onChangeDraft={(message) => setDraft((prev) => ({ ...prev, message }))}
+           onBack={() => setPhase("gift")}
+@@ -71,6 +87,7 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+       {phase === "review" && draft.gift && (
+         <ReviewAndPay
+           gift={draft.gift}
++          occasion={draft.occasion}
+           message={draft.message}
+           onBack={() => setPhase("message")}
+         />
+diff --git a/apps/web/src/lib/occasions.ts b/apps/web/src/lib/occasions.ts
+new file mode 100644
+index 0000000..b792814
+--- /dev/null
++++ b/apps/web/src/lib/occasions.ts
+@@ -0,0 +1,59 @@
++/**
++ * The six occasions named in the Product Brief's sender flow — nothing
++ * added. Order is the display order.
++ *
++ * NOT sent to the backend: CreateOrderDto has no occasion field, so this
++ * is captured client-side and used for two things only — shaping the
++ * message placeholder (below) and showing on the review summary.
++ * Persisting it (a column + a DTO field) is worth doing eventually for
++ * analytics on which occasions drive volume, but it's a schema change and
++ * a separate decision, not something to sneak into a UI slice.
++ */
++export const OCCASIONS = [
++  { id: "birthday", label: "Birthday" },
++  { id: "anniversary", label: "Anniversary" },
++  { id: "new_baby", label: "New Baby" },
++  { id: "promotion", label: "Promotion" },
++  { id: "apology", label: "Apology" },
++  { id: "just_because", label: "Just Because" },
++] as const;
++
++export type OccasionId = (typeof OCCASIONS)[number]["id"];
++
++export function getOccasionLabel(id: OccasionId | null): string | null {
++  return OCCASIONS.find((o) => o.id === id)?.label ?? null;
++}
++
++const DEFAULT_PLACEHOLDER = "Write what you'd say if you were there...";
++
++/**
++ * A starting thought for the message box, shown as a *placeholder* —
++ * never pre-filled as real text. A sender who taps Continue without
++ * typing must not end up sending words they never wrote; the blank-page
++ * problem is solved by showing a prompt, not by putting words in their
++ * mouth.
++ */
++export function messagePlaceholder(
++  occasion: OccasionId | null,
++  recipientName: string,
++): string {
++  const name = recipientName.trim();
++  const to = name ? `, ${name}` : "";
++
++  switch (occasion) {
++    case "birthday":
++      return `Happy birthday${to}! Here's a little something to make today even better…`;
++    case "anniversary":
++      return `Happy anniversary${to}! Here's to another year — and many more…`;
++    case "new_baby":
++      return `Congratulations${to}! Something to keep you going while you welcome the little one…`;
++    case "promotion":
++      return `Congratulations${to} — you earned this. Celebrate it properly…`;
++    case "apology":
++      return `I'm sorry${to}. I wanted to show it, not just say it…`;
++    case "just_because":
++      return `No reason at all${to} — I just thought of you…`;
++    default:
++      return DEFAULT_PLACEHOLDER;
++  }
++}

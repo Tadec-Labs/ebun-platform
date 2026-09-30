@@ -4,16 +4,19 @@ import { useState } from "react";
 import { CreateOrderError, createOrder } from "@/lib/orders/create-order";
 import { formatNaira } from "@/lib/format-money";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
+import { type OccasionId, getOccasionLabel } from "@/lib/occasions";
 import type { MessageDraft } from "./message-composer";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function ReviewAndPay({
   gift,
+  occasion,
   message,
   onBack,
 }: {
   gift: GiftCatalogItem;
+  occasion: OccasionId | null;
   message: MessageDraft;
   onBack: () => void;
 }) {
@@ -86,6 +89,10 @@ export function ReviewAndPay({
           className="flex flex-col gap-3 border p-4"
           style={{ borderColor: "var(--border)" }}
         >
+          {getOccasionLabel(occasion) && (
+            // Display only — not submitted; CreateOrderDto has no occasion field.
+            <SummaryRow label="Occasion" value={getOccasionLabel(occasion) as string} />
+          )}
           <SummaryRow label="Gift" value={gift.name} />
           <SummaryRow label="For" value={message.recipientName} />
           <SummaryRow label="To" value={message.recipientPhone} />

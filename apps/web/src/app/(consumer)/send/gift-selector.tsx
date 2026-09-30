@@ -7,25 +7,34 @@ import { formatNaira } from "@/lib/format-money";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 
 /**
- * First of the sender flow's phases (see the Product Brief: choose
- * occasion -> pick a gift -> personalise -> pay). Occasion selection is
- * deliberately skipped — it doesn't gate anything downstream and adds
- * a screen before there's anywhere for it to lead.
+ * Second of the sender flow's phases (see the Product Brief: choose
+ * occasion -> pick a gift -> personalise -> pay).
  */
 export function GiftSelector({
   catalog,
   initialSelectedId,
   onContinue,
+  onBack,
 }: {
   catalog: GiftCatalogItem[];
   initialSelectedId: string | null;
   onContinue: (gift: GiftCatalogItem) => void;
+  onBack: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const selected = catalog.find((item) => item.id === selectedId) ?? null;
 
   return (
     <>
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-2 self-start text-xs tracking-wide"
+        style={{ color: "var(--cream-dim)" }}
+      >
+        ← Change occasion
+      </button>
+
       <div className="flex flex-col gap-1.5 pb-6 text-center">
         <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
           What are you sending?
