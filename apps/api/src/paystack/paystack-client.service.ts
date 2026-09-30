@@ -37,6 +37,11 @@ export class PaystackClientService {
     params: InitializeTransactionParams,
   ): Promise<InitializeTransactionResult> {
     const secretKey = this.config.getOrThrow<string>('PAYSTACK_SECRET_KEY');
+    // Trailing slashes stripped so a WEB_APP_BASE_URL set as
+    // "https://x.app/" can't produce "https://x.app//send/confirmation".
+    const webAppBaseUrl = this.config
+      .getOrThrow<string>('WEB_APP_BASE_URL')
+      .replace(/\/+$/, '');
 
     const response = await fetch(
       `${PaystackClientService.BASE_URL}/transaction/initialize`,
@@ -52,6 +57,17 @@ export class PaystackClientService {
           reference: params.reference,
           // Hardcoded — orders has no currency column, and multi-currency diaspora payment handling isn't implemented yet. Same known gap already flagged in the webhook handler.
           currency: 'NGN',
+          // Explicit, not left to the Paystack dashboard's own Callback URL
+          // setting: that field was empty, so a paying sender would have
+          // landed on a generic Paystack page with no way back to Ebun.
+          // Setting it per-request also keeps this correct across
+          // environments (test/prod) without any dashboard configuration.
+          // Paystack appends ?trxref=...&reference=... itself. The page at
+          // this path must NOT treat those params as proof of payment — it
+          // asks the API for real status (webhook-verified only).
+          // Every payment today is a sender's order payment; a second flow
+          // (e.g. group-gift contributions) is the point to parameterise this.
+          callback_url: `${webAppBaseUrl}/send/confirmation`,
           metadata: params.metadata,
         }),
       },

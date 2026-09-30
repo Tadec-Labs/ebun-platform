@@ -27,7 +27,15 @@ describe('PaystackClientService', () => {
         PaystackClientService,
         {
           provide: ConfigService,
-          useValue: { getOrThrow: () => 'sk_test_fake' },
+          useValue: {
+            // Key-aware: the previous `() => 'sk_test_fake'` returned the
+            // same value for every key, which would have silently turned
+            // WEB_APP_BASE_URL into "sk_test_fake" in the callback URL.
+            getOrThrow: (key: string) =>
+              key === 'WEB_APP_BASE_URL'
+                ? 'https://ebun.example'
+                : 'sk_test_fake',
+          },
         },
       ],
     }).compile();
@@ -80,6 +88,7 @@ describe('PaystackClientService', () => {
       amount: 500000,
       reference: 'ebun_ref_123',
       currency: 'NGN',
+      callback_url: 'https://ebun.example/send/confirmation',
       metadata: { orderId: 'order-1' },
     });
 
@@ -88,6 +97,55 @@ describe('PaystackClientService', () => {
       accessCode: 'access_code_123',
       reference: 'ebun_ref_123',
     });
+  });
+
+  it('does not double the slash when WEB_APP_BASE_URL has a trailing one', async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PaystackClientService,
+        {
+          provide: ConfigService,
+          useValue: {
+            getOrThrow: (key: string) =>
+              key === 'WEB_APP_BASE_URL'
+                ? 'https://ebun.example/'
+                : 'sk_test_fake',
+          },
+        },
+      ],
+    }).compile();
+    const client = moduleRef.get(PaystackClientService);
+
+    fetchMock.mockResolvedValue(
+      fakeResponse({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            status: true,
+            message: 'ok',
+            data: {
+              authorization_url: 'https://checkout.paystack.com/x',
+              access_code: 'a',
+              reference: 'r',
+            },
+          }),
+      }),
+    );
+
+    await client.initializeTransaction({
+      email: 'x@example.com',
+      amountKobo: 1000,
+      reference: 'r',
+    });
+
+    const [, requestInit] = fetchMock.mock.calls[0];
+    const sentBody = JSON.parse(requestInit?.body as string) as Record<
+      string,
+      unknown
+    >;
+    expect(sentBody.callback_url).toBe(
+      'https://ebun.example/send/confirmation',
+    );
   });
 
   it('throws BadGatewayException when Paystack reports status: false', async () => {

@@ -188,6 +188,35 @@ export class OrdersRepository {
   }
 
   /**
+   * Backs the sender's post-payment confirmation page. A separate, narrower
+   * read than findByPaystackReference on purpose: that one feeds the
+   * webhook's amount check and shouldn't change shape for a UI concern,
+   * and this one selects nothing payment-related — just what a
+   * confirmation page displays.
+   */
+  async findConfirmationByPaystackReference(
+    reference: string,
+  ): Promise<Pick<
+    OrderRow,
+    'status' | 'order_number' | 'recipient_name'
+  > | null> {
+    const response = (await this.supabase
+      .from('orders')
+      .select('status, order_number, recipient_name')
+      .eq('paystack_reference', reference)
+      .maybeSingle()) as {
+      data: Pick<OrderRow, 'status' | 'order_number' | 'recipient_name'> | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+
+    return response.data ?? null;
+  }
+
+  /**
    * Reads an order by its Paystack transaction reference. Returns null if none exists — a normal, expected outcome for the caller to check (e.g. a webhook referencing an order that was never created by us), not necessarily a bug.
    */
   async findByPaystackReference(reference: string): Promise<OrderRow | null> {

@@ -1,0 +1,866 @@
+diff --git a/apps/api/src/main.ts b/apps/api/src/main.ts
+index 504cc53..8f87270 100644
+--- a/apps/api/src/main.ts
++++ b/apps/api/src/main.ts
+@@ -13,7 +13,12 @@ async function bootstrap() {
+   // reveal links) plus localhost for local dev, not a wildcard: these
+   // endpoints create real orders and initiate real payments.
+   const configService = app.get(ConfigService);
+-  const webAppBaseUrl = configService.get<string>('WEB_APP_BASE_URL');
++  // Trailing slash stripped: browsers send Origin without one, so a
++  // WEB_APP_BASE_URL set with one would never match and every call would
++  // be blocked by CORS with no useful error.
++  const webAppBaseUrl = configService
++    .get<string>('WEB_APP_BASE_URL')
++    ?.replace(/\/+$/, '');
+   app.enableCors({
+     origin: [webAppBaseUrl, 'http://localhost:3000'].filter(
+       (origin): origin is string => Boolean(origin),
+diff --git a/apps/api/src/orders/order-confirmation.spec.ts b/apps/api/src/orders/order-confirmation.spec.ts
+new file mode 100644
+index 0000000..27c1675
+--- /dev/null
++++ b/apps/api/src/orders/order-confirmation.spec.ts
+@@ -0,0 +1,46 @@
++import { OrderStatus } from '@ebun/types';
++import {
++  OrderConfirmationStatus,
++  toConfirmationStatus,
++} from './order-confirmation';
++
++// Every OrderStatus listed explicitly, on purpose: the mapper defaults
++// unknown statuses to 'confirmed', so a new enum member added later would
++// be silently bucketed as "payment received". The exhaustiveness check
++// below fails the moment that happens, forcing a deliberate decision.
++const EXPECTED: Record<OrderStatus, OrderConfirmationStatus> = {
++  [OrderStatus.Draft]: 'awaiting_payment',
++  [OrderStatus.PendingPayment]: 'awaiting_payment',
++  [OrderStatus.PaymentFailed]: 'unsuccessful',
++  [OrderStatus.Cancelled]: 'unsuccessful',
++  [OrderStatus.Refunded]: 'unsuccessful',
++  [OrderStatus.Paid]: 'confirmed',
++  [OrderStatus.Processing]: 'confirmed',
++  [OrderStatus.VendorNotified]: 'confirmed',
++  [OrderStatus.VendorAccepted]: 'confirmed',
++  [OrderStatus.VendorDeclined]: 'confirmed',
++  [OrderStatus.VendorTimeout]: 'confirmed',
++  [OrderStatus.FulfillmentInProgress]: 'confirmed',
++  [OrderStatus.Dispatched]: 'confirmed',
++  [OrderStatus.Delivered]: 'confirmed',
++  [OrderStatus.VoucherIssued]: 'confirmed',
++  [OrderStatus.ReadyForRedemption]: 'confirmed',
++  [OrderStatus.RevealOpened]: 'confirmed',
++  [OrderStatus.Redeemed]: 'confirmed',
++  [OrderStatus.Fulfilled]: 'confirmed',
++  [OrderStatus.FulfillmentFailed]: 'confirmed',
++  [OrderStatus.RedemptionFailed]: 'confirmed',
++  [OrderStatus.Expired]: 'confirmed',
++};
++
++describe('toConfirmationStatus', () => {
++  it.each(Object.entries(EXPECTED))('%s -> %s', (status, expected) => {
++    expect(toConfirmationStatus(status as OrderStatus)).toBe(expected);
++  });
++
++  it('has an explicit expectation for every OrderStatus', () => {
++    expect(Object.keys(EXPECTED).sort()).toEqual(
++      Object.values(OrderStatus).sort(),
++    );
++  });
++});
+diff --git a/apps/api/src/orders/order-confirmation.ts b/apps/api/src/orders/order-confirmation.ts
+new file mode 100644
+index 0000000..6efef6c
+--- /dev/null
++++ b/apps/api/src/orders/order-confirmation.ts
+@@ -0,0 +1,47 @@
++import { OrderStatus } from '@ebun/types';
++
++/**
++ * What a sender's post-payment page is allowed to know. Deliberately a
++ * coarse three-way bucket rather than the raw OrderStatus: this endpoint
++ * is public (keyed only by the unguessable Paystack reference), and
++ * internal states like vendor_declined or fulfillment_failed are
++ * operational detail the sender's "did my payment go through" page has
++ * no business exposing — or being able to misread.
++ */
++export type OrderConfirmationStatus =
++  'awaiting_payment' | 'confirmed' | 'unsuccessful';
++
++export interface OrderConfirmationView {
++  status: OrderConfirmationStatus;
++  orderNumber: string | null;
++  recipientName: string;
++}
++
++const AWAITING_PAYMENT = new Set<OrderStatus>([
++  OrderStatus.Draft,
++  OrderStatus.PendingPayment,
++]);
++
++// Refunded is here because "your order didn't complete" is the honest
++// message for someone revisiting this page after a refund — not "payment
++// received".
++const UNSUCCESSFUL = new Set<OrderStatus>([
++  OrderStatus.PaymentFailed,
++  OrderStatus.Cancelled,
++  OrderStatus.Refunded,
++]);
++
++/**
++ * Everything not explicitly awaiting or unsuccessful counts as
++ * 'confirmed' — including later failure states like fulfillment_failed
++ * and expired. This page answers exactly one question (was the payment
++ * received?), and in all of those states it was; what happens to the
++ * gift afterwards is a separate flow with its own notifications.
++ */
++export function toConfirmationStatus(
++  status: OrderStatus,
++): OrderConfirmationStatus {
++  if (AWAITING_PAYMENT.has(status)) return 'awaiting_payment';
++  if (UNSUCCESSFUL.has(status)) return 'unsuccessful';
++  return 'confirmed';
++}
+diff --git a/apps/api/src/orders/orders.controller.spec.ts b/apps/api/src/orders/orders.controller.spec.ts
+new file mode 100644
+index 0000000..8e3255e
+--- /dev/null
++++ b/apps/api/src/orders/orders.controller.spec.ts
+@@ -0,0 +1,82 @@
++import { INestApplication, NotFoundException } from '@nestjs/common';
++import { Test } from '@nestjs/testing';
++import request from 'supertest';
++import { App } from 'supertest/types';
++import { CreateOrderService } from './create-order.service';
++import { OrdersController } from './orders.controller';
++import { OrdersService } from './orders.service';
++
++// Route-level (real HTTP) coverage for the one public, unauthenticated
++// GET endpoint. Services are mocked — this is about the route contract:
++// path, param handling, status codes, and the cache header — not the
++// mapping logic, which order-confirmation.spec.ts and
++// orders.service.spec.ts already cover.
++describe('OrdersController — GET /orders/confirmation/:reference', () => {
++  let app: INestApplication<App>;
++  let ordersService: { getConfirmation: jest.Mock };
++
++  beforeEach(async () => {
++    ordersService = { getConfirmation: jest.fn() };
++
++    const moduleRef = await Test.createTestingModule({
++      controllers: [OrdersController],
++      providers: [
++        { provide: OrdersService, useValue: ordersService },
++        { provide: CreateOrderService, useValue: { execute: jest.fn() } },
++      ],
++    }).compile();
++
++    app = moduleRef.createNestApplication();
++    await app.init();
++  });
++
++  afterEach(async () => {
++    await app.close();
++  });
++
++  it('returns the confirmation view as JSON, uncached', async () => {
++    ordersService.getConfirmation.mockResolvedValue({
++      status: 'confirmed',
++      orderNumber: 'EBN-0042',
++      recipientName: 'Ada',
++    });
++
++    const res = await request(app.getHttpServer())
++      .get('/orders/confirmation/ebun_abc-123')
++      .expect(200);
++
++    expect(res.body).toEqual({
++      status: 'confirmed',
++      orderNumber: 'EBN-0042',
++      recipientName: 'Ada',
++    });
++    // Polled while the payment webhook is still in flight — a cached
++    // "awaiting_payment" would keep a paid sender waiting.
++    expect(res.headers['cache-control']).toBe('no-store');
++    expect(ordersService.getConfirmation).toHaveBeenCalledWith('ebun_abc-123');
++  });
++
++  it('URL-decodes the reference before looking it up', async () => {
++    ordersService.getConfirmation.mockResolvedValue({
++      status: 'awaiting_payment',
++      orderNumber: null,
++      recipientName: 'Chidi',
++    });
++
++    await request(app.getHttpServer())
++      .get('/orders/confirmation/ebun_a%2Bb')
++      .expect(200);
++
++    expect(ordersService.getConfirmation).toHaveBeenCalledWith('ebun_a+b');
++  });
++
++  it('responds 404 for an unknown reference', async () => {
++    ordersService.getConfirmation.mockRejectedValue(
++      new NotFoundException('No order found for this reference.'),
++    );
++
++    await request(app.getHttpServer())
++      .get('/orders/confirmation/ebun_missing')
++      .expect(404);
++  });
++});
+diff --git a/apps/api/src/orders/orders.controller.ts b/apps/api/src/orders/orders.controller.ts
+index 7c9e770..0d2212b 100644
+--- a/apps/api/src/orders/orders.controller.ts
++++ b/apps/api/src/orders/orders.controller.ts
+@@ -1,11 +1,23 @@
+-import { Body, Controller, Post, Req } from '@nestjs/common';
++import {
++  Body,
++  Controller,
++  Get,
++  Header,
++  Param,
++  Post,
++  Req,
++} from '@nestjs/common';
+ import type { Request } from 'express';
+ import { CreateOrderService } from './create-order.service';
+ import { CreateOrderDto } from './dto/create-order.dto';
++import { OrdersService } from './orders.service';
+ 
+ @Controller('orders')
+ export class OrdersController {
+-  constructor(private readonly createOrderService: CreateOrderService) {}
++  constructor(
++    private readonly createOrderService: CreateOrderService,
++    private readonly ordersService: OrdersService,
++  ) {}
+ 
+   @Post()
+   async create(@Body() dto: CreateOrderDto, @Req() request: Request) {
+@@ -13,4 +25,17 @@ export class OrdersController {
+     // comment on why senderIp isn't part of the request body.
+     return this.createOrderService.execute(dto, request.ip);
+   }
++
++  /**
++   * Public, no auth — a sender returning from Paystack's checkout has no
++   * session. The unguessable Paystack reference is the only credential,
++   * same trust model as the reveal token. Returns a coarse status only
++   * (see order-confirmation.ts). no-store because the frontend polls this
++   * while the webhook that actually confirms payment is still in flight.
++   */
++  @Get('confirmation/:reference')
++  @Header('Cache-Control', 'no-store')
++  async confirmation(@Param('reference') reference: string) {
++    return this.ordersService.getConfirmation(reference);
++  }
+ }
+diff --git a/apps/api/src/orders/orders.repository.ts b/apps/api/src/orders/orders.repository.ts
+index 7627330..5b06f33 100644
+--- a/apps/api/src/orders/orders.repository.ts
++++ b/apps/api/src/orders/orders.repository.ts
+@@ -187,6 +187,35 @@ export class OrdersRepository {
+     }
+   }
+ 
++  /**
++   * Backs the sender's post-payment confirmation page. A separate, narrower
++   * read than findByPaystackReference on purpose: that one feeds the
++   * webhook's amount check and shouldn't change shape for a UI concern,
++   * and this one selects nothing payment-related — just what a
++   * confirmation page displays.
++   */
++  async findConfirmationByPaystackReference(
++    reference: string,
++  ): Promise<Pick<
++    OrderRow,
++    'status' | 'order_number' | 'recipient_name'
++  > | null> {
++    const response = (await this.supabase
++      .from('orders')
++      .select('status, order_number, recipient_name')
++      .eq('paystack_reference', reference)
++      .maybeSingle()) as {
++      data: Pick<OrderRow, 'status' | 'order_number' | 'recipient_name'> | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    return response.data ?? null;
++  }
++
+   /**
+    * Reads an order by its Paystack transaction reference. Returns null if none exists — a normal, expected outcome for the caller to check (e.g. a webhook referencing an order that was never created by us), not necessarily a bug.
+    */
+diff --git a/apps/api/src/orders/orders.service.spec.ts b/apps/api/src/orders/orders.service.spec.ts
+index ecfb008..4a5aff8 100644
+--- a/apps/api/src/orders/orders.service.spec.ts
++++ b/apps/api/src/orders/orders.service.spec.ts
+@@ -1,3 +1,4 @@
++import { NotFoundException } from '@nestjs/common';
+ import { Test } from '@nestjs/testing';
+ import { OrderStatus } from '@ebun/types';
+ import { OrdersService } from './orders.service';
+@@ -8,10 +9,16 @@ import { OrderTransitionConflictException } from './exceptions/order-transition-
+ 
+ describe('OrdersService', () => {
+   let sut: OrdersService;
+-  let repository: { attemptTransition: jest.Mock };
++  let repository: {
++    attemptTransition: jest.Mock;
++    findConfirmationByPaystackReference: jest.Mock;
++  };
+ 
+   beforeEach(async () => {
+-    repository = { attemptTransition: jest.fn() };
++    repository = {
++      attemptTransition: jest.fn(),
++      findConfirmationByPaystackReference: jest.fn(),
++    };
+ 
+     const moduleRef = await Test.createTestingModule({
+       providers: [
+@@ -133,4 +140,62 @@ describe('OrdersService', () => {
+       ).rejects.toThrow(OrderTransitionConflictException);
+     });
+   });
++
++  describe('getConfirmation', () => {
++    it('maps a found order to the coarse public view', async () => {
++      repository.findConfirmationByPaystackReference.mockResolvedValue({
++        status: OrderStatus.Paid,
++        order_number: 'EBN-0042',
++        recipient_name: 'Ada',
++      });
++
++      const result = await sut.getConfirmation('ebun_ref_1');
++
++      expect(
++        repository.findConfirmationByPaystackReference,
++      ).toHaveBeenCalledWith('ebun_ref_1');
++      expect(result).toEqual({
++        status: 'confirmed',
++        orderNumber: 'EBN-0042',
++        recipientName: 'Ada',
++      });
++    });
++
++    it('reports an unpaid order as awaiting_payment', async () => {
++      repository.findConfirmationByPaystackReference.mockResolvedValue({
++        status: OrderStatus.PendingPayment,
++        order_number: 'EBN-0043',
++        recipient_name: 'Chidi',
++      });
++
++      const result = await sut.getConfirmation('ebun_ref_2');
++
++      expect(result.status).toBe('awaiting_payment');
++    });
++
++    it('throws NotFoundException for an unknown reference', async () => {
++      repository.findConfirmationByPaystackReference.mockResolvedValue(null);
++
++      await expect(sut.getConfirmation('nope')).rejects.toThrow(
++        NotFoundException,
++      );
++    });
++
++    it('does not leak raw internal statuses — only the coarse bucket', async () => {
++      repository.findConfirmationByPaystackReference.mockResolvedValue({
++        status: OrderStatus.VendorDeclined,
++        order_number: 'EBN-0044',
++        recipient_name: 'Ngozi',
++      });
++
++      const result = await sut.getConfirmation('ebun_ref_3');
++
++      expect(Object.keys(result).sort()).toEqual([
++        'orderNumber',
++        'recipientName',
++        'status',
++      ]);
++      expect(result.status).toBe('confirmed');
++    });
++  });
+ });
+diff --git a/apps/api/src/orders/orders.service.ts b/apps/api/src/orders/orders.service.ts
+index 898bd06..479cb96 100644
+--- a/apps/api/src/orders/orders.service.ts
++++ b/apps/api/src/orders/orders.service.ts
+@@ -1,4 +1,4 @@
+-import { Injectable } from '@nestjs/common';
++import { Injectable, NotFoundException } from '@nestjs/common';
+ import { OrderStatus } from '@ebun/types';
+ import { OrderStateMachineService } from './order-state-machine.service';
+ import {
+@@ -7,6 +7,10 @@ import {
+   OrderTransitionActorType,
+ } from './orders.repository';
+ import { OrderTransitionConflictException } from './exceptions/order-transition-conflict.exception';
++import {
++  OrderConfirmationView,
++  toConfirmationStatus,
++} from './order-confirmation';
+ 
+ export interface TransitionActor {
+   type: OrderTransitionActorType;
+@@ -54,6 +58,30 @@ export class OrdersService {
+     return this.ordersRepository.findByPaystackReference(reference);
+   }
+ 
++  /**
++   * Public-facing — backs GET /orders/confirmation/:reference. Unknown
++   * references and never-created orders both surface as the same
++   * NotFoundException, so this can't be used to probe which references
++   * exist (they're 122-bit random, but the behaviour shouldn't depend on
++   * that alone).
++   */
++  async getConfirmation(reference: string): Promise<OrderConfirmationView> {
++    const order =
++      await this.ordersRepository.findConfirmationByPaystackReference(
++        reference,
++      );
++
++    if (!order) {
++      throw new NotFoundException('No order found for this reference.');
++    }
++
++    return {
++      status: toConfirmationStatus(order.status),
++      orderNumber: order.order_number,
++      recipientName: order.recipient_name,
++    };
++  }
++
+   /** Read-only, same rationale as findByPaystackReference above. Used by fulfillment orchestration to look up gift_template_id and recipient/reveal fields once an order reaches 'paid'. */
+   async findById(orderId: string) {
+     return this.ordersRepository.findById(orderId);
+diff --git a/apps/api/src/paystack/paystack-client.service.spec.ts b/apps/api/src/paystack/paystack-client.service.spec.ts
+index 188e0a1..5f98964 100644
+--- a/apps/api/src/paystack/paystack-client.service.spec.ts
++++ b/apps/api/src/paystack/paystack-client.service.spec.ts
+@@ -27,7 +27,15 @@ describe('PaystackClientService', () => {
+         PaystackClientService,
+         {
+           provide: ConfigService,
+-          useValue: { getOrThrow: () => 'sk_test_fake' },
++          useValue: {
++            // Key-aware: the previous `() => 'sk_test_fake'` returned the
++            // same value for every key, which would have silently turned
++            // WEB_APP_BASE_URL into "sk_test_fake" in the callback URL.
++            getOrThrow: (key: string) =>
++              key === 'WEB_APP_BASE_URL'
++                ? 'https://ebun.example'
++                : 'sk_test_fake',
++          },
+         },
+       ],
+     }).compile();
+@@ -80,6 +88,7 @@ describe('PaystackClientService', () => {
+       amount: 500000,
+       reference: 'ebun_ref_123',
+       currency: 'NGN',
++      callback_url: 'https://ebun.example/send/confirmation',
+       metadata: { orderId: 'order-1' },
+     });
+ 
+@@ -90,6 +99,55 @@ describe('PaystackClientService', () => {
+     });
+   });
+ 
++  it('does not double the slash when WEB_APP_BASE_URL has a trailing one', async () => {
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        PaystackClientService,
++        {
++          provide: ConfigService,
++          useValue: {
++            getOrThrow: (key: string) =>
++              key === 'WEB_APP_BASE_URL'
++                ? 'https://ebun.example/'
++                : 'sk_test_fake',
++          },
++        },
++      ],
++    }).compile();
++    const client = moduleRef.get(PaystackClientService);
++
++    fetchMock.mockResolvedValue(
++      fakeResponse({
++        ok: true,
++        json: () =>
++          Promise.resolve({
++            status: true,
++            message: 'ok',
++            data: {
++              authorization_url: 'https://checkout.paystack.com/x',
++              access_code: 'a',
++              reference: 'r',
++            },
++          }),
++      }),
++    );
++
++    await client.initializeTransaction({
++      email: 'x@example.com',
++      amountKobo: 1000,
++      reference: 'r',
++    });
++
++    const [, requestInit] = fetchMock.mock.calls[0];
++    const sentBody = JSON.parse(requestInit?.body as string) as Record<
++      string,
++      unknown
++    >;
++    expect(sentBody.callback_url).toBe(
++      'https://ebun.example/send/confirmation',
++    );
++  });
++
+   it('throws BadGatewayException when Paystack reports status: false', async () => {
+     fetchMock.mockResolvedValue(
+       fakeResponse({
+diff --git a/apps/api/src/paystack/paystack-client.service.ts b/apps/api/src/paystack/paystack-client.service.ts
+index 0325a0a..c4e0a38 100644
+--- a/apps/api/src/paystack/paystack-client.service.ts
++++ b/apps/api/src/paystack/paystack-client.service.ts
+@@ -37,6 +37,11 @@ export class PaystackClientService {
+     params: InitializeTransactionParams,
+   ): Promise<InitializeTransactionResult> {
+     const secretKey = this.config.getOrThrow<string>('PAYSTACK_SECRET_KEY');
++    // Trailing slashes stripped so a WEB_APP_BASE_URL set as
++    // "https://x.app/" can't produce "https://x.app//send/confirmation".
++    const webAppBaseUrl = this.config
++      .getOrThrow<string>('WEB_APP_BASE_URL')
++      .replace(/\/+$/, '');
+ 
+     const response = await fetch(
+       `${PaystackClientService.BASE_URL}/transaction/initialize`,
+@@ -52,6 +57,17 @@ export class PaystackClientService {
+           reference: params.reference,
+           // Hardcoded — orders has no currency column, and multi-currency diaspora payment handling isn't implemented yet. Same known gap already flagged in the webhook handler.
+           currency: 'NGN',
++          // Explicit, not left to the Paystack dashboard's own Callback URL
++          // setting: that field was empty, so a paying sender would have
++          // landed on a generic Paystack page with no way back to Ebun.
++          // Setting it per-request also keeps this correct across
++          // environments (test/prod) without any dashboard configuration.
++          // Paystack appends ?trxref=...&reference=... itself. The page at
++          // this path must NOT treat those params as proof of payment — it
++          // asks the API for real status (webhook-verified only).
++          // Every payment today is a sender's order payment; a second flow
++          // (e.g. group-gift contributions) is the point to parameterise this.
++          callback_url: `${webAppBaseUrl}/send/confirmation`,
+           metadata: params.metadata,
+         }),
+       },
+diff --git a/apps/web/src/app/(consumer)/send/confirmation/confirmation-experience.tsx b/apps/web/src/app/(consumer)/send/confirmation/confirmation-experience.tsx
+new file mode 100644
+index 0000000..79690ea
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/confirmation/confirmation-experience.tsx
+@@ -0,0 +1,228 @@
++"use client";
++
++import Link from "next/link";
++import { useEffect, useState } from "react";
++import { CheckGlyph } from "@/components/icons";
++import {
++  type OrderConfirmation,
++  getOrderConfirmation,
++} from "@/lib/orders/get-order-confirmation";
++
++// The webhook that actually confirms payment is asynchronous — usually a
++// couple of seconds behind the redirect, occasionally much longer. Poll
++// briefly, then stop and say so honestly rather than spin forever.
++const POLL_INTERVAL_MS = 3000;
++const MAX_ATTEMPTS = 20; // ~60s
++
++type ViewState =
++  | { kind: "checking"; data?: OrderConfirmation }
++  | { kind: "confirmed"; data: OrderConfirmation }
++  | { kind: "unsuccessful"; data: OrderConfirmation }
++  | { kind: "timeout"; data?: OrderConfirmation }
++  | { kind: "not_found" };
++
++export function ConfirmationExperience({ reference }: { reference: string | null }) {
++  const [state, setState] = useState<ViewState>(() =>
++    reference ? { kind: "checking" } : { kind: "not_found" },
++  );
++  // Bumped by "Check again" to restart polling without a page reload.
++  const [runId, setRunId] = useState(0);
++
++  useEffect(() => {
++    if (!reference) return;
++
++    let cancelled = false;
++    let attempts = 0;
++    let timer: number | undefined;
++    let lastData: OrderConfirmation | undefined;
++
++    async function poll() {
++      attempts += 1;
++      const result = await getOrderConfirmation(reference as string);
++      if (cancelled) return;
++
++      if (result.kind === "not_found") {
++        setState({ kind: "not_found" });
++        return;
++      }
++
++      if (result.kind === "ok") {
++        lastData = result.data;
++        if (result.data.status === "confirmed") {
++          setState({ kind: "confirmed", data: result.data });
++          return;
++        }
++        if (result.data.status === "unsuccessful") {
++          setState({ kind: "unsuccessful", data: result.data });
++          return;
++        }
++        setState({ kind: "checking", data: result.data });
++      }
++      // A network "error" falls through and is retried like "awaiting".
++
++      if (attempts >= MAX_ATTEMPTS) {
++        setState({ kind: "timeout", data: lastData });
++        return;
++      }
++      timer = window.setTimeout(poll, POLL_INTERVAL_MS);
++    }
++
++    void poll();
++
++    return () => {
++      cancelled = true;
++      if (timer) window.clearTimeout(timer);
++    };
++  }, [reference, runId]);
++
++  return (
++    <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7 pb-10">
++      <div
++        className="font-display pt-6 pb-8 text-center text-base tracking-[0.2em]"
++        style={{ color: "var(--gold)" }}
++      >
++        EBUN
++      </div>
++
++      <div className="flex flex-1 flex-col justify-center gap-8" aria-live="polite">
++        {state.kind === "checking" && (
++          <Centered
++            mark={<PendingRing />}
++            title="Confirming your payment…"
++            body="This usually takes just a few seconds. Please keep this page open."
++          />
++        )}
++
++        {state.kind === "confirmed" && (
++          <>
++            <Centered
++              mark={<ConfirmedRing />}
++              title="Payment received."
++              body={`${state.data.recipientName} will get a WhatsApp message with a link to open your gift.`}
++            />
++            <Receipt data={state.data} />
++            <PrimaryLink href="/send">Send another gift</PrimaryLink>
++          </>
++        )}
++
++        {state.kind === "unsuccessful" && (
++          <>
++            <Centered
++              title="This order wasn’t completed."
++              body="The payment didn’t go through, so nothing has been sent. You can try again whenever you’re ready."
++            />
++            <Receipt data={state.data} />
++            <PrimaryLink href="/send">Try again</PrimaryLink>
++          </>
++        )}
++
++        {state.kind === "timeout" && (
++          <>
++            <Centered
++              title="Still waiting on confirmation."
++              body="If you finished paying, there’s nothing more to do — this can take a little longer than usual. Check again in a minute."
++            />
++            {state.data && <Receipt data={state.data} />}
++            <button
++              type="button"
++              onClick={() => {
++                setState({ kind: "checking", data: state.data });
++                setRunId((n) => n + 1);
++              }}
++              className="w-full py-3.5 text-sm font-medium tracking-wide"
++              style={{ background: "var(--gold)", color: "var(--ink)" }}
++            >
++              Check again
++            </button>
++          </>
++        )}
++
++        {state.kind === "not_found" && (
++          <>
++            <Centered
++              title="We couldn’t find that order."
++              body="The link may be incomplete. If you’ve just paid, give it a moment and reopen the link from Paystack."
++            />
++            <PrimaryLink href="/send">Back to start</PrimaryLink>
++          </>
++        )}
++      </div>
++    </div>
++  );
++}
++
++function Centered({
++  mark,
++  title,
++  body,
++}: {
++  mark?: React.ReactNode;
++  title: string;
++  body: string;
++}) {
++  return (
++    <div className="flex flex-col items-center gap-5 text-center">
++      {mark}
++      <div className="flex flex-col gap-2">
++        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
++          {title}
++        </h1>
++        <p className="mx-auto max-w-[30ch] text-sm leading-relaxed" style={{ color: "var(--cream-dim)" }}>
++          {body}
++        </p>
++      </div>
++    </div>
++  );
++}
++
++function PendingRing() {
++  return (
++    <div
++      className="flex h-16 w-16 animate-pulse items-center justify-center rounded-full border"
++      style={{ borderColor: "var(--gold-dim)" }}
++    >
++      <span className="h-2 w-2 rounded-full" style={{ background: "var(--gold)" }} />
++    </div>
++  );
++}
++
++function ConfirmedRing() {
++  return (
++    <div
++      className="flex h-16 w-16 items-center justify-center rounded-full border"
++      style={{ borderColor: "var(--gold)", background: "var(--gold-glow)" }}
++    >
++      <CheckGlyph className="h-7 w-7 text-[color:var(--gold)]" />
++    </div>
++  );
++}
++
++function Receipt({ data }: { data: OrderConfirmation }) {
++  return (
++    <div className="flex flex-col gap-3 border p-4 text-sm" style={{ borderColor: "var(--border)" }}>
++      <ReceiptRow label="Order" value={data.orderNumber ?? "—"} />
++      <ReceiptRow label="For" value={data.recipientName} />
++    </div>
++  );
++}
++
++function ReceiptRow({ label, value }: { label: string; value: string }) {
++  return (
++    <div className="flex items-baseline justify-between gap-4">
++      <span style={{ color: "var(--cream-dim)" }}>{label}</span>
++      <span style={{ color: "var(--cream)" }}>{value}</span>
++    </div>
++  );
++}
++
++function PrimaryLink({ href, children }: { href: string; children: React.ReactNode }) {
++  return (
++    <Link
++      href={href}
++      className="block w-full py-3.5 text-center text-sm font-medium tracking-wide"
++      style={{ background: "var(--gold)", color: "var(--ink)" }}
++    >
++      {children}
++    </Link>
++  );
++}
+diff --git a/apps/web/src/app/(consumer)/send/confirmation/page.tsx b/apps/web/src/app/(consumer)/send/confirmation/page.tsx
+new file mode 100644
+index 0000000..0f247d5
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/confirmation/page.tsx
+@@ -0,0 +1,20 @@
++import type { Metadata } from "next";
++import { ConfirmationExperience } from "./confirmation-experience";
++
++export const metadata: Metadata = {
++  title: "Payment — Ebun",
++  // A per-order, transient page reached from Paystack's redirect —
++  // nothing here belongs in a search index.
++  robots: { index: false, follow: false },
++};
++
++export default async function ConfirmationPage({
++  searchParams,
++}: PageProps<"/send/confirmation">) {
++  const params = await searchParams;
++  // Paystack sends both `reference` and `trxref` (same value); accept either.
++  const raw = params.reference ?? params.trxref;
++  const reference = Array.isArray(raw) ? raw[0] : raw;
++
++  return <ConfirmationExperience reference={reference ?? null} />;
++}
+diff --git a/apps/web/src/lib/orders/get-order-confirmation.ts b/apps/web/src/lib/orders/get-order-confirmation.ts
+new file mode 100644
+index 0000000..933eb9d
+--- /dev/null
++++ b/apps/web/src/lib/orders/get-order-confirmation.ts
+@@ -0,0 +1,39 @@
++import { API_BASE_URL } from "@/lib/api-config";
++
++/** Mirrors apps/api/src/orders/order-confirmation.ts exactly. */
++export interface OrderConfirmation {
++  status: "awaiting_payment" | "confirmed" | "unsuccessful";
++  orderNumber: string | null;
++  recipientName: string;
++}
++
++export type ConfirmationResult =
++  | { kind: "ok"; data: OrderConfirmation }
++  | { kind: "not_found" }
++  | { kind: "error" };
++
++/**
++ * Asks the API for the order's real, webhook-derived status. The
++ * `reference` in the page URL is only a lookup key — it's put there by
++ * Paystack's redirect and proves nothing about whether payment
++ * succeeded (anyone can type it into a URL), which is exactly why this
++ * exists instead of the page just believing what it was handed.
++ *
++ * "error" (network failure, 5xx) and "not_found" are kept distinct:
++ * the first is worth retrying while polling, the second is final.
++ */
++export async function getOrderConfirmation(
++  reference: string,
++): Promise<ConfirmationResult> {
++  try {
++    const res = await fetch(
++      `${API_BASE_URL}/orders/confirmation/${encodeURIComponent(reference)}`,
++      { cache: "no-store" },
++    );
++    if (res.status === 404) return { kind: "not_found" };
++    if (!res.ok) return { kind: "error" };
++    return { kind: "ok", data: (await res.json()) as OrderConfirmation };
++  } catch {
++    return { kind: "error" };
++  }
++}

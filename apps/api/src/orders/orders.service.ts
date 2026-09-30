@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '@ebun/types';
 import { OrderStateMachineService } from './order-state-machine.service';
 import {
@@ -7,6 +7,10 @@ import {
   OrderTransitionActorType,
 } from './orders.repository';
 import { OrderTransitionConflictException } from './exceptions/order-transition-conflict.exception';
+import {
+  OrderConfirmationView,
+  toConfirmationStatus,
+} from './order-confirmation';
 
 export interface TransitionActor {
   type: OrderTransitionActorType;
@@ -52,6 +56,30 @@ export class OrdersService {
    */
   async findByPaystackReference(reference: string) {
     return this.ordersRepository.findByPaystackReference(reference);
+  }
+
+  /**
+   * Public-facing — backs GET /orders/confirmation/:reference. Unknown
+   * references and never-created orders both surface as the same
+   * NotFoundException, so this can't be used to probe which references
+   * exist (they're 122-bit random, but the behaviour shouldn't depend on
+   * that alone).
+   */
+  async getConfirmation(reference: string): Promise<OrderConfirmationView> {
+    const order =
+      await this.ordersRepository.findConfirmationByPaystackReference(
+        reference,
+      );
+
+    if (!order) {
+      throw new NotFoundException('No order found for this reference.');
+    }
+
+    return {
+      status: toConfirmationStatus(order.status),
+      orderNumber: order.order_number,
+      recipientName: order.recipient_name,
+    };
   }
 
   /** Read-only, same rationale as findByPaystackReference above. Used by fulfillment orchestration to look up gift_template_id and recipient/reveal fields once an order reaches 'paid'. */

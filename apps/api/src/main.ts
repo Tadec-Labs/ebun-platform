@@ -13,7 +13,12 @@ async function bootstrap() {
   // reveal links) plus localhost for local dev, not a wildcard: these
   // endpoints create real orders and initiate real payments.
   const configService = app.get(ConfigService);
-  const webAppBaseUrl = configService.get<string>('WEB_APP_BASE_URL');
+  // Trailing slash stripped: browsers send Origin without one, so a
+  // WEB_APP_BASE_URL set with one would never match and every call would
+  // be blocked by CORS with no useful error.
+  const webAppBaseUrl = configService
+    .get<string>('WEB_APP_BASE_URL')
+    ?.replace(/\/+$/, '');
   app.enableCors({
     origin: [webAppBaseUrl, 'http://localhost:3000'].filter(
       (origin): origin is string => Boolean(origin),

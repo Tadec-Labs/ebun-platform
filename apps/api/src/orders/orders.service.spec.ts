@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { OrderStatus } from '@ebun/types';
 import { OrdersService } from './orders.service';
@@ -8,10 +9,16 @@ import { OrderTransitionConflictException } from './exceptions/order-transition-
 
 describe('OrdersService', () => {
   let sut: OrdersService;
-  let repository: { attemptTransition: jest.Mock };
+  let repository: {
+    attemptTransition: jest.Mock;
+    findConfirmationByPaystackReference: jest.Mock;
+  };
 
   beforeEach(async () => {
-    repository = { attemptTransition: jest.fn() };
+    repository = {
+      attemptTransition: jest.fn(),
+      findConfirmationByPaystackReference: jest.fn(),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -131,6 +138,64 @@ describe('OrdersService', () => {
           { type: 'admin' },
         ),
       ).rejects.toThrow(OrderTransitionConflictException);
+    });
+  });
+
+  describe('getConfirmation', () => {
+    it('maps a found order to the coarse public view', async () => {
+      repository.findConfirmationByPaystackReference.mockResolvedValue({
+        status: OrderStatus.Paid,
+        order_number: 'EBN-0042',
+        recipient_name: 'Ada',
+      });
+
+      const result = await sut.getConfirmation('ebun_ref_1');
+
+      expect(
+        repository.findConfirmationByPaystackReference,
+      ).toHaveBeenCalledWith('ebun_ref_1');
+      expect(result).toEqual({
+        status: 'confirmed',
+        orderNumber: 'EBN-0042',
+        recipientName: 'Ada',
+      });
+    });
+
+    it('reports an unpaid order as awaiting_payment', async () => {
+      repository.findConfirmationByPaystackReference.mockResolvedValue({
+        status: OrderStatus.PendingPayment,
+        order_number: 'EBN-0043',
+        recipient_name: 'Chidi',
+      });
+
+      const result = await sut.getConfirmation('ebun_ref_2');
+
+      expect(result.status).toBe('awaiting_payment');
+    });
+
+    it('throws NotFoundException for an unknown reference', async () => {
+      repository.findConfirmationByPaystackReference.mockResolvedValue(null);
+
+      await expect(sut.getConfirmation('nope')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('does not leak raw internal statuses — only the coarse bucket', async () => {
+      repository.findConfirmationByPaystackReference.mockResolvedValue({
+        status: OrderStatus.VendorDeclined,
+        order_number: 'EBN-0044',
+        recipient_name: 'Ngozi',
+      });
+
+      const result = await sut.getConfirmation('ebun_ref_3');
+
+      expect(Object.keys(result).sort()).toEqual([
+        'orderNumber',
+        'recipientName',
+        'status',
+      ]);
+      expect(result.status).toBe('confirmed');
     });
   });
 });
