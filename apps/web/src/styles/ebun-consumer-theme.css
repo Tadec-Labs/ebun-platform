@@ -21,6 +21,8 @@
   --cream: #f5efe0;
   --cream-dim: rgba(245, 239, 224, 0.55);
   --cream-faint: rgba(245, 239, 224, 0.3);
+  --focus-ring: #f2d99a;
+  --error: #f0a3a3;
 
   background: var(--ink);
   color: var(--cream);
@@ -40,6 +42,24 @@
 
 .ebun-consumer-theme .font-display {
   font-family: var(--font-cormorant), Georgia, serif;
+}
+
+.ebun-consumer-theme ::selection {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+.ebun-consumer-theme :focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.ebun-consumer-theme input:-webkit-autofill,
+.ebun-consumer-theme input:-webkit-autofill:hover,
+.ebun-consumer-theme input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--cream);
+  -webkit-box-shadow: 0 0 0 1000px var(--ink) inset;
+  caret-color: var(--cream);
 }
 
 @media (prefers-reduced-motion: reduce) {

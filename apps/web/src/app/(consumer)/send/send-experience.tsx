@@ -26,6 +26,13 @@ const EMPTY_MESSAGE: MessageDraft = {
   scheduledFor: "",
 };
 
+const PHASES: { id: Phase; label: string }[] = [
+  { id: "occasion", label: "Occasion" },
+  { id: "gift", label: "Gift" },
+  { id: "message", label: "Message" },
+  { id: "review", label: "Pay" },
+];
+
 /**
  * Owns the whole sender-flow wizard's state — one client component
  * across phases, same reasoning as reveal-experience.tsx: this is
@@ -41,15 +48,44 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
     gift: null,
     message: EMPTY_MESSAGE,
   });
+  const currentPhaseIndex = PHASES.findIndex((item) => item.id === phase);
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
-      <div
-        className="font-display pt-6 pb-8 text-center text-base tracking-[0.2em]"
-        style={{ color: "var(--gold)" }}
-      >
-        EBUN
-      </div>
+      <header className="pt-5 pb-7">
+        <div className="flex items-center justify-between">
+          <p
+            className="font-display text-base tracking-[0.2em]"
+            style={{ color: "var(--gold)" }}
+          >
+            EBUN
+          </p>
+          <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
+            Step {currentPhaseIndex + 1} of {PHASES.length}
+          </p>
+        </div>
+        <ol className="mt-4 grid grid-cols-4 gap-1.5" aria-label="Send a gift progress">
+          {PHASES.map((item, index) => {
+            const isCurrent = index === currentPhaseIndex;
+            const isComplete = index < currentPhaseIndex;
+            return (
+              <li key={item.id}>
+                <span className="sr-only">
+                  {item.label}: {isComplete ? "complete" : isCurrent ? "current step" : "upcoming"}
+                </span>
+                <span
+                  aria-hidden="true"
+                  className="block h-px"
+                  style={{
+                    background: isCurrent || isComplete ? "var(--gold)" : "var(--border-strong)",
+                    opacity: isCurrent ? 1 : isComplete ? 0.65 : 0.5,
+                  }}
+                />
+              </li>
+            );
+          })}
+        </ol>
+      </header>
 
       {phase === "occasion" && (
         <OccasionSelector
