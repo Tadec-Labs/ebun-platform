@@ -5,6 +5,8 @@ export interface OrderConfirmation {
   status: "awaiting_payment" | "confirmed" | "unsuccessful";
   orderNumber: string | null;
   recipientName: string;
+  /** Only present once status is "confirmed". A same-day stand-in for WhatsApp delivery not being live yet — and a permanent safety net regardless, for whenever it is. */
+  revealUrl: string | null;
 }
 
 export type ConfirmationResult =

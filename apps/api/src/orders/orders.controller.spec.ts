@@ -2,6 +2,7 @@ import { INestApplication, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { ConfigService } from '@nestjs/config';
 import { CreateOrderService } from './create-order.service';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
@@ -23,6 +24,10 @@ describe('OrdersController — GET /orders/confirmation/:reference', () => {
       providers: [
         { provide: OrdersService, useValue: ordersService },
         { provide: CreateOrderService, useValue: { execute: jest.fn() } },
+        {
+          provide: ConfigService,
+          useValue: { getOrThrow: () => 'https://ebun.example' },
+        },
       ],
     }).compile();
 
@@ -39,6 +44,7 @@ describe('OrdersController — GET /orders/confirmation/:reference', () => {
       status: 'confirmed',
       orderNumber: 'EBN-0042',
       recipientName: 'Ada',
+      revealUrl: 'https://ebun.example/reveal/token-abc',
     });
 
     const res = await request(app.getHttpServer())
@@ -49,11 +55,18 @@ describe('OrdersController — GET /orders/confirmation/:reference', () => {
       status: 'confirmed',
       orderNumber: 'EBN-0042',
       recipientName: 'Ada',
+      revealUrl: 'https://ebun.example/reveal/token-abc',
     });
     // Polled while the payment webhook is still in flight — a cached
     // "awaiting_payment" would keep a paid sender waiting.
     expect(res.headers['cache-control']).toBe('no-store');
-    expect(ordersService.getConfirmation).toHaveBeenCalledWith('ebun_abc-123');
+    // The base URL comes from config, not the request — confirms the
+    // controller actually threads WEB_APP_BASE_URL through rather than
+    // leaving the service to guess it.
+    expect(ordersService.getConfirmation).toHaveBeenCalledWith(
+      'ebun_abc-123',
+      'https://ebun.example',
+    );
   });
 
   it('URL-decodes the reference before looking it up', async () => {
@@ -63,11 +76,21 @@ describe('OrdersController — GET /orders/confirmation/:reference', () => {
       recipientName: 'Chidi',
     });
 
+    ordersService.getConfirmation.mockResolvedValue({
+      status: 'awaiting_payment',
+      orderNumber: null,
+      recipientName: 'Chidi',
+      revealUrl: null,
+    });
+
     await request(app.getHttpServer())
       .get('/orders/confirmation/ebun_a%2Bb')
       .expect(200);
 
-    expect(ordersService.getConfirmation).toHaveBeenCalledWith('ebun_a+b');
+    expect(ordersService.getConfirmation).toHaveBeenCalledWith(
+      'ebun_a+b',
+      'https://ebun.example',
+    );
   });
 
   it('responds 404 for an unknown reference', async () => {

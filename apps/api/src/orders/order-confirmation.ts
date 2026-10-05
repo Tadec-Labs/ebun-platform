@@ -15,6 +15,15 @@ export interface OrderConfirmationView {
   status: OrderConfirmationStatus;
   orderNumber: string | null;
   recipientName: string;
+  /**
+   * Only populated once status is 'confirmed'. This is a same-day
+   * workaround for Termii WhatsApp delivery not being live yet (no
+   * WABA configured), but it earns a permanent place regardless: a
+   * sender whose recipient somehow never gets the WhatsApp message —
+   * wrong number, Termii outage, anything — has a real way to forward
+   * the gift themselves instead of a dead end.
+   */
+  revealUrl: string | null;
 }
 
 const AWAITING_PAYMENT = new Set<OrderStatus>([

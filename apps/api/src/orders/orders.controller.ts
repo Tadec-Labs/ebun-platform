@@ -7,6 +7,7 @@ import {
   Post,
   Req,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { CreateOrderService } from './create-order.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -17,6 +18,7 @@ export class OrdersController {
   constructor(
     private readonly createOrderService: CreateOrderService,
     private readonly ordersService: OrdersService,
+    private readonly config: ConfigService,
   ) {}
 
   @Post()
@@ -36,6 +38,7 @@ export class OrdersController {
   @Get('confirmation/:reference')
   @Header('Cache-Control', 'no-store')
   async confirmation(@Param('reference') reference: string) {
-    return this.ordersService.getConfirmation(reference);
+    const webAppBaseUrl = this.config.getOrThrow<string>('WEB_APP_BASE_URL');
+    return this.ordersService.getConfirmation(reference, webAppBaseUrl);
   }
 }

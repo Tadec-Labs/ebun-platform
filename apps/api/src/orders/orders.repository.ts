@@ -198,14 +198,17 @@ export class OrdersRepository {
     reference: string,
   ): Promise<Pick<
     OrderRow,
-    'status' | 'order_number' | 'recipient_name'
+    'status' | 'order_number' | 'recipient_name' | 'reveal_token'
   > | null> {
     const response = (await this.supabase
       .from('orders')
-      .select('status, order_number, recipient_name')
+      .select('status, order_number, recipient_name, reveal_token')
       .eq('paystack_reference', reference)
       .maybeSingle()) as {
-      data: Pick<OrderRow, 'status' | 'order_number' | 'recipient_name'> | null;
+      data: Pick<
+        OrderRow,
+        'status' | 'order_number' | 'recipient_name' | 'reveal_token'
+      > | null;
       error: PostgrestError | null;
     };
 

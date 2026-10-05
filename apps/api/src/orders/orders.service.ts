@@ -65,7 +65,10 @@ export class OrdersService {
    * exist (they're 122-bit random, but the behaviour shouldn't depend on
    * that alone).
    */
-  async getConfirmation(reference: string): Promise<OrderConfirmationView> {
+  async getConfirmation(
+    reference: string,
+    webAppBaseUrl: string,
+  ): Promise<OrderConfirmationView> {
     const order =
       await this.ordersRepository.findConfirmationByPaystackReference(
         reference,
@@ -75,10 +78,16 @@ export class OrdersService {
       throw new NotFoundException('No order found for this reference.');
     }
 
+    const status = toConfirmationStatus(order.status);
+
     return {
-      status: toConfirmationStatus(order.status),
+      status,
       orderNumber: order.order_number,
       recipientName: order.recipient_name,
+      revealUrl:
+        status === 'confirmed'
+          ? `${webAppBaseUrl}/reveal/${order.reveal_token}`
+          : null,
     };
   }
 

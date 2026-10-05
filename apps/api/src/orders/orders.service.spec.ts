@@ -147,9 +147,13 @@ describe('OrdersService', () => {
         status: OrderStatus.Paid,
         order_number: 'EBN-0042',
         recipient_name: 'Ada',
+        reveal_token: 'token-abc',
       });
 
-      const result = await sut.getConfirmation('ebun_ref_1');
+      const result = await sut.getConfirmation(
+        'ebun_ref_1',
+        'https://ebun.example',
+      );
 
       expect(
         repository.findConfirmationByPaystackReference,
@@ -158,27 +162,36 @@ describe('OrdersService', () => {
         status: 'confirmed',
         orderNumber: 'EBN-0042',
         recipientName: 'Ada',
+        revealUrl: 'https://ebun.example/reveal/token-abc',
       });
     });
 
-    it('reports an unpaid order as awaiting_payment', async () => {
+    it('reports an unpaid order as awaiting_payment, with no reveal link yet', async () => {
       repository.findConfirmationByPaystackReference.mockResolvedValue({
         status: OrderStatus.PendingPayment,
         order_number: 'EBN-0043',
         recipient_name: 'Chidi',
+        reveal_token: 'token-def',
       });
 
-      const result = await sut.getConfirmation('ebun_ref_2');
+      const result = await sut.getConfirmation(
+        'ebun_ref_2',
+        'https://ebun.example',
+      );
 
       expect(result.status).toBe('awaiting_payment');
+      // Not handed out before payment is actually confirmed — nothing
+      // useful to show yet, and no reason to leak a working-looking
+      // link early.
+      expect(result.revealUrl).toBeNull();
     });
 
     it('throws NotFoundException for an unknown reference', async () => {
       repository.findConfirmationByPaystackReference.mockResolvedValue(null);
 
-      await expect(sut.getConfirmation('nope')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        sut.getConfirmation('nope', 'https://ebun.example'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('does not leak raw internal statuses — only the coarse bucket', async () => {
@@ -186,13 +199,18 @@ describe('OrdersService', () => {
         status: OrderStatus.VendorDeclined,
         order_number: 'EBN-0044',
         recipient_name: 'Ngozi',
+        reveal_token: 'token-ghi',
       });
 
-      const result = await sut.getConfirmation('ebun_ref_3');
+      const result = await sut.getConfirmation(
+        'ebun_ref_3',
+        'https://ebun.example',
+      );
 
       expect(Object.keys(result).sort()).toEqual([
         'orderNumber',
         'recipientName',
+        'revealUrl',
         'status',
       ]);
       expect(result.status).toBe('confirmed');

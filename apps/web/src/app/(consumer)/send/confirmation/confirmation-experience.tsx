@@ -101,6 +101,7 @@ export function ConfirmationExperience({ reference }: { reference: string | null
               body={`${state.data.recipientName} will get a WhatsApp message with a link to open your gift.`}
             />
             <Receipt data={state.data} />
+            {state.data.revealUrl && <RevealLinkFallback url={state.data.revealUrl} />}
             <PrimaryLink href="/send">Send another gift</PrimaryLink>
           </>
         )}
@@ -193,6 +194,51 @@ function ConfirmedRing() {
       style={{ borderColor: "var(--gold)", background: "var(--gold-glow)" }}
     >
       <CheckGlyph className="h-7 w-7 text-[color:var(--gold)]" />
+    </div>
+  );
+}
+
+/**
+ * Shown whenever a reveal link exists, not just while WhatsApp delivery
+ * is unconfigured — a sender whose recipient never gets the WhatsApp
+ * message, for any reason, still has a way to forward the gift
+ * themselves rather than hitting a dead end.
+ */
+function RevealLinkFallback({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can fail (permissions, insecure context) —
+      // the link is still visible and selectable by hand either way.
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 border p-4" style={{ borderColor: "var(--border)" }}>
+      <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+        You can also send this link yourself, in case the WhatsApp message is delayed.
+      </p>
+      <div className="flex items-center gap-3">
+        <span
+          className="flex-1 truncate text-xs"
+          style={{ color: "var(--gold-light)" }}
+        >
+          {url}
+        </span>
+        <button
+          type="button"
+          onClick={() => void handleCopy()}
+          className="flex-shrink-0 px-3 py-1.5 text-[11px] tracking-wide"
+          style={{ background: "var(--gold)", color: "var(--ink)" }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
     </div>
   );
 }
