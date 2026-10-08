@@ -11,6 +11,16 @@ export interface UserRow {
   [key: string]: unknown;
 }
 
+/** Just what the staff guard needs — deliberately not UserRow, so adding it can't disturb anything that builds UserRow values. */
+export interface StaffUserRow {
+  id: string;
+  auth_id: string | null;
+  email: string | null;
+  name: string | null;
+  role: string;
+  is_active: boolean;
+}
+
 @Injectable()
 export class UsersRepository {
   constructor(
@@ -23,6 +33,24 @@ export class UsersRepository {
       .select('*')
       .eq('email', email)
       .maybeSingle()) as { data: UserRow | null; error: PostgrestError | null };
+
+    if (response.error) {
+      throw response.error;
+    }
+
+    return response.data ?? null;
+  }
+
+  /** Maps a verified Supabase Auth identity to its application user. Backs StaffGuard. */
+  async findByAuthId(authId: string): Promise<StaffUserRow | null> {
+    const response = (await this.supabase
+      .from('users')
+      .select('id, auth_id, email, name, role, is_active')
+      .eq('auth_id', authId)
+      .maybeSingle()) as {
+      data: StaffUserRow | null;
+      error: PostgrestError | null;
+    };
 
     if (response.error) {
       throw response.error;

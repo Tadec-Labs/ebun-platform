@@ -11,6 +11,8 @@ import { PaymentsModule } from './payments/payments.module';
 import { RevealModule } from './reveal/reveal.module';
 import { RedemptionsModule } from './redemptions/redemptions.module';
 import { validateEnv } from './config/env.validation';
+import { AuthModule } from './auth/auth.module';
+import { VendorsModule } from './vendors/vendors.module';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { validateEnv } from './config/env.validation';
     PaymentsModule,
     RevealModule,
     RedemptionsModule,
+    AuthModule,
+    VendorsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

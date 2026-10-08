@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { UserRow, UsersRepository } from './users.repository';
+import { StaffUserRow, UserRow, UsersRepository } from './users.repository';
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -33,6 +33,11 @@ export class UsersService {
       }
       throw error;
     }
+  }
+
+  /** Backs StaffGuard. Returns the row regardless of role/is_active — the guard decides what that means. */
+  async findStaffByAuthId(authId: string): Promise<StaffUserRow | null> {
+    return this.repository.findByAuthId(authId);
   }
 
   /** Public-facing display purposes only — see UsersRepository.findById for why this never returns email/phone. */
