@@ -11,7 +11,7 @@ async function bootstrap() {
   // fails with an opaque CORS error rather than anything actionable.
   // Scoped to the real web app origin (already a required env var for
   // reveal links) plus localhost for local dev, not a wildcard: these
-  // endpoints create real orders and initiate real payments.
+  // endpoints create real orders and initiate real payments...
   const configService = app.get(ConfigService);
   // Trailing slash stripped: browsers send Origin without one, so a
   // WEB_APP_BASE_URL set with one would never match and every call would
