@@ -11,6 +11,14 @@ export interface NotificationRow {
   [key: string]: unknown;
 }
 
+/** A failed send that still has attempts left, with everything needed to re-send it. */
+export interface RetryableNotificationRow extends NotificationRow {
+  recipient_phone: string | null;
+  payload: { data?: Record<string, string>; revealUrl?: string } | null;
+  retry_count: number;
+  max_retries: number;
+}
+
 export interface CreatePendingNotificationParams {
   orderId: string;
   recipientPhone: string;
@@ -104,6 +112,94 @@ export class NotificationsRepository {
       .from('notifications')
       .update({
         status: NotificationStatus.Failed,
+        error_message: errorMessage,
+        failed_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+
+    if (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Failed sends that are due another attempt.
+   *
+   * The schema designed for exactly this: "Background job polls for
+   * status=pending OR status=retrying where next_retry_at < now()".
+   * `failed` is included too, because markFailed is what the live send
+   * path writes on its first failure — without it, every notification
+   * would get its initial attempt and no retry at all.
+   *
+   * A null next_retry_at means "never scheduled", which is true of a
+   * first failure, so those are due immediately.
+   */
+  async findRetryable(limit: number): Promise<RetryableNotificationRow[]> {
+    const response = (await this.supabase
+      .from('notifications')
+      .select()
+      .in('status', [
+        NotificationStatus.Failed,
+        NotificationStatus.Retrying,
+        NotificationStatus.Pending,
+      ])
+      .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
+      .order('created_at', { ascending: true })
+      .limit(limit)) as {
+      data: RetryableNotificationRow[] | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+
+    // max_retries is per-row in the schema (default 3), so the ceiling
+    // is read from the row rather than assumed here.
+    return (response.data ?? []).filter(
+      (row) => row.retry_count < row.max_retries,
+    );
+  }
+
+  /**
+   * Records a failed attempt and when to try again. Kept separate from
+   * markFailed, which is the live send path's "this attempt failed"
+   * and deliberately says nothing about retrying.
+   */
+  async scheduleRetry(
+    id: string,
+    attempt: number,
+    nextRetryAt: Date,
+    errorMessage: string,
+  ): Promise<void> {
+    const { error } = await this.supabase
+      .from('notifications')
+      .update({
+        status: NotificationStatus.Retrying,
+        retry_count: attempt,
+        next_retry_at: nextRetryAt.toISOString(),
+        error_message: errorMessage,
+        failed_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+
+    if (error) {
+      throw error;
+    }
+  }
+
+  /** Terminal give-up: attempts exhausted, no further retry scheduled. */
+  async markExhausted(
+    id: string,
+    attempt: number,
+    errorMessage: string,
+  ): Promise<void> {
+    const { error } = await this.supabase
+      .from('notifications')
+      .update({
+        status: NotificationStatus.Failed,
+        retry_count: attempt,
+        next_retry_at: null,
         error_message: errorMessage,
         failed_at: new Date().toISOString(),
       })

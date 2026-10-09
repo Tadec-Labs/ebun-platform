@@ -98,7 +98,7 @@ export function ConfirmationExperience({ reference }: { reference: string | null
             <Centered
               mark={<ConfirmedRing />}
               title="Payment received."
-              body={`${state.data.recipientName} will get a WhatsApp message with a link to open your gift.`}
+              body={deliveryPromise(state.data)}
             />
             <Receipt data={state.data} />
             {state.data.revealUrl && <RevealLinkFallback url={state.data.revealUrl} />}
@@ -241,6 +241,25 @@ function RevealLinkFallback({ url }: { url: string }) {
       </div>
     </div>
   );
+}
+
+/**
+ * What the sender is told happens next. A scheduled gift says when,
+ * and deliberately offers no link to copy — see OrderConfirmation.
+ */
+function deliveryPromise(data: OrderConfirmation): string {
+  if (!data.scheduledSendAt) {
+    return `${data.recipientName} will get a WhatsApp message with a link to open your gift.`;
+  }
+
+  const when = new Date(data.scheduledSendAt).toLocaleString("en-NG", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `Saved for ${when}. ${data.recipientName} will get a WhatsApp message then — nothing reaches them before.`;
 }
 
 function Receipt({ data }: { data: OrderConfirmation }) {

@@ -1,0 +1,1752 @@
+diff --git a/apps/api/package.json b/apps/api/package.json
+index 64312a1..dc65e46 100644
+--- a/apps/api/package.json
++++ b/apps/api/package.json
+@@ -26,6 +26,7 @@
+     "@nestjs/config": "^4.0.4",
+     "@nestjs/core": "^11.0.1",
+     "@nestjs/platform-express": "^11.0.1",
++    "@nestjs/schedule": "6.0.0",
+     "@nestjs/throttler": "^6.5.0",
+     "@supabase/supabase-js": "^2.112.3",
+     "class-transformer": "^0.5.1",
+diff --git a/apps/api/src/app.module.ts b/apps/api/src/app.module.ts
+index c5e41d5..ab722cd 100644
+--- a/apps/api/src/app.module.ts
++++ b/apps/api/src/app.module.ts
+@@ -13,6 +13,7 @@ import { RedemptionsModule } from './redemptions/redemptions.module';
+ import { validateEnv } from './config/env.validation';
+ import { AuthModule } from './auth/auth.module';
+ import { VendorsModule } from './vendors/vendors.module';
++import { JobsModule } from './jobs/jobs.module';
+ 
+ @Module({
+   imports: [
+@@ -33,6 +34,7 @@ import { VendorsModule } from './vendors/vendors.module';
+     RedemptionsModule,
+     AuthModule,
+     VendorsModule,
++    JobsModule,
+   ],
+   controllers: [AppController],
+   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+diff --git a/apps/api/src/config/env.validation.ts b/apps/api/src/config/env.validation.ts
+index 8456355..f7d205b 100644
+--- a/apps/api/src/config/env.validation.ts
++++ b/apps/api/src/config/env.validation.ts
+@@ -50,6 +50,15 @@ class EnvironmentVariables {
+   @IsString()
+   @IsNotEmpty()
+   TERMII_WHATSAPP_TEMPLATE_ID?: string;
++
++  /**
++   * Set to 'false' to stop every background job from firing — see
++   * jobs/jobs.config.ts. Optional: absent means enabled, so no
++   * deployment needs to set it to behave correctly.
++   */
++  @IsOptional()
++  @IsString()
++  ENABLE_BACKGROUND_JOBS?: string;
+ }
+ 
+ export function validateEnv(
+diff --git a/apps/api/src/jobs/expiry.job.ts b/apps/api/src/jobs/expiry.job.ts
+new file mode 100644
+index 0000000..fb90d86
+--- /dev/null
++++ b/apps/api/src/jobs/expiry.job.ts
+@@ -0,0 +1,95 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { Cron, CronExpression } from '@nestjs/schedule';
++import { ConfigService } from '@nestjs/config';
++import { OrderStatus } from '@ebun/types';
++import { OrdersService } from '../orders/orders.service';
++import { RedemptionsService } from '../redemptions/redemptions.service';
++import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
++import { EXPIRY_BATCH, backgroundJobsEnabled } from './jobs.config';
++
++/**
++ * Expires gifts nobody collected inside the 30-day window.
++ *
++ * WHY NOT expire_unclaimed_gifts(): the schema ships that function and
++ * it does the right thing to the rows, but it is a batch UPDATE that
++ * writes no audit_events row for the orders it changes. "Every
++ * significant state transition is logged to the immutable audit trail"
++ * is a non-negotiable in this codebase, and expiry is the transition
++ * that decides a sender's money is now owed back — the single worst
++ * one to have no record of. So orders are expired one at a time through
++ * attempt_order_transition(), which writes its own audit row, and the
++ * redemptions half is handled separately (those rows have no state
++ * machine and no audit contract).
++ *
++ * HOURLY, not daily as the schema's comment suggests. Expiry is what
++ * will eventually trigger a refund, so up to 24 hours of lag sits
++ * directly on top of somebody's money. The query is indexed on
++ * expires_at and matches nothing on almost every run.
++ *
++ * WHAT THIS DOES NOT DO: notify the sender, or initiate a refund. Both
++ * are in the Brief's own description of expiry and neither exists yet —
++ * there is no refund code anywhere in the API. Expired orders are now
++ * at least correctly marked and audited, so the refund work has
++ * something truthful to build on.
++ */
++@Injectable()
++export class ExpiryJob {
++  private readonly logger = new Logger(ExpiryJob.name);
++
++  constructor(
++    private readonly orders: OrdersService,
++    private readonly redemptions: RedemptionsService,
++    private readonly config: ConfigService,
++  ) {}
++
++  @Cron(CronExpression.EVERY_HOUR, { name: 'expire-unclaimed' })
++  async run(): Promise<void> {
++    if (
++      !backgroundJobsEnabled(this.config.get<string>('ENABLE_BACKGROUND_JOBS'))
++    ) {
++      return;
++    }
++    await this.expireOverdue();
++  }
++
++  async expireOverdue(): Promise<{ orders: number; redemptions: number }> {
++    const expirable = await this.orders.findExpirable(EXPIRY_BATCH);
++    let expired = 0;
++
++    for (const order of expirable) {
++      try {
++        await this.orders.transitionNormal(
++          order.id,
++          order.status,
++          OrderStatus.Expired,
++          { type: 'cron' },
++          { expiredAt: new Date().toISOString(), expiresAt: order.expires_at },
++        );
++        expired += 1;
++      } catch (err) {
++        if (err instanceof OrderTransitionConflictException) {
++          // Someone (or another instance) moved this order between the
++          // read and the write — the compare-and-swap did its job.
++          // Nothing to fix; it will be re-read next hour if it still
++          // qualifies.
++          continue;
++        }
++        this.logger.error(
++          `Order ${order.id}: could not expire from ${order.status}.`,
++          err instanceof Error ? err.stack : err,
++        );
++      }
++    }
++
++    const expiredRedemptions = await this.redemptions.expireOverdue();
++
++    if (expired > 0 || expiredRedemptions.length > 0) {
++      this.logger.warn(
++        `Expired ${expired} order(s) and ${expiredRedemptions.length} redemption(s). ` +
++          `Each expired order is a gift that was paid for and never collected — these need a refund decision, which nothing automates yet.`,
++      );
++    }
++
++    return { orders: expired, redemptions: expiredRedemptions.length };
++  }
++}
+diff --git a/apps/api/src/jobs/jobs.config.ts b/apps/api/src/jobs/jobs.config.ts
+new file mode 100644
+index 0000000..337e363
+--- /dev/null
++++ b/apps/api/src/jobs/jobs.config.ts
+@@ -0,0 +1,44 @@
++/**
++ * Shared settings for the background jobs.
++ *
++ * MULTI-INSTANCE NOTE — read before scaling past one Railway instance.
++ * Every job below runs on every instance. That is safe today, but by
++ * construction rather than by luck:
++ *   - order transitions go through attempt_order_transition(), an
++ *     atomic compare-and-swap, so a second instance racing on the same
++ *     order loses rather than double-applying;
++ *   - notification sends are gated by notifications.idempotency_key,
++ *     which is UNIQUE;
++ *   - the stuck-order sweep only reads.
++ * The cost of two instances is duplicated queries and one wasted
++ * transition attempt, not a double send or a double transition. A
++ * proper advisory lock belongs here before the job list grows anything
++ * that is NOT individually idempotent.
++ */
++
++/**
++ * How long an order may sit mid-fulfilment before it is considered
++ * stuck. Fulfilment runs inside the Paystack webhook request and
++ * involves no slow external call for vouchers, so anything past a few
++ * minutes has failed rather than queued. Fifteen leaves room for a
++ * genuinely slow VTU provider later without crying wolf.
++ */
++export const STUCK_FULFILLMENT_MINUTES = 15;
++
++/** Batch ceilings — a sweep that falls behind should take several passes, not one unbounded query. */
++export const SCHEDULED_SEND_BATCH = 50;
++export const EXPIRY_BATCH = 200;
++export const STUCK_SCAN_BATCH = 100;
++export const RETRY_BATCH = 25;
++
++/**
++ * Set ENABLE_BACKGROUND_JOBS=false to stop every job from firing.
++ *
++ * This exists mainly so a developer running the API locally against the
++ * shared Supabase project does not quietly expire production orders or
++ * fire real WhatsApp messages from their laptop. Defaults to enabled,
++ * so deployments need no new configuration to behave correctly.
++ */
++export function backgroundJobsEnabled(raw: string | undefined): boolean {
++  return raw?.trim().toLowerCase() !== 'false';
++}
+diff --git a/apps/api/src/jobs/jobs.module.ts b/apps/api/src/jobs/jobs.module.ts
+new file mode 100644
+index 0000000..2df191b
+--- /dev/null
++++ b/apps/api/src/jobs/jobs.module.ts
+@@ -0,0 +1,34 @@
++import { Module } from '@nestjs/common';
++import { ScheduleModule } from '@nestjs/schedule';
++import { NotificationsModule } from '../notifications/notifications.module';
++import { OrdersModule } from '../orders/orders.module';
++import { RedemptionsModule } from '../redemptions/redemptions.module';
++import { ExpiryJob } from './expiry.job';
++import { NotificationRetryJob } from './notification-retry.job';
++import { ScheduledSendJob } from './scheduled-send.job';
++import { StuckOrderJob } from './stuck-order.job';
++
++/**
++ * Every recurring job in one module, rather than a @Cron scattered
++ * across whichever service happens to own the data. Two reasons: the
++ * full schedule is readable in one place, and nothing in the request
++ * path can accidentally acquire a timer by importing a service.
++ *
++ * Jobs depend on module services, never on repositories — same
++ * boundary every other consumer respects.
++ */
++@Module({
++  imports: [
++    // The scheduler lives HERE, not in AppModule. Without it the @Cron
++    // decorators below still compile, the app still boots, and not one
++    // job ever fires — a silent, total failure. Owning it here means
++    // importing JobsModule is enough, and no future edit to AppModule's
++    // import list can quietly switch every job off.
++    ScheduleModule.forRoot(),
++    OrdersModule,
++    NotificationsModule,
++    RedemptionsModule,
++  ],
++  providers: [ScheduledSendJob, ExpiryJob, StuckOrderJob, NotificationRetryJob],
++})
++export class JobsModule {}
+diff --git a/apps/api/src/jobs/jobs.spec.ts b/apps/api/src/jobs/jobs.spec.ts
+new file mode 100644
+index 0000000..6588bb9
+--- /dev/null
++++ b/apps/api/src/jobs/jobs.spec.ts
+@@ -0,0 +1,383 @@
++import { Test } from '@nestjs/testing';
++import { ConfigService } from '@nestjs/config';
++import { ScheduleModule, SchedulerRegistry } from '@nestjs/schedule';
++import { OrderStatus } from '@ebun/types';
++import { NotificationsService } from '../notifications/notifications.service';
++import { OrdersService } from '../orders/orders.service';
++import { RedemptionsService } from '../redemptions/redemptions.service';
++import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
++import { ExpiryJob } from './expiry.job';
++import { NotificationRetryJob } from './notification-retry.job';
++import { ScheduledSendJob } from './scheduled-send.job';
++import { StuckOrderJob } from './stuck-order.job';
++import { JobsModule } from './jobs.module';
++import { backgroundJobsEnabled } from './jobs.config';
++
++const order = (over: Record<string, unknown> = {}) => ({
++  id: 'order-1',
++  order_number: 'EBN-0014',
++  status: OrderStatus.VoucherIssued,
++  expires_at: new Date(Date.now() - 1000).toISOString(),
++  ...over,
++});
++
++const configOf = (value?: string) =>
++  ({ get: jest.fn().mockReturnValue(value) }) as unknown as ConfigService;
++
++describe('backgroundJobsEnabled', () => {
++  it('defaults to enabled when unset, so a deployment needs no new config', () => {
++    expect(backgroundJobsEnabled(undefined)).toBe(true);
++    expect(backgroundJobsEnabled('')).toBe(true);
++  });
++
++  it('is disabled only by an explicit false', () => {
++    expect(backgroundJobsEnabled('false')).toBe(false);
++    expect(backgroundJobsEnabled('FALSE')).toBe(false);
++    expect(backgroundJobsEnabled(' false ')).toBe(false);
++    expect(backgroundJobsEnabled('true')).toBe(true);
++    // Anything unrecognised stays enabled rather than silently
++    // switching the safety net off.
++    expect(backgroundJobsEnabled('no')).toBe(true);
++  });
++});
++
++describe('ScheduledSendJob', () => {
++  let sut: ScheduledSendJob;
++  let orders: Record<string, jest.Mock>;
++  let notifications: Record<string, jest.Mock>;
++
++  const build = async (config = configOf()) => {
++    orders = { findScheduledSendsDue: jest.fn().mockResolvedValue([]) };
++    notifications = {
++      sendGiftRevealLink: jest.fn().mockResolvedValue(undefined),
++    };
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        ScheduledSendJob,
++        { provide: OrdersService, useValue: orders },
++        { provide: NotificationsService, useValue: notifications },
++        { provide: ConfigService, useValue: config },
++      ],
++    }).compile();
++    sut = moduleRef.get(ScheduledSendJob);
++  };
++
++  it('sends every gift whose scheduled time has arrived', async () => {
++    await build();
++    orders.findScheduledSendsDue.mockResolvedValue([
++      order({ id: 'a' }),
++      order({ id: 'b' }),
++    ]);
++
++    const result = await sut.dispatchDue();
++
++    expect(notifications.sendGiftRevealLink).toHaveBeenCalledTimes(2);
++    expect(result).toEqual({ due: 2, failures: 0 });
++  });
++
++  it('keeps going when one gift fails to send', async () => {
++    await build();
++    orders.findScheduledSendsDue.mockResolvedValue([
++      order({ id: 'a' }),
++      order({ id: 'b' }),
++      order({ id: 'c' }),
++    ]);
++    notifications.sendGiftRevealLink
++      .mockResolvedValueOnce(undefined)
++      .mockRejectedValueOnce(new Error('termii down'))
++      .mockResolvedValueOnce(undefined);
++
++    const result = await sut.dispatchDue();
++
++    expect(notifications.sendGiftRevealLink).toHaveBeenCalledTimes(3);
++    expect(result).toEqual({ due: 3, failures: 1 });
++  });
++
++  it('does nothing when nothing is due', async () => {
++    await build();
++    const result = await sut.dispatchDue();
++    expect(notifications.sendGiftRevealLink).not.toHaveBeenCalled();
++    expect(result).toEqual({ due: 0, failures: 0 });
++  });
++
++  it('does not run at all when background jobs are switched off', async () => {
++    await build(configOf('false'));
++    await sut.run();
++    expect(orders.findScheduledSendsDue).not.toHaveBeenCalled();
++  });
++});
++
++describe('ExpiryJob', () => {
++  let sut: ExpiryJob;
++  let orders: Record<string, jest.Mock>;
++  let redemptions: Record<string, jest.Mock>;
++
++  const build = async (config = configOf()) => {
++    orders = {
++      findExpirable: jest.fn().mockResolvedValue([]),
++      transitionNormal: jest.fn().mockResolvedValue(undefined),
++    };
++    redemptions = { expireOverdue: jest.fn().mockResolvedValue([]) };
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        ExpiryJob,
++        { provide: OrdersService, useValue: orders },
++        { provide: RedemptionsService, useValue: redemptions },
++        { provide: ConfigService, useValue: config },
++      ],
++    }).compile();
++    sut = moduleRef.get(ExpiryJob);
++  };
++
++  it('expires each order through the state machine, not a batch update', async () => {
++    // Going through transitionNormal is the whole point: it is what
++    // writes the audit row that expire_unclaimed_gifts() skips.
++    await build();
++    orders.findExpirable.mockResolvedValue([
++      order({ id: 'a', status: OrderStatus.VoucherIssued }),
++      order({ id: 'b', status: OrderStatus.RevealOpened }),
++    ]);
++
++    const result = await sut.expireOverdue();
++
++    expect(orders.transitionNormal).toHaveBeenCalledWith(
++      'a',
++      OrderStatus.VoucherIssued,
++      OrderStatus.Expired,
++      { type: 'cron' },
++      expect.objectContaining({ expiredAt: expect.any(String) as unknown }),
++    );
++    expect(orders.transitionNormal).toHaveBeenCalledWith(
++      'b',
++      OrderStatus.RevealOpened,
++      OrderStatus.Expired,
++      { type: 'cron' },
++      expect.anything(),
++    );
++    expect(result.orders).toBe(2);
++  });
++
++  it('expires each order from its OWN current status, never a hardcoded one', async () => {
++    await build();
++    orders.findExpirable.mockResolvedValue([
++      order({ id: 'a', status: OrderStatus.ReadyForRedemption }),
++    ]);
++
++    await sut.expireOverdue();
++
++    const call = (orders.transitionNormal.mock.calls as unknown[][])[0];
++    expect(call[1]).toBe(OrderStatus.ReadyForRedemption);
++  });
++
++  it('treats a lost race as normal and carries on with the batch', async () => {
++    await build();
++    orders.findExpirable.mockResolvedValue([
++      order({ id: 'a' }),
++      order({ id: 'b' }),
++    ]);
++    orders.transitionNormal
++      .mockRejectedValueOnce(
++        new OrderTransitionConflictException(
++          'a',
++          OrderStatus.VoucherIssued,
++          OrderStatus.Expired,
++        ),
++      )
++      .mockResolvedValueOnce(undefined);
++
++    const result = await sut.expireOverdue();
++
++    expect(result.orders).toBe(1);
++  });
++
++  it('keeps going when one order cannot be expired for an unexpected reason', async () => {
++    await build();
++    orders.findExpirable.mockResolvedValue([
++      order({ id: 'a' }),
++      order({ id: 'b' }),
++    ]);
++    orders.transitionNormal
++      .mockRejectedValueOnce(new Error('database on fire'))
++      .mockResolvedValueOnce(undefined);
++
++    const result = await sut.expireOverdue();
++
++    expect(result.orders).toBe(1);
++    expect(redemptions.expireOverdue).toHaveBeenCalled();
++  });
++
++  it('expires overdue redemptions too', async () => {
++    await build();
++    redemptions.expireOverdue.mockResolvedValue(['r1', 'r2']);
++
++    const result = await sut.expireOverdue();
++
++    expect(result.redemptions).toBe(2);
++  });
++
++  it('does not run at all when background jobs are switched off', async () => {
++    await build(configOf('false'));
++    await sut.run();
++    expect(orders.findExpirable).not.toHaveBeenCalled();
++  });
++});
++
++describe('StuckOrderJob', () => {
++  let sut: StuckOrderJob;
++  let orders: Record<string, jest.Mock>;
++
++  const build = async (config = configOf()) => {
++    orders = { findStuckInFulfillment: jest.fn().mockResolvedValue([]) };
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        StuckOrderJob,
++        { provide: OrdersService, useValue: orders },
++        { provide: ConfigService, useValue: config },
++      ],
++    }).compile();
++    sut = moduleRef.get(StuckOrderJob);
++  };
++
++  it('reports stuck orders without changing any of them', async () => {
++    // Auto-transitioning would destroy the state a human needs to
++    // choose between re-running fulfilment and refunding.
++    await build();
++    orders.findStuckInFulfillment.mockResolvedValue([
++      order({ id: 'a', status: OrderStatus.Processing }),
++      order({ id: 'b', status: OrderStatus.FulfillmentInProgress }),
++    ]);
++
++    const result = await sut.detect();
++
++    expect(result).toEqual({ stuck: 2, orderIds: ['a', 'b'] });
++    // The only dependency it has is a read.
++    expect(Object.keys(orders)).toEqual(['findStuckInFulfillment']);
++  });
++
++  it('looks back from a cutoff in the past, not from now', async () => {
++    await build();
++    const before = Date.now();
++
++    await sut.detect();
++
++    const cutoff = (
++      orders.findStuckInFulfillment.mock.calls as unknown[][]
++    )[0][0] as Date;
++    expect(cutoff.getTime()).toBeLessThan(before);
++  });
++
++  it('is quiet when nothing is stuck', async () => {
++    await build();
++    const result = await sut.detect();
++    expect(result).toEqual({ stuck: 0, orderIds: [] });
++  });
++
++  it('does not run at all when background jobs are switched off', async () => {
++    await build(configOf('false'));
++    await sut.run();
++    expect(orders.findStuckInFulfillment).not.toHaveBeenCalled();
++  });
++});
++
++describe('NotificationRetryJob', () => {
++  let sut: NotificationRetryJob;
++  let notifications: Record<string, jest.Mock>;
++
++  const build = async (config = configOf()) => {
++    notifications = {
++      retryFailedSends: jest.fn().mockResolvedValue({
++        attempted: 0,
++        sent: 0,
++        rescheduled: 0,
++        exhausted: 0,
++      }),
++    };
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        NotificationRetryJob,
++        { provide: NotificationsService, useValue: notifications },
++        { provide: ConfigService, useValue: config },
++      ],
++    }).compile();
++    sut = moduleRef.get(NotificationRetryJob);
++  };
++
++  it('delegates to the service and returns its tally', async () => {
++    await build();
++    notifications.retryFailedSends.mockResolvedValue({
++      attempted: 3,
++      sent: 2,
++      rescheduled: 1,
++      exhausted: 0,
++    });
++
++    const result = await sut.retryDue();
++
++    expect(result.sent).toBe(2);
++  });
++
++  it('does not run at all when background jobs are switched off', async () => {
++    await build(configOf('false'));
++    await sut.run();
++    expect(notifications.retryFailedSends).not.toHaveBeenCalled();
++  });
++});
++
++describe('cron registration (real ScheduleModule)', () => {
++  /**
++   * The failure this guards against is silent and total: without
++   * ScheduleModule.forRoot() the @Cron decorators still compile, the
++   * app still boots, and not one job ever fires. No unit test of a job's
++   * body can catch that, so this boots the real scheduler and asks it
++   * what it actually registered.
++   */
++  it('registers all four jobs on the real scheduler', async () => {
++    const moduleRef = await Test.createTestingModule({
++      // The same forRoot JobsModule itself declares — asserted below to
++      // actually be in JobsModule's own imports, so this can't drift.
++      imports: [ScheduleModule.forRoot()],
++      providers: [
++        ScheduledSendJob,
++        ExpiryJob,
++        StuckOrderJob,
++        NotificationRetryJob,
++        { provide: OrdersService, useValue: {} },
++        { provide: NotificationsService, useValue: {} },
++        { provide: RedemptionsService, useValue: {} },
++        { provide: ConfigService, useValue: configOf('false') },
++      ],
++    }).compile();
++
++    const app = moduleRef.createNestApplication();
++    await app.init();
++
++    const registry = app.get(SchedulerRegistry);
++    const registered = [...registry.getCronJobs().keys()].sort();
++
++    expect(registered).toEqual([
++      'detect-stuck-orders',
++      'expire-unclaimed',
++      'retry-notifications',
++      'scheduled-send',
++    ]);
++
++    await app.close();
++  });
++
++  it('JobsModule brings its own scheduler, so importing it is enough', () => {
++    // Guards the other half of the silent failure: correct decorators
++    // with no ScheduleModule anywhere still means nothing ever runs.
++    const imports = (Reflect.getMetadata('imports', JobsModule) ??
++      []) as unknown[];
++
++    const bringsScheduler = imports.some(
++      (imported) =>
++        imported === ScheduleModule ||
++        (typeof imported === 'object' &&
++          imported !== null &&
++          (imported as { module?: unknown }).module === ScheduleModule),
++    );
++
++    expect(bringsScheduler).toBe(true);
++  });
++});
+diff --git a/apps/api/src/jobs/notification-retry.job.ts b/apps/api/src/jobs/notification-retry.job.ts
+new file mode 100644
+index 0000000..e8f4269
+--- /dev/null
++++ b/apps/api/src/jobs/notification-retry.job.ts
+@@ -0,0 +1,51 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { Cron, CronExpression } from '@nestjs/schedule';
++import { ConfigService } from '@nestjs/config';
++import { NotificationsService } from '../notifications/notifications.service';
++import { RETRY_BATCH, backgroundJobsEnabled } from './jobs.config';
++
++/**
++ * Retries WhatsApp sends that failed.
++ *
++ * The Brief's own failure table says "WhatsApp notification fails →
++ * background worker retries 3× with exponential backoff", and the
++ * notifications table was built for it (retry_count, max_retries,
++ * next_retry_at, and payload kept "for audit/retry"). None of it ran:
++ * a failed send was marked failed and forgotten, so a single Termii
++ * blip meant a recipient silently never heard about their gift.
++ *
++ * The live send path still never retries inline — a webhook request is
++ * the wrong place to sit waiting on a flaky provider — so failures are
++ * recorded there and picked up here five minutes later.
++ */
++@Injectable()
++export class NotificationRetryJob {
++  private readonly logger = new Logger(NotificationRetryJob.name);
++
++  constructor(
++    private readonly notifications: NotificationsService,
++    private readonly config: ConfigService,
++  ) {}
++
++  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'retry-notifications' })
++  async run(): Promise<void> {
++    if (
++      !backgroundJobsEnabled(this.config.get<string>('ENABLE_BACKGROUND_JOBS'))
++    ) {
++      return;
++    }
++    await this.retryDue();
++  }
++
++  async retryDue() {
++    const result = await this.notifications.retryFailedSends(RETRY_BATCH);
++
++    if (result.attempted > 0) {
++      this.logger.log(
++        `Notification retries: ${result.attempted} due, ${result.sent} sent, ${result.rescheduled} rescheduled, ${result.exhausted} gave up.`,
++      );
++    }
++
++    return result;
++  }
++}
+diff --git a/apps/api/src/jobs/scheduled-send.job.ts b/apps/api/src/jobs/scheduled-send.job.ts
+new file mode 100644
+index 0000000..50912a6
+--- /dev/null
++++ b/apps/api/src/jobs/scheduled-send.job.ts
+@@ -0,0 +1,72 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { Cron, CronExpression } from '@nestjs/schedule';
++import { ConfigService } from '@nestjs/config';
++import { NotificationsService } from '../notifications/notifications.service';
++import { OrdersService } from '../orders/orders.service';
++import { SCHEDULED_SEND_BATCH, backgroundJobsEnabled } from './jobs.config';
++
++/**
++ * Sends the gifts a sender asked to be delivered later.
++ *
++ * THIS JOB CLOSES A HOLE THAT WAS TAKING REAL MONEY. /send offers
++ * "schedule for later"; payment was captured and the voucher issued,
++ * and then NotificationsService saw a future scheduled_send_at, logged
++ * that it needed a scheduler, and returned. Nothing existed to pick it
++ * up, so a scheduled gift was paid for and never delivered. Everything
++ * else in this module is hardening; this part is a bug fix.
++ *
++ * Every five minutes, because the granularity a sender picks is a
++ * date and a time of day, not a second — five minutes of drift on
++ * "Saturday morning" is invisible, and polling more often buys nothing.
++ */
++@Injectable()
++export class ScheduledSendJob {
++  private readonly logger = new Logger(ScheduledSendJob.name);
++
++  constructor(
++    private readonly orders: OrdersService,
++    private readonly notifications: NotificationsService,
++    private readonly config: ConfigService,
++  ) {}
++
++  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'scheduled-send' })
++  async run(): Promise<void> {
++    if (
++      !backgroundJobsEnabled(this.config.get<string>('ENABLE_BACKGROUND_JOBS'))
++    ) {
++      return;
++    }
++    await this.dispatchDue();
++  }
++
++  /** Separated from the @Cron wrapper so it can be called and asserted on directly. */
++  async dispatchDue(): Promise<{ due: number; failures: number }> {
++    const due = await this.orders.findScheduledSendsDue(SCHEDULED_SEND_BATCH);
++    if (due.length === 0) {
++      return { due: 0, failures: 0 };
++    }
++
++    this.logger.log(`${due.length} scheduled gift(s) due to be sent.`);
++    let failures = 0;
++
++    for (const order of due) {
++      try {
++        // sendGiftRevealLink re-checks scheduled_send_at itself and is
++        // guarded by a UNIQUE idempotency key, so calling it here is
++        // safe even if two instances pick up the same order at once.
++        // A send that fails is recorded as a failed notification and
++        // becomes the retry job's problem, not this one's.
++        await this.notifications.sendGiftRevealLink(order);
++      } catch (err) {
++        // One unsendable gift must not abandon the rest of the batch.
++        failures += 1;
++        this.logger.error(
++          `Order ${order.id}: scheduled send failed unexpectedly.`,
++          err instanceof Error ? err.stack : err,
++        );
++      }
++    }
++
++    return { due: due.length, failures };
++  }
++}
+diff --git a/apps/api/src/jobs/stuck-order.job.ts b/apps/api/src/jobs/stuck-order.job.ts
+new file mode 100644
+index 0000000..3b66bcf
+--- /dev/null
++++ b/apps/api/src/jobs/stuck-order.job.ts
+@@ -0,0 +1,77 @@
++import { Injectable, Logger } from '@nestjs/common';
++import { Cron, CronExpression } from '@nestjs/schedule';
++import { ConfigService } from '@nestjs/config';
++import { OrdersService } from '../orders/orders.service';
++import {
++  STUCK_FULFILLMENT_MINUTES,
++  STUCK_SCAN_BATCH,
++  backgroundJobsEnabled,
++} from './jobs.config';
++
++/**
++ * Finds paid orders that entered fulfilment and never came out.
++ *
++ * How they get stuck: fulfilment runs synchronously inside the Paystack
++ * webhook request, and that webhook's idempotency key is claimed BEFORE
++ * fulfilment starts. If fulfilment throws partway, a Paystack
++ * redelivery short-circuits on the claimed key and never retries — the
++ * order sits at processing or fulfillment_in_progress forever. The
++ * money is taken and the recipient has nothing.
++ *
++ * DELIBERATELY READ-ONLY. It would be easy to auto-transition these to
++ * fulfillment_failed, and wrong: the two reasonable responses are
++ * "retry the fulfilment" and "refund the sender", and which one applies
++ * depends on why it failed. Marking it failed automatically would
++ * destroy the state a human needs to decide, and would make a refundable
++ * order look resolved. So this reports and leaves the order alone.
++ *
++ * No audit_events row either: nothing changed state, and audit_events is
++ * the log of transitions, not of observations. The signal belongs in
++ * logs and, once it exists, in the ops dashboard.
++ *
++ * Every fifteen minutes. Until alerting exists, this log line is the
++ * only way anyone finds out — so it is written at error level, with the
++ * order numbers spelled out, for exactly that reason.
++ */
++@Injectable()
++export class StuckOrderJob {
++  private readonly logger = new Logger(StuckOrderJob.name);
++
++  constructor(
++    private readonly orders: OrdersService,
++    private readonly config: ConfigService,
++  ) {}
++
++  @Cron(CronExpression.EVERY_30_MINUTES, { name: 'detect-stuck-orders' })
++  async run(): Promise<void> {
++    if (
++      !backgroundJobsEnabled(this.config.get<string>('ENABLE_BACKGROUND_JOBS'))
++    ) {
++      return;
++    }
++    await this.detect();
++  }
++
++  async detect(): Promise<{ stuck: number; orderIds: string[] }> {
++    const cutoff = new Date(Date.now() - STUCK_FULFILLMENT_MINUTES * 60_000);
++    const stuck = await this.orders.findStuckInFulfillment(
++      cutoff,
++      STUCK_SCAN_BATCH,
++    );
++
++    if (stuck.length === 0) {
++      return { stuck: 0, orderIds: [] };
++    }
++
++    const described = stuck
++      .map((order) => `${order.order_number ?? order.id} (${order.status})`)
++      .join(', ');
++
++    this.logger.error(
++      `${stuck.length} paid order(s) have been stuck in fulfilment for over ${STUCK_FULFILLMENT_MINUTES} minutes and will NOT retry on their own: ${described}. ` +
++        `Each one is money taken with nothing delivered — decide per order between re-running fulfilment and refunding.`,
++    );
++
++    return { stuck: stuck.length, orderIds: stuck.map((order) => order.id) };
++  }
++}
+diff --git a/apps/api/src/notifications/notification-retry.spec.ts b/apps/api/src/notifications/notification-retry.spec.ts
+new file mode 100644
+index 0000000..c1d3bf8
+--- /dev/null
++++ b/apps/api/src/notifications/notification-retry.spec.ts
+@@ -0,0 +1,186 @@
++import { Test } from '@nestjs/testing';
++import { ConfigService } from '@nestjs/config';
++import { NotificationStatus } from '@ebun/types';
++import { NotificationsService } from './notifications.service';
++import { NotificationsRepository } from './notifications.repository';
++import { OrdersService } from '../orders/orders.service';
++import { TermiiWhatsappClientService } from '../termii/termii-whatsapp-client.service';
++
++const retryable = (over: Record<string, unknown> = {}) => ({
++  id: 'notif-1',
++  order_id: 'order-1',
++  status: NotificationStatus.Failed,
++  idempotency_key: 'gift_reveal_link:order-1',
++  recipient_phone: '+2348012345678',
++  payload: {
++    data: { '1': 'John', '2': 'https://app.ebun.ng/reveal/tok' },
++    revealUrl: 'https://app.ebun.ng/reveal/tok',
++  },
++  retry_count: 0,
++  max_retries: 3,
++  ...over,
++});
++
++describe('NotificationsService.retryFailedSends', () => {
++  let sut: NotificationsService;
++  let repository: Record<string, jest.Mock>;
++  let termii: { sendTemplateMessage: jest.Mock };
++  let orders: Record<string, jest.Mock>;
++
++  beforeEach(async () => {
++    repository = {
++      findRetryable: jest.fn().mockResolvedValue([]),
++      markSent: jest.fn().mockResolvedValue(undefined),
++      scheduleRetry: jest.fn().mockResolvedValue(undefined),
++      markExhausted: jest.fn().mockResolvedValue(undefined),
++    };
++    termii = {
++      sendTemplateMessage: jest
++        .fn()
++        .mockResolvedValue({ providerMessageId: 'tm-1' }),
++    };
++    orders = { recordRevealSent: jest.fn().mockResolvedValue(undefined) };
++
++    const moduleRef = await Test.createTestingModule({
++      providers: [
++        NotificationsService,
++        { provide: NotificationsRepository, useValue: repository },
++        { provide: TermiiWhatsappClientService, useValue: termii },
++        { provide: OrdersService, useValue: orders },
++        {
++          provide: ConfigService,
++          useValue: { get: jest.fn(), getOrThrow: jest.fn() },
++        },
++      ],
++    }).compile();
++
++    sut = moduleRef.get(NotificationsService);
++  });
++
++  it('re-sends the stored payload, not a freshly rebuilt message', async () => {
++    // A retry that quietly composes a different message is not a retry.
++    repository.findRetryable.mockResolvedValue([retryable()]);
++
++    await sut.retryFailedSends();
++
++    expect(termii.sendTemplateMessage).toHaveBeenCalledWith({
++      phoneNumber: '+2348012345678',
++      data: { '1': 'John', '2': 'https://app.ebun.ng/reveal/tok' },
++    });
++  });
++
++  it('marks the notification sent and records the link on the order', async () => {
++    repository.findRetryable.mockResolvedValue([retryable()]);
++
++    const result = await sut.retryFailedSends();
++
++    expect(repository.markSent).toHaveBeenCalledWith('notif-1', 'tm-1');
++    // recordRevealSent is what stops the scheduled-send sweep picking
++    // this order up again.
++    expect(orders.recordRevealSent).toHaveBeenCalledWith(
++      'order-1',
++      'https://app.ebun.ng/reveal/tok',
++    );
++    expect(result).toEqual({
++      attempted: 1,
++      sent: 1,
++      rescheduled: 0,
++      exhausted: 0,
++    });
++  });
++
++  it('schedules the next attempt with growing backoff when a send fails', async () => {
++    repository.findRetryable.mockResolvedValue([retryable({ retry_count: 0 })]);
++    termii.sendTemplateMessage.mockRejectedValue(new Error('provider 503'));
++    const before = Date.now();
++
++    const result = await sut.retryFailedSends();
++
++    expect(repository.scheduleRetry).toHaveBeenCalled();
++    const [id, attempt, nextAt, message] = (
++      repository.scheduleRetry.mock.calls as unknown[][]
++    )[0] as [string, number, Date, string];
++    expect(id).toBe('notif-1');
++    expect(attempt).toBe(1);
++    expect(nextAt.getTime()).toBeGreaterThan(before);
++    expect(message).toContain('provider 503');
++    expect(result.rescheduled).toBe(1);
++  });
++
++  it('backs off further on each successive attempt', async () => {
++    repository.findRetryable.mockResolvedValue([retryable({ retry_count: 1 })]);
++    termii.sendTemplateMessage.mockRejectedValue(new Error('still down'));
++
++    await sut.retryFailedSends();
++
++    const [, , secondAttemptAt] = (
++      repository.scheduleRetry.mock.calls as unknown[][]
++    )[0] as [string, number, Date, string];
++    // Second attempt waits materially longer than the first (~25 min vs ~5).
++    expect(secondAttemptAt.getTime() - Date.now()).toBeGreaterThan(20 * 60_000);
++  });
++
++  it('gives up loudly on the final attempt instead of retrying forever', async () => {
++    repository.findRetryable.mockResolvedValue([
++      retryable({ retry_count: 2, max_retries: 3 }),
++    ]);
++    termii.sendTemplateMessage.mockRejectedValue(new Error('gone'));
++
++    const result = await sut.retryFailedSends();
++
++    expect(repository.markExhausted).toHaveBeenCalledWith('notif-1', 3, 'gone');
++    expect(repository.scheduleRetry).not.toHaveBeenCalled();
++    expect(result.exhausted).toBe(1);
++  });
++
++  it('gives up immediately on a row it could never re-send', async () => {
++    repository.findRetryable.mockResolvedValue([
++      retryable({ payload: null }),
++      retryable({ id: 'notif-2', recipient_phone: null }),
++    ]);
++
++    const result = await sut.retryFailedSends();
++
++    expect(termii.sendTemplateMessage).not.toHaveBeenCalled();
++    expect(repository.markExhausted).toHaveBeenCalledTimes(2);
++    expect(result.exhausted).toBe(2);
++  });
++
++  it('does not touch the order when a retry has no reveal url to record', async () => {
++    repository.findRetryable.mockResolvedValue([
++      retryable({ payload: { data: { '1': 'John' } } }),
++    ]);
++
++    await sut.retryFailedSends();
++
++    expect(repository.markSent).toHaveBeenCalled();
++    expect(orders.recordRevealSent).not.toHaveBeenCalled();
++  });
++
++  it('keeps processing the batch after one row fails', async () => {
++    repository.findRetryable.mockResolvedValue([
++      retryable({ id: 'a' }),
++      retryable({ id: 'b' }),
++      retryable({ id: 'c' }),
++    ]);
++    termii.sendTemplateMessage
++      .mockResolvedValueOnce({ providerMessageId: 'tm-a' })
++      .mockRejectedValueOnce(new Error('blip'))
++      .mockResolvedValueOnce({ providerMessageId: 'tm-c' });
++
++    const result = await sut.retryFailedSends();
++
++    expect(result).toEqual({
++      attempted: 3,
++      sent: 2,
++      rescheduled: 1,
++      exhausted: 0,
++    });
++  });
++
++  it('does nothing when nothing is due', async () => {
++    const result = await sut.retryFailedSends();
++    expect(termii.sendTemplateMessage).not.toHaveBeenCalled();
++    expect(result.attempted).toBe(0);
++  });
++});
+diff --git a/apps/api/src/notifications/notifications.repository.ts b/apps/api/src/notifications/notifications.repository.ts
+index 375e72b..1799111 100644
+--- a/apps/api/src/notifications/notifications.repository.ts
++++ b/apps/api/src/notifications/notifications.repository.ts
+@@ -11,6 +11,14 @@ export interface NotificationRow {
+   [key: string]: unknown;
+ }
+ 
++/** A failed send that still has attempts left, with everything needed to re-send it. */
++export interface RetryableNotificationRow extends NotificationRow {
++  recipient_phone: string | null;
++  payload: { data?: Record<string, string>; revealUrl?: string } | null;
++  retry_count: number;
++  max_retries: number;
++}
++
+ export interface CreatePendingNotificationParams {
+   orderId: string;
+   recipientPhone: string;
+@@ -113,4 +121,92 @@ export class NotificationsRepository {
+       throw error;
+     }
+   }
++
++  /**
++   * Failed sends that are due another attempt.
++   *
++   * The schema designed for exactly this: "Background job polls for
++   * status=pending OR status=retrying where next_retry_at < now()".
++   * `failed` is included too, because markFailed is what the live send
++   * path writes on its first failure — without it, every notification
++   * would get its initial attempt and no retry at all.
++   *
++   * A null next_retry_at means "never scheduled", which is true of a
++   * first failure, so those are due immediately.
++   */
++  async findRetryable(limit: number): Promise<RetryableNotificationRow[]> {
++    const response = (await this.supabase
++      .from('notifications')
++      .select()
++      .in('status', [
++        NotificationStatus.Failed,
++        NotificationStatus.Retrying,
++        NotificationStatus.Pending,
++      ])
++      .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
++      .order('created_at', { ascending: true })
++      .limit(limit)) as {
++      data: RetryableNotificationRow[] | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++
++    // max_retries is per-row in the schema (default 3), so the ceiling
++    // is read from the row rather than assumed here.
++    return (response.data ?? []).filter(
++      (row) => row.retry_count < row.max_retries,
++    );
++  }
++
++  /**
++   * Records a failed attempt and when to try again. Kept separate from
++   * markFailed, which is the live send path's "this attempt failed"
++   * and deliberately says nothing about retrying.
++   */
++  async scheduleRetry(
++    id: string,
++    attempt: number,
++    nextRetryAt: Date,
++    errorMessage: string,
++  ): Promise<void> {
++    const { error } = await this.supabase
++      .from('notifications')
++      .update({
++        status: NotificationStatus.Retrying,
++        retry_count: attempt,
++        next_retry_at: nextRetryAt.toISOString(),
++        error_message: errorMessage,
++        failed_at: new Date().toISOString(),
++      })
++      .eq('id', id);
++
++    if (error) {
++      throw error;
++    }
++  }
++
++  /** Terminal give-up: attempts exhausted, no further retry scheduled. */
++  async markExhausted(
++    id: string,
++    attempt: number,
++    errorMessage: string,
++  ): Promise<void> {
++    const { error } = await this.supabase
++      .from('notifications')
++      .update({
++        status: NotificationStatus.Failed,
++        retry_count: attempt,
++        next_retry_at: null,
++        error_message: errorMessage,
++        failed_at: new Date().toISOString(),
++      })
++      .eq('id', id);
++
++    if (error) {
++      throw error;
++    }
++  }
+ }
+diff --git a/apps/api/src/notifications/notifications.service.ts b/apps/api/src/notifications/notifications.service.ts
+index 6fd48d3..2aeb410 100644
+--- a/apps/api/src/notifications/notifications.service.ts
++++ b/apps/api/src/notifications/notifications.service.ts
+@@ -114,4 +114,111 @@ export class NotificationsService {
+       // Not rethrown — see this method's doc comment.
+     }
+   }
++
++  /**
++   * Re-sends notifications whose first attempt failed, with the
++   * exponential backoff the Brief specifies (3 attempts). Called by the
++   * retry job, never by the live send path.
++   *
++   * Re-sends from the stored `payload` rather than rebuilding it from
++   * the order: the payload is what was actually composed at send time,
++   * and a retry that quietly changes the message is not a retry. It is
++   * also why payload is persisted at all — the schema calls it "full
++   * message payload for audit/retry".
++   *
++   * Returns a per-row outcome rather than throwing, so one unsendable
++   * notification can't stop the rest of the batch.
++   */
++  async retryFailedSends(limit = 25): Promise<{
++    attempted: number;
++    sent: number;
++    rescheduled: number;
++    exhausted: number;
++  }> {
++    const due = await this.repository.findRetryable(limit);
++    let sent = 0;
++    let rescheduled = 0;
++    let exhausted = 0;
++
++    for (const row of due) {
++      const attempt = row.retry_count + 1;
++      const templateData = row.payload?.data;
++      const phone = row.recipient_phone;
++
++      if (!phone || !templateData) {
++        // Nothing to re-send from. Giving up loudly beats retrying an
++        // empty message every five minutes until the attempts run out.
++        await this.repository.markExhausted(
++          row.id,
++          attempt,
++          'Notification cannot be retried: missing recipient phone or payload data.',
++        );
++        exhausted += 1;
++        this.logger.error(
++          `Notification ${row.id} (order ${row.order_id ?? 'unknown'}) cannot be retried — no phone or payload. Giving up.`,
++        );
++        continue;
++      }
++
++      try {
++        const result = await this.termii.sendTemplateMessage({
++          phoneNumber: phone,
++          data: templateData,
++        });
++        await this.repository.markSent(row.id, result.providerMessageId);
++
++        // The order only learns its link went out on a successful send,
++        // which is also what keeps the scheduled-send sweep from
++        // picking this order up again.
++        if (row.order_id && row.payload?.revealUrl) {
++          await this.ordersService.recordRevealSent(
++            row.order_id,
++            row.payload.revealUrl,
++          );
++        }
++
++        sent += 1;
++        this.logger.log(
++          `Notification ${row.id} sent on retry ${attempt} of ${row.max_retries}.`,
++        );
++      } catch (err) {
++        const message = err instanceof Error ? err.message : String(err);
++
++        if (attempt >= row.max_retries) {
++          await this.repository.markExhausted(row.id, attempt, message);
++          exhausted += 1;
++          this.logger.error(
++            `Notification ${row.id} (order ${row.order_id ?? 'unknown'}) failed on its final attempt (${attempt}/${row.max_retries}): ${message}. ` +
++              `The recipient has NOT been told about their gift — the sender's copy-link fallback is the only remaining route.`,
++          );
++          continue;
++        }
++
++        await this.repository.scheduleRetry(
++          row.id,
++          attempt,
++          nextRetryAt(attempt),
++          message,
++        );
++        rescheduled += 1;
++        this.logger.warn(
++          `Notification ${row.id} failed attempt ${attempt}; retrying later: ${message}`,
++        );
++      }
++    }
++
++    return { attempted: due.length, sent, rescheduled, exhausted };
++  }
++}
++
++/**
++ * Exponential backoff: roughly 5 minutes, then 25, then 125. Spaced
++ * this way because the failure being waited out is usually a provider
++ * outage or a rate limit, where hammering every minute neither helps
++ * nor is forgiven — and because a gift is not a password reset, so
++ * minutes of delay cost nothing.
++ */
++function nextRetryAt(attempt: number): Date {
++  const minutes = 5 ** attempt;
++  return new Date(Date.now() + minutes * 60_000);
+ }
+diff --git a/apps/api/src/orders/order-confirmation.ts b/apps/api/src/orders/order-confirmation.ts
+index 24e1d5b..ad5efb8 100644
+--- a/apps/api/src/orders/order-confirmation.ts
++++ b/apps/api/src/orders/order-confirmation.ts
+@@ -24,6 +24,12 @@ export interface OrderConfirmationView {
+    * the gift themselves instead of a dead end.
+    */
+   revealUrl: string | null;
++  /**
++   * Set when the sender chose to send the gift later. The confirmation
++   * screen uses it to say when it goes out, and it is also why
++   * revealUrl is withheld until then.
++   */
++  scheduledSendAt: string | null;
+ }
+ 
+ const AWAITING_PAYMENT = new Set<OrderStatus>([
+diff --git a/apps/api/src/orders/orders.repository.ts b/apps/api/src/orders/orders.repository.ts
+index f3492b9..3486ab6 100644
+--- a/apps/api/src/orders/orders.repository.ts
++++ b/apps/api/src/orders/orders.repository.ts
+@@ -198,16 +198,26 @@ export class OrdersRepository {
+     reference: string,
+   ): Promise<Pick<
+     OrderRow,
+-    'status' | 'order_number' | 'recipient_name' | 'reveal_token'
++    | 'status'
++    | 'order_number'
++    | 'recipient_name'
++    | 'reveal_token'
++    | 'scheduled_send_at'
+   > | null> {
+     const response = (await this.supabase
+       .from('orders')
+-      .select('status, order_number, recipient_name, reveal_token')
++      .select(
++        'status, order_number, recipient_name, reveal_token, scheduled_send_at',
++      )
+       .eq('paystack_reference', reference)
+       .maybeSingle()) as {
+       data: Pick<
+         OrderRow,
+-        'status' | 'order_number' | 'recipient_name' | 'reveal_token'
++        | 'status'
++        | 'order_number'
++        | 'recipient_name'
++        | 'reveal_token'
++        | 'scheduled_send_at'
+       > | null;
+       error: PostgrestError | null;
+     };
+@@ -283,4 +293,98 @@ export class OrdersRepository {
+ 
+     return response.data;
+   }
++
++  /**
++   * Orders whose scheduled send time has arrived but whose reveal link
++   * has not gone out yet (reveal_url is only written once a send
++   * actually succeeds — see recordRevealSent).
++   *
++   * Status filter matters: a scheduled order is fulfilled immediately
++   * on payment, and only the recipient-visible notification is held
++   * back, so by the time this runs the order sits in one of the
++   * delivered-and-waiting states. An order still mid-fulfilment is not
++   * this job's problem; it is the stuck-order sweep's.
++   */
++  async findScheduledSendsDue(limit: number): Promise<OrderRow[]> {
++    const response = (await this.supabase
++      .from('orders')
++      .select()
++      .in('status', [OrderStatus.VoucherIssued, OrderStatus.ReadyForRedemption])
++      .not('scheduled_send_at', 'is', null)
++      .lte('scheduled_send_at', new Date().toISOString())
++      .is('reveal_url', null)
++      .order('scheduled_send_at', { ascending: true })
++      .limit(limit)) as {
++      data: OrderRow[] | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++    return response.data ?? [];
++  }
++
++  /**
++   * Orders past expires_at that are still waiting to be collected.
++   *
++   * The same three statuses expire_unclaimed_gifts() targets — but this
++   * returns them for the caller to transition one at a time through the
++   * state machine, rather than letting that function batch-UPDATE them.
++   * That function writes no audit row for an order, and "every
++   * significant state transition is logged" is not a rule worth
++   * breaking for a faster sweep.
++   */
++  async findExpirable(limit: number): Promise<OrderRow[]> {
++    const response = (await this.supabase
++      .from('orders')
++      .select()
++      .in('status', [
++        OrderStatus.VoucherIssued,
++        OrderStatus.ReadyForRedemption,
++        OrderStatus.RevealOpened,
++      ])
++      .lt('expires_at', new Date().toISOString())
++      .order('expires_at', { ascending: true })
++      .limit(limit)) as {
++      data: OrderRow[] | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++    return response.data ?? [];
++  }
++
++  /**
++   * Orders that entered fulfilment and never came out of it.
++   *
++   * Fulfilment runs synchronously inside the Paystack webhook request,
++   * and the webhook's idempotency key is claimed before it starts — so
++   * if it throws partway, a redelivery will never retry it and the
++   * order sits here forever. Detection is deliberately read-only: what
++   * a half-fulfilled order needs is a human deciding between retry and
++   * refund, not an automatic transition guessing on their behalf.
++   */
++  async findStuckInFulfillment(
++    olderThan: Date,
++    limit: number,
++  ): Promise<OrderRow[]> {
++    const response = (await this.supabase
++      .from('orders')
++      .select()
++      .in('status', [OrderStatus.Processing, OrderStatus.FulfillmentInProgress])
++      .lt('updated_at', olderThan.toISOString())
++      .order('updated_at', { ascending: true })
++      .limit(limit)) as {
++      data: OrderRow[] | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++    return response.data ?? [];
++  }
+ }
+diff --git a/apps/api/src/orders/orders.service.spec.ts b/apps/api/src/orders/orders.service.spec.ts
+index 8de6a98..03b9f07 100644
+--- a/apps/api/src/orders/orders.service.spec.ts
++++ b/apps/api/src/orders/orders.service.spec.ts
+@@ -163,6 +163,7 @@ describe('OrdersService', () => {
+         orderNumber: 'EBN-0042',
+         recipientName: 'Ada',
+         revealUrl: 'https://ebun.example/reveal/token-abc',
++        scheduledSendAt: null,
+       });
+     });
+ 
+@@ -211,9 +212,52 @@ describe('OrdersService', () => {
+         'orderNumber',
+         'recipientName',
+         'revealUrl',
++        'scheduledSendAt',
+         'status',
+       ]);
+       expect(result.status).toBe('confirmed');
+     });
++
++    it('withholds the reveal link while a scheduled gift is still embargoed', () => {
++      // The link IS the gift. Handing it to the sender the moment they
++      // pay lets them spoil a surprise they deliberately dated for
++      // later.
++      const sendAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
++      repository.findConfirmationByPaystackReference.mockResolvedValue({
++        status: OrderStatus.VoucherIssued,
++        order_number: 'EBN-0045',
++        recipient_name: 'Tunde',
++        reveal_token: 'token-jkl',
++        scheduled_send_at: sendAt.toISOString(),
++      });
++
++      return sut
++        .getConfirmation('ebun_ref_4', 'https://ebun.example')
++        .then((result) => {
++          expect(result.status).toBe('confirmed');
++          expect(result.revealUrl).toBeNull();
++          expect(result.scheduledSendAt).toBe(sendAt.toISOString());
++        });
++    });
++
++    it('releases the reveal link once the scheduled time has passed', async () => {
++      const sendAt = new Date(Date.now() - 60_000);
++      repository.findConfirmationByPaystackReference.mockResolvedValue({
++        status: OrderStatus.VoucherIssued,
++        order_number: 'EBN-0046',
++        recipient_name: 'Tunde',
++        reveal_token: 'token-mno',
++        scheduled_send_at: sendAt.toISOString(),
++      });
++
++      const result = await sut.getConfirmation(
++        'ebun_ref_5',
++        'https://ebun.example',
++      );
++
++      // Past the date it reverts to its real purpose: the sender's
++      // fallback if the WhatsApp message never lands.
++      expect(result.revealUrl).toBe('https://ebun.example/reveal/token-mno');
++    });
+   });
+ });
+diff --git a/apps/api/src/orders/orders.service.ts b/apps/api/src/orders/orders.service.ts
+index 5ab64a6..33b2d0a 100644
+--- a/apps/api/src/orders/orders.service.ts
++++ b/apps/api/src/orders/orders.service.ts
+@@ -80,12 +80,24 @@ export class OrdersService {
+ 
+     const status = toConfirmationStatus(order.status);
+ 
++    // A gift the sender scheduled for later must not hand them the
++    // link the moment they pay. The link is the gift: give it to them
++    // now and the surprise is theirs to spoil, and the whole point of
++    // choosing a date is gone. Held back until that date passes, after
++    // which it resumes its real job — the fallback route if the
++    // recipient's WhatsApp message never arrives.
++    const scheduledFor = order.scheduled_send_at
++      ? new Date(order.scheduled_send_at)
++      : null;
++    const stillEmbargoed = scheduledFor !== null && scheduledFor > new Date();
++
+     return {
+       status,
+       orderNumber: order.order_number,
+       recipientName: order.recipient_name,
++      scheduledSendAt: scheduledFor ? scheduledFor.toISOString() : null,
+       revealUrl:
+-        status === 'confirmed'
++        status === 'confirmed' && !stillEmbargoed
+           ? `${webAppBaseUrl}/reveal/${order.reveal_token}`
+           : null,
+     };
+@@ -138,4 +150,17 @@ export class OrdersService {
+ 
+     return result;
+   }
++
++  /** Read-only sweeps for the background jobs — see OrdersRepository for why each filter is what it is. */
++  async findScheduledSendsDue(limit = 50) {
++    return this.ordersRepository.findScheduledSendsDue(limit);
++  }
++
++  async findExpirable(limit = 200) {
++    return this.ordersRepository.findExpirable(limit);
++  }
++
++  async findStuckInFulfillment(olderThan: Date, limit = 100) {
++    return this.ordersRepository.findStuckInFulfillment(olderThan, limit);
++  }
+ }
+diff --git a/apps/api/src/redemptions/redemptions.repository.ts b/apps/api/src/redemptions/redemptions.repository.ts
+index 5cb6185..a7c6ff1 100644
+--- a/apps/api/src/redemptions/redemptions.repository.ts
++++ b/apps/api/src/redemptions/redemptions.repository.ts
+@@ -199,4 +199,35 @@ export class RedemptionsRepository {
+ 
+     return response.data;
+   }
++
++  /**
++   * Expires redemptions whose window has passed, mirroring the
++   * redemptions half of expire_unclaimed_gifts().
++   *
++   * Batched rather than row-by-row, unlike orders: redemptions have no
++   * state machine and no audit contract of their own — their status is
++   * guarded by attempt_redemption() for the one transition that
++   * matters (completion), and expiry is bookkeeping on rows nobody can
++   * complete any more. Returns the ids it changed so the caller can log
++   * precisely what moved.
++   */
++  async expireOverdue(): Promise<string[]> {
++    const response = (await this.supabase
++      .from('redemptions')
++      .update({
++        status: RedemptionStatus.Expired,
++        updated_at: new Date().toISOString(),
++      })
++      .in('status', [RedemptionStatus.Pending, RedemptionStatus.Initiated])
++      .lt('expires_at', new Date().toISOString())
++      .select('id')) as {
++      data: { id: string }[] | null;
++      error: PostgrestError | null;
++    };
++
++    if (response.error) {
++      throw response.error;
++    }
++    return (response.data ?? []).map((row) => row.id);
++  }
+ }
+diff --git a/apps/api/src/redemptions/redemptions.service.ts b/apps/api/src/redemptions/redemptions.service.ts
+index 9baa3e4..53142a7 100644
+--- a/apps/api/src/redemptions/redemptions.service.ts
++++ b/apps/api/src/redemptions/redemptions.service.ts
+@@ -75,6 +75,11 @@ export class RedemptionsService {
+     return this.repository.createPendingOrFetch(orderId, orderExpiresAt);
+   }
+ 
++  /** Called by the daily expiry sweep. Returns the ids it expired. */
++  async expireOverdue(): Promise<string[]> {
++    return this.repository.expireOverdue();
++  }
++
+   /**
+    * Looks a code up for ops, without changing anything.
+    *
+diff --git a/apps/web/src/app/(consumer)/send/confirmation/confirmation-experience.tsx b/apps/web/src/app/(consumer)/send/confirmation/confirmation-experience.tsx
+index 9cfa14f..ac13768 100644
+--- a/apps/web/src/app/(consumer)/send/confirmation/confirmation-experience.tsx
++++ b/apps/web/src/app/(consumer)/send/confirmation/confirmation-experience.tsx
+@@ -98,7 +98,7 @@ export function ConfirmationExperience({ reference }: { reference: string | null
+             <Centered
+               mark={<ConfirmedRing />}
+               title="Payment received."
+-              body={`${state.data.recipientName} will get a WhatsApp message with a link to open your gift.`}
++              body={deliveryPromise(state.data)}
+             />
+             <Receipt data={state.data} />
+             {state.data.revealUrl && <RevealLinkFallback url={state.data.revealUrl} />}
+@@ -243,6 +243,25 @@ function RevealLinkFallback({ url }: { url: string }) {
+   );
+ }
+ 
++/**
++ * What the sender is told happens next. A scheduled gift says when,
++ * and deliberately offers no link to copy — see OrderConfirmation.
++ */
++function deliveryPromise(data: OrderConfirmation): string {
++  if (!data.scheduledSendAt) {
++    return `${data.recipientName} will get a WhatsApp message with a link to open your gift.`;
++  }
++
++  const when = new Date(data.scheduledSendAt).toLocaleString("en-NG", {
++    weekday: "long",
++    day: "numeric",
++    month: "long",
++    hour: "numeric",
++    minute: "2-digit",
++  });
++  return `Saved for ${when}. ${data.recipientName} will get a WhatsApp message then — nothing reaches them before.`;
++}
++
+ function Receipt({ data }: { data: OrderConfirmation }) {
+   return (
+     <div className="flex flex-col gap-3 border p-4 text-sm" style={{ borderColor: "var(--border)" }}>
+diff --git a/apps/web/src/lib/orders/get-order-confirmation.ts b/apps/web/src/lib/orders/get-order-confirmation.ts
+index 4d517b2..5cda6c6 100644
+--- a/apps/web/src/lib/orders/get-order-confirmation.ts
++++ b/apps/web/src/lib/orders/get-order-confirmation.ts
+@@ -5,8 +5,16 @@ export interface OrderConfirmation {
+   status: "awaiting_payment" | "confirmed" | "unsuccessful";
+   orderNumber: string | null;
+   recipientName: string;
+-  /** Only present once status is "confirmed". A same-day stand-in for WhatsApp delivery not being live yet — and a permanent safety net regardless, for whenever it is. */
++  /**
++   * Only present once status is "confirmed", and withheld entirely
++   * while a scheduled gift is still embargoed — the link IS the gift,
++   * so handing it over early lets the sender spoil a surprise they
++   * deliberately dated for later. A same-day stand-in for WhatsApp
++   * delivery not being live yet, and a permanent safety net regardless.
++   */
+   revealUrl: string | null;
++  /** Set when the sender chose to send later. Null means it went out immediately. */
++  scheduledSendAt: string | null;
+ }
+ 
+ export type ConfirmationResult =
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 0ed1bc7..1a525fd 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -238,6 +238,9 @@ importers:
+       '@nestjs/platform-express':
+         specifier: ^11.0.1
+         version: 11.2.1(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.1)(supports-color@8.1.1)
++      '@nestjs/schedule':
++        specifier: 6.0.0
++        version: 6.0.0(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.1)
+       '@nestjs/throttler':
+         specifier: ^6.5.0
+         version: 6.5.0(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.1)(reflect-metadata@0.2.2)
+@@ -1166,6 +1169,12 @@ packages:
+       '@nestjs/common': ^11.0.0
+       '@nestjs/core': ^11.0.0
+ 
++  '@nestjs/schedule@6.0.0':
++    resolution: {integrity: sha512-aQySMw6tw2nhitELXd3EiRacQRgzUKD9mFcUZVOJ7jPLqIBvXOyvRWLsK9SdurGA+jjziAlMef7iB5ZEFFoQpw==}
++    peerDependencies:
++      '@nestjs/common': ^10.0.0 || ^11.0.0
++      '@nestjs/core': ^10.0.0 || ^11.0.0
++
+   '@nestjs/schematics@11.1.0':
+     resolution: {integrity: sha512-lVxGZ46tcdItFMoXr6vyKWlnOsm1SZm/GUqAEDvy2RL4Q4O+3bkziAhrO7Y8JLssFUUvNFEGqAizI52WAxhjDw==}
+     peerDependencies:
+@@ -1584,6 +1593,9 @@ packages:
+   '@types/json5@0.0.29':
+     resolution: {integrity: sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ==}
+ 
++  '@types/luxon@3.6.2':
++    resolution: {integrity: sha512-R/BdP7OxEMc44l2Ex5lSXHoIXTB2JLNa3y2QISIbr58U/YcsffyQrYW//hZSdrfxrjRZj3GcUoxMPGdO8gSYuw==}
++
+   '@types/methods@1.1.4':
+     resolution: {integrity: sha512-ymXWVrDiCxTBE3+RIrrP533E70eA+9qu7zdWoHuOmGujkYtzf4HQF96b8nwHLqhuf4ykX61IGRIB38CC6/sImQ==}
+ 
+@@ -2295,6 +2307,10 @@ packages:
+   create-require@1.1.1:
+     resolution: {integrity: sha512-dcKFX3jn0MpIaXjisoRvexIJVEKzaq7z2rZKxf+MSr9TkdmHmsU4m2lcLojrj/FHl8mk5VxMmYA+ftRkP/3oKQ==}
+ 
++  cron@4.3.0:
++    resolution: {integrity: sha512-ciiYNLfSlF9MrDqnbMdRWFiA6oizSF7kA1osPP9lRzNu0Uu+AWog1UKy7SkckiDY2irrNjeO6qLyKnXC8oxmrw==}
++    engines: {node: '>=18.x'}
++
+   cross-spawn@7.0.6:
+     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
+     engines: {node: '>= 8'}
+@@ -3478,6 +3494,10 @@ packages:
+   lru-cache@5.1.1:
+     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
+ 
++  luxon@3.6.1:
++    resolution: {integrity: sha512-tJLxrKJhO2ukZ5z0gyjY1zPh3Rh88Ej9P7jNrZiHMUXHae1yvI2imgOZtL1TO8TW6biMMKfTtAOoEJANgtWBMQ==}
++    engines: {node: '>=12'}
++
+   magic-string@0.30.17:
+     resolution: {integrity: sha512-sNPKHvyjVf7gyjwS4xGTaW/mCnF8wnjtifKBEhxfZ7E/S8tQ0rssrwGNn6q8JH/ohItJfSQp9mBtQYuTlH5QnA==}
+ 
+@@ -5527,6 +5547,12 @@ snapshots:
+     transitivePeerDependencies:
+       - supports-color
+ 
++  '@nestjs/schedule@6.0.0(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.1)':
++    dependencies:
++      '@nestjs/common': 11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1)
++      '@nestjs/core': 11.2.1(@nestjs/common@11.2.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/platform-express@11.2.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
++      cron: 4.3.0
++
+   '@nestjs/schematics@11.1.0(chokidar@4.0.3)(prettier@3.9.6)(typescript@5.9.3)':
+     dependencies:
+       '@angular-devkit/core': 19.2.24(chokidar@4.0.3)
+@@ -5877,6 +5903,8 @@ snapshots:
+ 
+   '@types/json5@0.0.29': {}
+ 
++  '@types/luxon@3.6.2': {}
++
+   '@types/methods@1.1.4': {}
+ 
+   '@types/node@20.19.43':
+@@ -6628,6 +6656,11 @@ snapshots:
+ 
+   create-require@1.1.1: {}
+ 
++  cron@4.3.0:
++    dependencies:
++      '@types/luxon': 3.6.2
++      luxon: 3.6.1
++
+   cross-spawn@7.0.6:
+     dependencies:
+       path-key: 3.1.1
+@@ -8144,6 +8177,8 @@ snapshots:
+     dependencies:
+       yallist: 3.1.1
+ 
++  luxon@3.6.1: {}
++
+   magic-string@0.30.17:
+     dependencies:
+       '@jridgewell/sourcemap-codec': 1.5.5

@@ -198,16 +198,26 @@ export class OrdersRepository {
     reference: string,
   ): Promise<Pick<
     OrderRow,
-    'status' | 'order_number' | 'recipient_name' | 'reveal_token'
+    | 'status'
+    | 'order_number'
+    | 'recipient_name'
+    | 'reveal_token'
+    | 'scheduled_send_at'
   > | null> {
     const response = (await this.supabase
       .from('orders')
-      .select('status, order_number, recipient_name, reveal_token')
+      .select(
+        'status, order_number, recipient_name, reveal_token, scheduled_send_at',
+      )
       .eq('paystack_reference', reference)
       .maybeSingle()) as {
       data: Pick<
         OrderRow,
-        'status' | 'order_number' | 'recipient_name' | 'reveal_token'
+        | 'status'
+        | 'order_number'
+        | 'recipient_name'
+        | 'reveal_token'
+        | 'scheduled_send_at'
       > | null;
       error: PostgrestError | null;
     };
@@ -282,5 +292,99 @@ export class OrdersRepository {
     }
 
     return response.data;
+  }
+
+  /**
+   * Orders whose scheduled send time has arrived but whose reveal link
+   * has not gone out yet (reveal_url is only written once a send
+   * actually succeeds — see recordRevealSent).
+   *
+   * Status filter matters: a scheduled order is fulfilled immediately
+   * on payment, and only the recipient-visible notification is held
+   * back, so by the time this runs the order sits in one of the
+   * delivered-and-waiting states. An order still mid-fulfilment is not
+   * this job's problem; it is the stuck-order sweep's.
+   */
+  async findScheduledSendsDue(limit: number): Promise<OrderRow[]> {
+    const response = (await this.supabase
+      .from('orders')
+      .select()
+      .in('status', [OrderStatus.VoucherIssued, OrderStatus.ReadyForRedemption])
+      .not('scheduled_send_at', 'is', null)
+      .lte('scheduled_send_at', new Date().toISOString())
+      .is('reveal_url', null)
+      .order('scheduled_send_at', { ascending: true })
+      .limit(limit)) as {
+      data: OrderRow[] | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data ?? [];
+  }
+
+  /**
+   * Orders past expires_at that are still waiting to be collected.
+   *
+   * The same three statuses expire_unclaimed_gifts() targets — but this
+   * returns them for the caller to transition one at a time through the
+   * state machine, rather than letting that function batch-UPDATE them.
+   * That function writes no audit row for an order, and "every
+   * significant state transition is logged" is not a rule worth
+   * breaking for a faster sweep.
+   */
+  async findExpirable(limit: number): Promise<OrderRow[]> {
+    const response = (await this.supabase
+      .from('orders')
+      .select()
+      .in('status', [
+        OrderStatus.VoucherIssued,
+        OrderStatus.ReadyForRedemption,
+        OrderStatus.RevealOpened,
+      ])
+      .lt('expires_at', new Date().toISOString())
+      .order('expires_at', { ascending: true })
+      .limit(limit)) as {
+      data: OrderRow[] | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data ?? [];
+  }
+
+  /**
+   * Orders that entered fulfilment and never came out of it.
+   *
+   * Fulfilment runs synchronously inside the Paystack webhook request,
+   * and the webhook's idempotency key is claimed before it starts — so
+   * if it throws partway, a redelivery will never retry it and the
+   * order sits here forever. Detection is deliberately read-only: what
+   * a half-fulfilled order needs is a human deciding between retry and
+   * refund, not an automatic transition guessing on their behalf.
+   */
+  async findStuckInFulfillment(
+    olderThan: Date,
+    limit: number,
+  ): Promise<OrderRow[]> {
+    const response = (await this.supabase
+      .from('orders')
+      .select()
+      .in('status', [OrderStatus.Processing, OrderStatus.FulfillmentInProgress])
+      .lt('updated_at', olderThan.toISOString())
+      .order('updated_at', { ascending: true })
+      .limit(limit)) as {
+      data: OrderRow[] | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data ?? [];
   }
 }

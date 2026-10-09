@@ -24,6 +24,12 @@ export interface OrderConfirmationView {
    * the gift themselves instead of a dead end.
    */
   revealUrl: string | null;
+  /**
+   * Set when the sender chose to send the gift later. The confirmation
+   * screen uses it to say when it goes out, and it is also why
+   * revealUrl is withheld until then.
+   */
+  scheduledSendAt: string | null;
 }
 
 const AWAITING_PAYMENT = new Set<OrderStatus>([

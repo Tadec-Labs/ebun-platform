@@ -199,4 +199,35 @@ export class RedemptionsRepository {
 
     return response.data;
   }
+
+  /**
+   * Expires redemptions whose window has passed, mirroring the
+   * redemptions half of expire_unclaimed_gifts().
+   *
+   * Batched rather than row-by-row, unlike orders: redemptions have no
+   * state machine and no audit contract of their own — their status is
+   * guarded by attempt_redemption() for the one transition that
+   * matters (completion), and expiry is bookkeeping on rows nobody can
+   * complete any more. Returns the ids it changed so the caller can log
+   * precisely what moved.
+   */
+  async expireOverdue(): Promise<string[]> {
+    const response = (await this.supabase
+      .from('redemptions')
+      .update({
+        status: RedemptionStatus.Expired,
+        updated_at: new Date().toISOString(),
+      })
+      .in('status', [RedemptionStatus.Pending, RedemptionStatus.Initiated])
+      .lt('expires_at', new Date().toISOString())
+      .select('id')) as {
+      data: { id: string }[] | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return (response.data ?? []).map((row) => row.id);
+  }
 }

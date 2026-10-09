@@ -13,6 +13,7 @@ import { RedemptionsModule } from './redemptions/redemptions.module';
 import { validateEnv } from './config/env.validation';
 import { AuthModule } from './auth/auth.module';
 import { VendorsModule } from './vendors/vendors.module';
+import { JobsModule } from './jobs/jobs.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { VendorsModule } from './vendors/vendors.module';
     RedemptionsModule,
     AuthModule,
     VendorsModule,
+    JobsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

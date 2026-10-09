@@ -50,6 +50,15 @@ class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   TERMII_WHATSAPP_TEMPLATE_ID?: string;
+
+  /**
+   * Set to 'false' to stop every background job from firing — see
+   * jobs/jobs.config.ts. Optional: absent means enabled, so no
+   * deployment needs to set it to behave correctly.
+   */
+  @IsOptional()
+  @IsString()
+  ENABLE_BACKGROUND_JOBS?: string;
 }
 
 export function validateEnv(

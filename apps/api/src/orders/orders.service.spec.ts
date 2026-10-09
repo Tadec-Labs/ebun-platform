@@ -163,6 +163,7 @@ describe('OrdersService', () => {
         orderNumber: 'EBN-0042',
         recipientName: 'Ada',
         revealUrl: 'https://ebun.example/reveal/token-abc',
+        scheduledSendAt: null,
       });
     });
 
@@ -211,9 +212,52 @@ describe('OrdersService', () => {
         'orderNumber',
         'recipientName',
         'revealUrl',
+        'scheduledSendAt',
         'status',
       ]);
       expect(result.status).toBe('confirmed');
+    });
+
+    it('withholds the reveal link while a scheduled gift is still embargoed', () => {
+      // The link IS the gift. Handing it to the sender the moment they
+      // pay lets them spoil a surprise they deliberately dated for
+      // later.
+      const sendAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+      repository.findConfirmationByPaystackReference.mockResolvedValue({
+        status: OrderStatus.VoucherIssued,
+        order_number: 'EBN-0045',
+        recipient_name: 'Tunde',
+        reveal_token: 'token-jkl',
+        scheduled_send_at: sendAt.toISOString(),
+      });
+
+      return sut
+        .getConfirmation('ebun_ref_4', 'https://ebun.example')
+        .then((result) => {
+          expect(result.status).toBe('confirmed');
+          expect(result.revealUrl).toBeNull();
+          expect(result.scheduledSendAt).toBe(sendAt.toISOString());
+        });
+    });
+
+    it('releases the reveal link once the scheduled time has passed', async () => {
+      const sendAt = new Date(Date.now() - 60_000);
+      repository.findConfirmationByPaystackReference.mockResolvedValue({
+        status: OrderStatus.VoucherIssued,
+        order_number: 'EBN-0046',
+        recipient_name: 'Tunde',
+        reveal_token: 'token-mno',
+        scheduled_send_at: sendAt.toISOString(),
+      });
+
+      const result = await sut.getConfirmation(
+        'ebun_ref_5',
+        'https://ebun.example',
+      );
+
+      // Past the date it reverts to its real purpose: the sender's
+      // fallback if the WhatsApp message never lands.
+      expect(result.revealUrl).toBe('https://ebun.example/reveal/token-mno');
     });
   });
 });

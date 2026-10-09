@@ -114,4 +114,111 @@ export class NotificationsService {
       // Not rethrown — see this method's doc comment.
     }
   }
+
+  /**
+   * Re-sends notifications whose first attempt failed, with the
+   * exponential backoff the Brief specifies (3 attempts). Called by the
+   * retry job, never by the live send path.
+   *
+   * Re-sends from the stored `payload` rather than rebuilding it from
+   * the order: the payload is what was actually composed at send time,
+   * and a retry that quietly changes the message is not a retry. It is
+   * also why payload is persisted at all — the schema calls it "full
+   * message payload for audit/retry".
+   *
+   * Returns a per-row outcome rather than throwing, so one unsendable
+   * notification can't stop the rest of the batch.
+   */
+  async retryFailedSends(limit = 25): Promise<{
+    attempted: number;
+    sent: number;
+    rescheduled: number;
+    exhausted: number;
+  }> {
+    const due = await this.repository.findRetryable(limit);
+    let sent = 0;
+    let rescheduled = 0;
+    let exhausted = 0;
+
+    for (const row of due) {
+      const attempt = row.retry_count + 1;
+      const templateData = row.payload?.data;
+      const phone = row.recipient_phone;
+
+      if (!phone || !templateData) {
+        // Nothing to re-send from. Giving up loudly beats retrying an
+        // empty message every five minutes until the attempts run out.
+        await this.repository.markExhausted(
+          row.id,
+          attempt,
+          'Notification cannot be retried: missing recipient phone or payload data.',
+        );
+        exhausted += 1;
+        this.logger.error(
+          `Notification ${row.id} (order ${row.order_id ?? 'unknown'}) cannot be retried — no phone or payload. Giving up.`,
+        );
+        continue;
+      }
+
+      try {
+        const result = await this.termii.sendTemplateMessage({
+          phoneNumber: phone,
+          data: templateData,
+        });
+        await this.repository.markSent(row.id, result.providerMessageId);
+
+        // The order only learns its link went out on a successful send,
+        // which is also what keeps the scheduled-send sweep from
+        // picking this order up again.
+        if (row.order_id && row.payload?.revealUrl) {
+          await this.ordersService.recordRevealSent(
+            row.order_id,
+            row.payload.revealUrl,
+          );
+        }
+
+        sent += 1;
+        this.logger.log(
+          `Notification ${row.id} sent on retry ${attempt} of ${row.max_retries}.`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+
+        if (attempt >= row.max_retries) {
+          await this.repository.markExhausted(row.id, attempt, message);
+          exhausted += 1;
+          this.logger.error(
+            `Notification ${row.id} (order ${row.order_id ?? 'unknown'}) failed on its final attempt (${attempt}/${row.max_retries}): ${message}. ` +
+              `The recipient has NOT been told about their gift — the sender's copy-link fallback is the only remaining route.`,
+          );
+          continue;
+        }
+
+        await this.repository.scheduleRetry(
+          row.id,
+          attempt,
+          nextRetryAt(attempt),
+          message,
+        );
+        rescheduled += 1;
+        this.logger.warn(
+          `Notification ${row.id} failed attempt ${attempt}; retrying later: ${message}`,
+        );
+      }
+    }
+
+    return { attempted: due.length, sent, rescheduled, exhausted };
+  }
+}
+
+/**
+ * Exponential backoff: roughly 5 minutes, then 25, then 125. Spaced
+ * this way because the failure being waited out is usually a provider
+ * outage or a rate limit, where hammering every minute neither helps
+ * nor is forgiven — and because a gift is not a password reset, so
+ * minutes of delay cost nothing.
+ */
+function nextRetryAt(attempt: number): Date {
+  const minutes = 5 ** attempt;
+  return new Date(Date.now() + minutes * 60_000);
 }

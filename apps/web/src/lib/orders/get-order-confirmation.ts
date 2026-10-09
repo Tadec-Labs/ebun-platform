@@ -5,8 +5,16 @@ export interface OrderConfirmation {
   status: "awaiting_payment" | "confirmed" | "unsuccessful";
   orderNumber: string | null;
   recipientName: string;
-  /** Only present once status is "confirmed". A same-day stand-in for WhatsApp delivery not being live yet — and a permanent safety net regardless, for whenever it is. */
+  /**
+   * Only present once status is "confirmed", and withheld entirely
+   * while a scheduled gift is still embargoed — the link IS the gift,
+   * so handing it over early lets the sender spoil a surprise they
+   * deliberately dated for later. A same-day stand-in for WhatsApp
+   * delivery not being live yet, and a permanent safety net regardless.
+   */
   revealUrl: string | null;
+  /** Set when the sender chose to send later. Null means it went out immediately. */
+  scheduledSendAt: string | null;
 }
 
 export type ConfirmationResult =

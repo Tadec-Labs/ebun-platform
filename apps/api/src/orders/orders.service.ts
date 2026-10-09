@@ -80,12 +80,24 @@ export class OrdersService {
 
     const status = toConfirmationStatus(order.status);
 
+    // A gift the sender scheduled for later must not hand them the
+    // link the moment they pay. The link is the gift: give it to them
+    // now and the surprise is theirs to spoil, and the whole point of
+    // choosing a date is gone. Held back until that date passes, after
+    // which it resumes its real job — the fallback route if the
+    // recipient's WhatsApp message never arrives.
+    const scheduledFor = order.scheduled_send_at
+      ? new Date(order.scheduled_send_at)
+      : null;
+    const stillEmbargoed = scheduledFor !== null && scheduledFor > new Date();
+
     return {
       status,
       orderNumber: order.order_number,
       recipientName: order.recipient_name,
+      scheduledSendAt: scheduledFor ? scheduledFor.toISOString() : null,
       revealUrl:
-        status === 'confirmed'
+        status === 'confirmed' && !stillEmbargoed
           ? `${webAppBaseUrl}/reveal/${order.reveal_token}`
           : null,
     };
@@ -137,5 +149,18 @@ export class OrdersService {
     }
 
     return result;
+  }
+
+  /** Read-only sweeps for the background jobs — see OrdersRepository for why each filter is what it is. */
+  async findScheduledSendsDue(limit = 50) {
+    return this.ordersRepository.findScheduledSendsDue(limit);
+  }
+
+  async findExpirable(limit = 200) {
+    return this.ordersRepository.findExpirable(limit);
+  }
+
+  async findStuckInFulfillment(olderThan: Date, limit = 100) {
+    return this.ordersRepository.findStuckInFulfillment(olderThan, limit);
   }
 }

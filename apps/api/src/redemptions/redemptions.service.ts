@@ -75,6 +75,11 @@ export class RedemptionsService {
     return this.repository.createPendingOrFetch(orderId, orderExpiresAt);
   }
 
+  /** Called by the daily expiry sweep. Returns the ids it expired. */
+  async expireOverdue(): Promise<string[]> {
+    return this.repository.expireOverdue();
+  }
+
   /**
    * Looks a code up for ops, without changing anything.
    *
