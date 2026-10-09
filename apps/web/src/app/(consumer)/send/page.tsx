@@ -10,5 +10,10 @@ export const metadata: Metadata = {
 export default async function SendPage() {
   const catalog = await getGiftCatalog();
 
-  return <SendExperience catalog={catalog} />;
+  return (
+    <SendExperience
+      catalog={catalog.kind === "ok" ? catalog.items : []}
+      catalogReachable={catalog.kind === "ok"}
+    />
+  );
 }

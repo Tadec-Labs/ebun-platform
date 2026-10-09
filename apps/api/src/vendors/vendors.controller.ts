@@ -77,6 +77,23 @@ export class VendorsController {
     return this.vendors.update(id, dto, staffOf(request), metaOf(request));
   }
 
+  /**
+   * POST, not GET: this replaces a working credential with a new one,
+   * which is a change to the world and must never be something a
+   * prefetch or a refresh can trigger by accident.
+   */
+  @Post(':id/portal-token/rotate')
+  rotatePortalToken(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: StaffRequest,
+  ) {
+    return this.vendors.rotatePortalToken(
+      id,
+      staffOf(request),
+      metaOf(request),
+    );
+  }
+
   @Get(':id/offerings')
   listOfferings(@Param('id', ParseUUIDPipe) id: string) {
     return this.vendors.listOfferings(id);

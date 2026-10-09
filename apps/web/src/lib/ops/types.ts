@@ -38,6 +38,9 @@ export interface Vendor {
   responseTimeoutMinutes: number;
   backupVendorId: string | null;
   notes: string | null;
+  /** The vendor's private counter-screen link. A credential — never log or share beyond the vendor. */
+  portalToken: string;
+  portalTokenRotatedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,3 +84,41 @@ export interface RedemptionLookup {
   /** Plain-language reason it can't be collected, when redeemable is false. */
   blockedReason: string | null;
 }
+
+/** Mirrors apps/api/src/gifts/ops-gifts.service.ts's GiftTemplateView. */
+export type GiftDeliveryType = "digital_voucher" | "vtu";
+
+export interface GiftTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  category: VendorCategory;
+  basePrice: number; // kobo
+  deliveryType: GiftDeliveryType | "physical" | "experience";
+  deliveryWindow: string | null;
+  imageUrl: string | null;
+  requiresAddress: boolean;
+  available: boolean;
+  featured: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Only the two the fulfilment orchestrator can complete. Physical and
+ * experience take the money and then raise — see the API's
+ * CREATABLE_DELIVERY_TYPES for why they are not offered.
+ */
+export const GIFT_DELIVERY_TYPES: { value: GiftDeliveryType; label: string; hint: string }[] = [
+  {
+    value: "digital_voucher",
+    label: "Collected in person",
+    hint: "They get a code and pick it up at the vendor.",
+  },
+  {
+    value: "vtu",
+    label: "Sent to their phone",
+    hint: "Airtime, data or bills — delivered automatically in seconds.",
+  },
+];

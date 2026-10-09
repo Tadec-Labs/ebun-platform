@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getGiftCatalog } from "@/lib/gifts/get-gift-catalog";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
-import type { Offering, Vendor, VendorSummary } from "@/lib/ops/types";
+import type { GiftTemplate, Offering, Vendor, VendorSummary } from "@/lib/ops/types";
 import { VendorForm } from "../vendor-form";
 import { OfferingsPanel } from "./offerings-panel";
+import { PortalLink } from "./portal-link";
 
 export default async function VendorDetailPage({ params, searchParams }: PageProps<"/ops/vendors/[id]">) {
   const { id } = await params;
@@ -22,7 +22,12 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
   const [offerings, vendors, catalog] = await Promise.all([
     opsFetch<Offering[]>(`/ops/vendors/${id}/offerings`),
     opsFetch<VendorSummary[]>("/ops/vendors"),
-    getGiftCatalog(),
+    // The OPS catalogue, not the public one. New gifts are created off
+    // sale on purpose, and the public list hides those — so using it
+    // here would make a gift impossible to link to a vendor until it
+    // had already been published, which is backwards: you link the
+    // vendor who fulfils it, then put it on sale.
+    opsFetch<GiftTemplate[]>("/ops/gifts"),
   ]);
 
   return (
@@ -48,6 +53,12 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
           catalog={catalog.map((g) => ({ id: g.id, name: g.name, basePrice: g.basePrice }))}
           vendorSharePct={Math.round(vendor.commissionRate * 100)}
         />
+        <PortalLink
+          vendorId={vendor.id}
+          token={vendor.portalToken}
+          rotatedAt={vendor.portalTokenRotatedAt}
+        />
+
         <section>
           <h2 className="mb-4 font-semibold">Details</h2>
           <VendorForm

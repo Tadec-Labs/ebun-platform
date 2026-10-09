@@ -49,7 +49,13 @@ const PHASES: { id: Phase; label: string }[] = [
  * reveal-experience.tsx: this is one form that submits as a single
  * POST /orders, not several independently-navigable pages.
  */
-export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+export function SendExperience({
+  catalog,
+  catalogReachable,
+}: {
+  catalog: GiftCatalogItem[];
+  catalogReachable: boolean;
+}) {
   const [phase, setPhase] = useState<Phase>("gift");
   const [draft, setDraft] = useState<SendDraft>({
     occasion: null,
@@ -95,6 +101,7 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
       {phase === "gift" && (
         <GiftPicker
           catalog={catalog}
+          catalogReachable={catalogReachable}
           onChoose={(gift) => {
             setDraft((prev) => ({ ...prev, gift }));
             setPhase("compose");

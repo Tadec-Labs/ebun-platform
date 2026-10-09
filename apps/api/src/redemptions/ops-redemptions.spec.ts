@@ -36,6 +36,7 @@ const lookupRow = (over: Record<string, unknown> = {}) => ({
     order_number: 'EBN-0014',
     recipient_name: 'John',
     status: OrderStatus.RevealOpened,
+    gift_template_id: 'gift-1',
     gift_templates: { name: 'A Pizza, On Him' },
   },
   ...over,
@@ -142,6 +143,7 @@ describe('RedemptionsService — collection by fallback code', () => {
             order_number: 'EBN-0014',
             recipient_name: 'John',
             status: OrderStatus.VoucherIssued,
+            gift_template_id: 'gift-1',
             gift_templates: { name: 'A Pizza, On Him' },
           },
         }),
@@ -151,6 +153,55 @@ describe('RedemptionsService — collection by fallback code', () => {
 
       expect(view.redeemable).toBe(false);
       expect(view.blockedReason).toMatch(/hasn't opened and claimed/i);
+    });
+  });
+
+  describe('scoping a lookup to one vendor', () => {
+    it('returns the code when the vendor sells that gift', async () => {
+      repository.findByFallbackCode.mockResolvedValue(lookupRow());
+      const sellsGift = jest.fn().mockResolvedValue(true);
+
+      const view = await sut.lookupForVendor(CODE, sellsGift);
+
+      expect(sellsGift).toHaveBeenCalledWith('gift-1');
+      expect(view.code).toBe(CODE);
+    });
+
+    it("hides a real code for a gift the vendor doesn't sell behind the same 404 as an unknown one", async () => {
+      // Distinguishing the two would confirm the code exists, which is
+      // the one fact a guessed code must never reveal.
+      repository.findByFallbackCode.mockResolvedValue(lookupRow());
+      const notFound = jest.fn().mockResolvedValue(false);
+
+      await expect(sut.lookupForVendor(CODE, notFound)).rejects.toMatchObject({
+        status: 404,
+      });
+
+      repository.findByFallbackCode.mockResolvedValue(null);
+      await expect(
+        sut.lookupForVendor(CODE, jest.fn().mockResolvedValue(true)),
+      ).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('refuses a redemption whose order has no gift at all', async () => {
+      repository.findByFallbackCode.mockResolvedValue(
+        lookupRow({ orders: null }),
+      );
+
+      await expect(
+        sut.lookupForVendor(CODE, jest.fn().mockResolvedValue(true)),
+      ).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('never exposes the redemption token to a vendor', async () => {
+      repository.findByFallbackCode.mockResolvedValue(lookupRow());
+
+      const view = await sut.lookupForVendor(
+        CODE,
+        jest.fn().mockResolvedValue(true),
+      );
+
+      expect(JSON.stringify(view)).not.toContain(TOKEN);
     });
   });
 
@@ -229,6 +280,40 @@ describe('RedemptionsService — collection by fallback code', () => {
       await expect(
         sut.completeByFallbackCode(completeParams),
       ).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('refuses to complete a gift the vendor does not sell', async () => {
+      repository.findByFallbackCode.mockResolvedValue(lookupRow());
+
+      await expect(
+        sut.completeByFallbackCode({
+          ...completeParams,
+          sellsGift: jest.fn().mockResolvedValue(false),
+        }),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(repository.attemptRedemption).not.toHaveBeenCalled();
+    });
+
+    it('records a vendor confirmation as a vendor, not as ops', async () => {
+      repository.findByFallbackCode.mockResolvedValue(lookupRow());
+      repository.attemptRedemption.mockResolvedValue({
+        id: 'redemption-1',
+        order_id: 'order-1',
+        status: RedemptionStatus.Completed,
+      });
+
+      await sut.completeByFallbackCode({
+        ...completeParams,
+        actorType: 'vendor',
+        sellsGift: jest.fn().mockResolvedValue(true),
+      });
+
+      expect(ordersService.transitionNormal).toHaveBeenCalledWith(
+        'order-1',
+        OrderStatus.RevealOpened,
+        OrderStatus.Redeemed,
+        { type: 'vendor' },
+      );
     });
   });
 });

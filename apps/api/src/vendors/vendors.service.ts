@@ -59,6 +59,14 @@ export interface VendorView {
   responseTimeoutMinutes: number;
   backupVendorId: string | null;
   notes: string | null;
+  /**
+   * The vendor's private counter-screen link. A credential, so it
+   * travels only on the single-vendor read (never the list), only to
+   * ebun_admin/ebun_ops, and only on a no-store response — the same
+   * treatment bank details already get.
+   */
+  portalToken: string;
+  portalTokenRotatedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -138,6 +146,8 @@ function toSummaryView(
 function toView(row: VendorRow): VendorView {
   return {
     id: row.id,
+    portalToken: row.portal_token,
+    portalTokenRotatedAt: row.portal_token_rotated_at,
     businessName: row.business_name,
     ownerName: row.owner_name,
     whatsappNumber: row.whatsapp_number,
@@ -233,6 +243,39 @@ export class VendorsService {
     });
 
     return toView(row);
+  }
+
+  /**
+   * Issues a new counter link and invalidates the old one.
+   *
+   * The answer to a lost or stolen counter phone. Audited because
+   * revoking access is exactly the kind of act somebody needs to be
+   * able to prove happened, and when.
+   */
+  async rotatePortalToken(
+    id: string,
+    staff: StaffContext,
+    meta: RequestMeta,
+  ): Promise<{ portalToken: string }> {
+    const token = await this.repository.rotatePortalToken(id);
+    if (!token) {
+      throw new NotFoundException('Vendor not found.');
+    }
+
+    await this.audit.record({
+      eventType: 'VENDOR_PORTAL_TOKEN_ROTATED',
+      actorId: staff.userId,
+      actorType: 'admin',
+      resourceType: 'vendor',
+      resourceId: id,
+      // Never the token itself — an audit log that records credentials
+      // is a credential store.
+      metadata: { rotatedBy: staff.role },
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+    });
+
+    return { portalToken: token };
   }
 
   async update(

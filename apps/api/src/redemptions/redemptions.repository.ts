@@ -31,6 +31,8 @@ export interface RedemptionLookupRow extends RedemptionRow {
     order_number: string | null;
     recipient_name: string;
     status: OrderStatus;
+    /** Which gift this is for — the vendor portal scopes on it. */
+    gift_template_id: string;
     gift_templates: { name: string } | null;
   } | null;
 }
@@ -156,7 +158,8 @@ export class RedemptionsRepository {
       .select(
         'id, order_id, redemption_number, redemption_token, fallback_code, ' +
           'status, expires_at, completed_at, ' +
-          'orders(id, order_number, recipient_name, status, gift_templates(name))',
+          'orders(id, order_number, recipient_name, status, gift_template_id, ' +
+          'gift_templates(name))',
       )
       .eq('fallback_code', code)
       .maybeSingle()) as {

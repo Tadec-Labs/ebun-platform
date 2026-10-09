@@ -94,6 +94,10 @@ export class RedemptionsService {
       throw new NotFoundException('No gift found for that code.');
     }
 
+    return this.toLookupView(row);
+  }
+
+  private toLookupView(row: RedemptionLookupRow): RedemptionLookupView {
     const { redeemable, blockedReason } = this.assessRedeemability(row);
 
     return {
@@ -108,6 +112,34 @@ export class RedemptionsService {
       redeemable,
       blockedReason,
     };
+  }
+
+  /**
+   * The vendor counter's view of a code.
+   *
+   * Identical to the ops lookup with one addition that matters: the
+   * gift this code is for, so the caller can check the vendor actually
+   * sells it before showing them anything. Without that check a leaked
+   * link would let any vendor inspect every code in the system.
+   */
+  async lookupForVendor(
+    code: string,
+    sellsGift: (giftTemplateId: string) => Promise<boolean>,
+  ): Promise<RedemptionLookupView> {
+    const row = await this.repository.findByFallbackCode(code);
+    if (!row) {
+      throw new NotFoundException('No gift found for that code.');
+    }
+
+    const giftTemplateId = row.orders?.gift_template_id;
+    if (!giftTemplateId || !(await sellsGift(giftTemplateId))) {
+      // Deliberately the same 404 as an unknown code. Telling a vendor
+      // "that code is real but not yours" confirms the code exists,
+      // which is the one fact a guessed code should never reveal.
+      throw new NotFoundException('No gift found for that code.');
+    }
+
+    return this.toLookupView(row);
   }
 
   /**
@@ -129,12 +161,27 @@ export class RedemptionsService {
     vendorId: string;
     confirmedBy: string;
     actorId: string | null;
+    actorType?: 'admin' | 'vendor';
     ipAddress: string | null;
     userAgent: string | null;
+    /**
+     * Returns false if this vendor does not sell the gift the code is
+     * for. Optional because ops can, with the whole catalogue in front
+     * of them, knowingly confirm on behalf of a vendor whose offering
+     * has since been removed; the vendor portal always supplies it.
+     */
+    sellsGift?: (giftTemplateId: string) => Promise<boolean>;
   }): Promise<{ redemption: RedemptionRow; orderId: string }> {
     const row = await this.repository.findByFallbackCode(params.code);
     if (!row) {
       throw new NotFoundException('No gift found for that code.');
+    }
+
+    if (params.sellsGift) {
+      const giftTemplateId = row.orders?.gift_template_id;
+      if (!giftTemplateId || !(await params.sellsGift(giftTemplateId))) {
+        throw new NotFoundException('No gift found for that code.');
+      }
     }
 
     const { redeemable, blockedReason } = this.assessRedeemability(row);
@@ -150,7 +197,7 @@ export class RedemptionsService {
       vendorConfirmedBy: params.confirmedBy,
       ipAddress: params.ipAddress,
       userAgent: params.userAgent,
-      actorType: 'admin',
+      actorType: params.actorType ?? 'admin',
     });
 
     return { redemption, orderId: row.order_id };

@@ -29,9 +29,11 @@ const CATEGORY_LABEL: Record<GiftCatalogItem["category"], string> = {
  */
 export function GiftPicker({
   catalog,
+  catalogReachable,
   onChoose,
 }: {
   catalog: GiftCatalogItem[];
+  catalogReachable: boolean;
   onChoose: (gift: GiftCatalogItem) => void;
 }) {
   const [category, setCategory] = useState<GiftCatalogItem["category"] | "all">("all");
@@ -77,7 +79,16 @@ export function GiftPicker({
             className="border p-6 text-center text-sm leading-relaxed"
             style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
           >
-            The gift list didn&rsquo;t load. Check your connection and reload the page.
+            {/*
+              Two different problems with two different fixes. Telling
+              someone to check their connection when the real answer is
+              that nothing is on sale sends them chasing a fault that
+              isn't theirs — and hides, from whoever is debugging, the
+              one state they most need to see.
+            */}
+            {catalogReachable
+              ? "There's nothing to send just yet. We're adding gifts — check back shortly."
+              : "The gift list didn't load. Check your connection and reload the page."}
           </div>
         )}
 

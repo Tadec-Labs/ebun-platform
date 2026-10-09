@@ -6,7 +6,13 @@ import { API_BASE_URL } from "@/lib/api-config";
 import { parseNairaToKobo } from "@/lib/format-money";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
 import { clearOpsToken, setOpsToken } from "@/lib/ops/session";
-import type { ActionResult, Offering, RedemptionLookup, Vendor } from "@/lib/ops/types";
+import type {
+  ActionResult,
+  GiftTemplate,
+  Offering,
+  RedemptionLookup,
+  Vendor,
+} from "@/lib/ops/types";
 
 /**
  * Narrower than ActionResult on purpose: both helpers below only ever
@@ -264,4 +270,111 @@ export async function completeRedemptionAction(input: {
   }
 
   return { ok: true, message: "Collected. The recipient's page now shows it as handed over." };
+}
+
+// ----------------------------------------------------------- catalogue
+
+/**
+ * Create or update a gift. Prices are typed in naira and stored in
+ * kobo, the same conversion the vendor offering form does — the API
+ * only ever accepts kobo, so there is one place where a human unit
+ * becomes a machine one.
+ */
+export async function saveGiftAction(formData: FormData): Promise<ActionResult> {
+  const id = text(formData, "id");
+  const isUpdate = id !== "";
+
+  const basePrice = parseNairaToKobo(text(formData, "basePrice"));
+  if (basePrice === null || basePrice < 100) {
+    return fail(["Enter the price in naira, e.g. 8000 or 8000.50."]);
+  }
+
+  const sortOrder = Number(text(formData, "sortOrder") || "0");
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) {
+    return fail(["Position must be a whole number between 0 and 10000."]);
+  }
+
+  // Blank optional field: omitted on create, cleared on update.
+  const optional = (key: string) => {
+    const value = text(formData, key);
+    if (value !== "") return value;
+    return isUpdate ? null : undefined;
+  };
+
+  const body = {
+    name: text(formData, "name"),
+    category: text(formData, "category"),
+    deliveryType: text(formData, "deliveryType"),
+    basePrice,
+    sortOrder,
+    requiresAddress: false,
+    available: formData.get("available") === "on",
+    featured: formData.get("featured") === "on",
+    description: optional("description"),
+    deliveryWindow: optional("deliveryWindow"),
+    imageUrl: optional("imageUrl"),
+  };
+
+  let createdId: string | null = null;
+  try {
+    if (isUpdate) {
+      await opsFetch<GiftTemplate>(`/ops/gifts/${id}`, { method: "PATCH", body });
+    } else {
+      const created = await opsFetch<GiftTemplate>("/ops/gifts", { method: "POST", body });
+      createdId = created.id;
+    }
+  } catch (error) {
+    return asFailure(error);
+  }
+
+  revalidatePath("/ops/gifts");
+  if (createdId) redirect(`/ops/gifts/${createdId}?created=1`);
+  revalidatePath(`/ops/gifts/${id}`);
+  return { ok: true, message: "Saved." };
+}
+
+/** The one-tap control for the thing ops changes most: on sale or not. */
+export async function setGiftAvailabilityAction(
+  id: string,
+  available: boolean,
+): Promise<ActionResult> {
+  try {
+    await opsFetch<GiftTemplate>(`/ops/gifts/${id}`, {
+      method: "PATCH",
+      body: { available },
+    });
+  } catch (error) {
+    return asFailure(error);
+  }
+
+  revalidatePath("/ops/gifts");
+  revalidatePath(`/ops/gifts/${id}`);
+  return { ok: true, message: available ? "Now on sale." : "Taken off sale." };
+}
+
+// ------------------------------------------------------- vendor portal
+
+/**
+ * Issues the vendor a new counter link and kills the old one.
+ *
+ * The answer to a lost or sold counter phone. Returns the new token so
+ * ops can hand it over on the spot rather than hunting for it after.
+ */
+export async function rotateVendorPortalTokenAction(
+  vendorId: string,
+): Promise<ActionResult> {
+  try {
+    await opsFetch<{ portalToken: string }>(
+      `/ops/vendors/${vendorId}/portal-token/rotate`,
+      { method: "POST" },
+    );
+  } catch (error) {
+    return asFailure(error);
+  }
+
+  revalidatePath(`/ops/vendors/${vendorId}`);
+  return {
+    ok: true,
+    message: "New link issued. The old one stopped working immediately.",
+  };
 }

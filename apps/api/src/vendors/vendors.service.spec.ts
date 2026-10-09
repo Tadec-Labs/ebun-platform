@@ -22,6 +22,8 @@ const META = { ipAddress: '1.2.3.4', userAgent: 'jest' };
 function makeVendor(overrides: Partial<VendorRow> = {}): VendorRow {
   return {
     id: 'vendor-1',
+    portal_token: '11111111-1111-4111-8111-111111111111',
+    portal_token_rotated_at: null,
     business_name: 'Mama Cass Kitchen',
     owner_name: 'Cassandra Okoye',
     whatsapp_number: '+2348012345678',
@@ -60,6 +62,9 @@ describe('VendorsService', () => {
     repository = {
       list: jest.fn(),
       countOfferingsByVendor: jest.fn(),
+      findByPortalToken: jest.fn(),
+      findOffering: jest.fn(),
+      rotatePortalToken: jest.fn(),
       findById: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),

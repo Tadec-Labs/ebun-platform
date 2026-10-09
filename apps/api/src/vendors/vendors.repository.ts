@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
@@ -23,6 +24,8 @@ export interface VendorRow {
   response_timeout_minutes: number;
   backup_vendor_id: string | null;
   notes: string | null;
+  portal_token: string;
+  portal_token_rotated_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -42,6 +45,14 @@ export type VendorSummaryRow = Pick<
   | 'total_orders'
   | 'created_at'
 >;
+
+/** Everything the counter screen is allowed to know about its own vendor. */
+export interface VendorPortalRow {
+  id: string;
+  business_name: string;
+  category: VendorRow['category'];
+  active: boolean;
+}
 
 export interface OfferingRow {
   vendor_id: string;
@@ -192,5 +203,88 @@ export class VendorsRepository {
     };
     if (response.error) throw response.error;
     return (response.data ?? []).length > 0;
+  }
+
+  /**
+   * Identifies a vendor from their portal token.
+   *
+   * Selects only what the counter screen needs. Bank details are
+   * deliberately absent: the vendor's own payout information is not
+   * something a counter device needs in order to hand over a pizza, and
+   * the whole point of a narrow token is that losing the phone does not
+   * lose anything else.
+   */
+  async findByPortalToken(token: string): Promise<VendorPortalRow | null> {
+    const response = (await this.supabase
+      .from('vendors')
+      .select('id, business_name, category, active')
+      .eq('portal_token', token)
+      .maybeSingle()) as {
+      data: VendorPortalRow | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data;
+  }
+
+  /**
+   * Does this vendor actually sell this gift?
+   *
+   * The control that stops a vendor confirming a collection for
+   * something they have never sold — which, before the portal existed,
+   * ops could do by accident simply by picking the wrong name from a
+   * dropdown, quietly crediting the payout to the wrong business.
+   */
+  async findOffering(
+    vendorId: string,
+    giftTemplateId: string,
+  ): Promise<OfferingRow | null> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select(OFFERING_COLUMNS)
+      .eq('vendor_id', vendorId)
+      .eq('gift_template_id', giftTemplateId)
+      .maybeSingle()) as {
+      data: OfferingRow | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data;
+  }
+
+  /**
+   * Revokes a lost device by making its link identify nobody.
+   *
+   * The new token is generated here rather than by a Postgres default,
+   * because supabase-js sends values, not SQL expressions — and doing
+   * it in Node means the caller can hand the vendor their new link
+   * immediately instead of reading it back.
+   */
+  async rotatePortalToken(vendorId: string): Promise<string | null> {
+    const token = randomUUID();
+    const response = (await this.supabase
+      .from('vendors')
+      .update({
+        portal_token: token,
+        portal_token_rotated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', vendorId)
+      .select('id')
+      .maybeSingle()) as {
+      data: { id: string } | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data ? token : null;
   }
 }

@@ -11,18 +11,27 @@ import type { GiftCatalogItem } from "./types";
  * moment (checkout), so this was wired for real before the payment
  * screen was, not after.
  *
- * On fetch failure, returns an empty array rather than falling back to
- * mock data — showing a "couldn't load gifts" state (see gift-selector.tsx)
- * is honest; silently serving fake catalog items that can't actually be
- * ordered is not.
+ * Never falls back to mock data on failure: showing an honest error
+ * beats silently serving fake catalog items that can't be ordered.
+ *
+ * Returns a result rather than a bare array because "the API is down"
+ * and "nothing is on sale" are completely different problems with
+ * completely different fixes, and collapsing both to [] told a sender
+ * to check their connection when the real answer was that ops had not
+ * put a single gift on sale yet. The sender sees different copy; so
+ * does whoever is debugging it.
  */
-export async function getGiftCatalog(): Promise<GiftCatalogItem[]> {
+export type GiftCatalogResult =
+  | { kind: "ok"; items: GiftCatalogItem[] }
+  | { kind: "unreachable" };
+
+export async function getGiftCatalog(): Promise<GiftCatalogResult> {
   try {
     const res = await fetch(`${API_BASE_URL}/gifts`, { cache: "no-store" });
-    if (!res.ok) return [];
-    return await res.json();
+    if (!res.ok) return { kind: "unreachable" };
+    return { kind: "ok", items: (await res.json()) as GiftCatalogItem[] };
   } catch {
-    // Network error, API not reachable, etc. — same fallback as above.
-    return [];
+    // Network error, API not reachable, wrong NEXT_PUBLIC_API_BASE_URL.
+    return { kind: "unreachable" };
   }
 }
