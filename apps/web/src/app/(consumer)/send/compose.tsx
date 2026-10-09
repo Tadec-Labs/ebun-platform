@@ -3,8 +3,10 @@
 import { useState } from "react";
 import type { RecordedMedia } from "@/lib/media-recording/use-media-recorder";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
-import { type OccasionId, messagePlaceholder } from "@/lib/occasions";
+import { OCCASIONS, type OccasionId, messagePlaceholder } from "@/lib/occasions";
+import { formatNaira } from "@/lib/format-money";
 import { MediaRecorderPanel } from "./media-recorder-panel";
+import { RevealPreview } from "./reveal-preview";
 
 export type MessageType = "text" | "voice" | "video";
 export type SendTiming = "now" | "scheduled";
@@ -29,19 +31,32 @@ export interface MessageDraft {
 const PHONE_PATTERN = /^\+[1-9]\d{6,14}$/;
 const MESSAGE_MAX_LENGTH = 2000;
 
-export function MessageComposer({
+/**
+ * Who it's for and what you want to say — one screen, because that is
+ * one thought. Splitting the recipient onto its own step made the flow
+ * four gates long for a product competing with a bank transfer.
+ *
+ * The occasion lives here now rather than as the flow's first screen.
+ * It was a full gate that collected nothing: CreateOrderDto has no
+ * occasion field, so the only thing it ever did was choose a
+ * placeholder and print a row on the review summary. Demoted to what it
+ * actually is — a prompt for someone staring at an empty message box.
+ */
+export function Compose({
   gift,
-  occasion,
   draft,
+  occasion,
   onChangeDraft,
-  onBack,
+  onChangeOccasion,
+  onChangeGift,
   onContinue,
 }: {
   gift: GiftCatalogItem;
-  occasion: OccasionId | null;
   draft: MessageDraft;
+  occasion: OccasionId | null;
   onChangeDraft: (draft: MessageDraft) => void;
-  onBack: () => void;
+  onChangeOccasion: (occasion: OccasionId | null) => void;
+  onChangeGift: () => void;
   onContinue: () => void;
 }) {
   const [touchedPhone, setTouchedPhone] = useState(false);
@@ -56,48 +71,52 @@ export function MessageComposer({
   // Recording works (see media-recorder-panel.tsx), but sending a
   // recorded message doesn't — CreateOrderService rejects any
   // messageType besides "text" today (no R2 upload step exists yet).
-  // Blocking here, before the review screen, rather than letting a
-  // real submit attempt fail with a 400 the sender can't do anything
-  // about.
+  // Blocking here rather than letting a real submit fail with a 400 the
+  // sender can do nothing about.
   const readyForPayment = canContinue && !isRecordingMode;
 
   return (
     <>
       <button
         type="button"
-        onClick={onBack}
-        className="mb-2 self-start text-xs tracking-wide"
-        style={{ color: "var(--cream-dim)" }}
+        onClick={onChangeGift}
+        className="mb-5 flex w-full items-center gap-3 border p-3 text-left transition-colors hover:border-[color:var(--border-strong)]"
+        style={{ borderColor: "var(--border)", background: "var(--panel)" }}
       >
-        ← Change gift
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm" style={{ color: "var(--cream)" }}>
+            {gift.name}
+          </span>
+          <span className="block text-xs" style={{ color: "var(--gold-light)" }}>
+            {formatNaira(gift.basePrice)}
+          </span>
+        </span>
+        <span className="shrink-0 text-xs" style={{ color: "var(--cream-dim)" }}>
+          Change
+        </span>
       </button>
 
-      <div className="flex flex-col gap-1.5 pb-7 text-center">
-        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
-          Add your message
+      <div className="pb-7">
+        <h1 className="font-display text-3xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
+          Who&rsquo;s it for?
         </h1>
-        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
-          Sending {gift.name}
-        </p>
       </div>
 
       <div className="flex flex-col gap-8 pb-44">
         <section className="flex flex-col gap-4">
-          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
-            Who&rsquo;s it for
-          </h2>
-          <Field label="Recipient's name">
+          <Field label="Their name">
             <input
               value={draft.recipientName}
               onChange={(e) => set("recipientName", e.target.value)}
               maxLength={200}
               placeholder="Ada"
+              autoComplete="off"
               className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
               style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
             />
           </Field>
           <Field
-            label="WhatsApp number"
+            label="Their WhatsApp number"
             error={
               touchedPhone && draft.recipientPhone.trim().length > 0 && !phoneIsValid
                 ? "Include the country code, e.g. +2348012345678"
@@ -110,36 +129,60 @@ export function MessageComposer({
               onBlur={() => setTouchedPhone(true)}
               placeholder="+2348012345678"
               inputMode="tel"
+              autoComplete="tel"
               className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
               style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
             />
           </Field>
         </section>
 
+        {/*
+          Sits above the message box, not below it. Buried under the
+          composer it was the last thing on the screen and the first
+          thing hidden by the sticky pay bar — the one element whose
+          entire job is to be seen before the sender decides the effort
+          is worth it. Up here it personalises the moment a name is
+          typed, which is the earliest point Ebun can show what it is.
+        */}
+        <RevealPreview
+          gift={gift}
+          recipientName={draft.recipientName}
+          message={draft.messageType === "text" ? draft.text : ""}
+        />
+
         <section className="flex flex-col gap-4">
-          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
-            Your message
-          </h2>
           <div className="flex gap-2">
-            <TabButton
-              label="Text"
-              active={draft.messageType === "text"}
-              onClick={() => set("messageType", "text")}
-            />
-            <TabButton
-              label="Voice"
-              active={draft.messageType === "voice"}
-              onClick={() => set("messageType", "voice")}
-            />
-            <TabButton
-              label="Video"
-              active={draft.messageType === "video"}
-              onClick={() => set("messageType", "video")}
-            />
+            <Tab label="Write" active={draft.messageType === "text"} onClick={() => set("messageType", "text")} />
+            <Tab label="Voice" active={draft.messageType === "voice"} onClick={() => set("messageType", "voice")} />
+            <Tab label="Video" active={draft.messageType === "video"} onClick={() => set("messageType", "video")} />
           </div>
 
           {draft.messageType === "text" && (
             <>
+              <p className="text-xs" style={{ color: "var(--cream-faint)" }}>
+                Stuck? Pick a prompt.
+              </p>
+              <div className="flex flex-wrap gap-1.5" aria-label="Message starting points">
+                {OCCASIONS.map((item) => {
+                  const active = occasion === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => onChangeOccasion(active ? null : item.id)}
+                      className="border px-2.5 py-1.5 text-[11px] transition-colors"
+                      style={{
+                        borderColor: active ? "var(--gold)" : "var(--border)",
+                        background: active ? "var(--gold-glow)" : "transparent",
+                        color: active ? "var(--gold-light)" : "var(--cream-faint)",
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
               <textarea
                 value={draft.text}
                 onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
@@ -148,9 +191,11 @@ export function MessageComposer({
                 className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
                 style={{ borderColor: "var(--border)", color: "var(--cream)" }}
               />
-              <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
-                {draft.text.length}/{MESSAGE_MAX_LENGTH}
-              </p>
+              {draft.text.length > MESSAGE_MAX_LENGTH - 200 && (
+                <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
+                  {draft.text.length}/{MESSAGE_MAX_LENGTH}
+                </p>
+              )}
             </>
           )}
 
@@ -175,30 +220,32 @@ export function MessageComposer({
           )}
         </section>
 
-        <section className="flex flex-col gap-4">
-          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
-            When should it land
-          </h2>
+        <section className="flex flex-col gap-3">
           <div className="flex gap-2">
-            <TabButton
-              label="Send now"
-              active={draft.sendTiming === "now"}
-              onClick={() => set("sendTiming", "now")}
-            />
-            <TabButton
-              label="Schedule"
+            <Tab label="Send now" active={draft.sendTiming === "now"} onClick={() => set("sendTiming", "now")} />
+            <Tab
+              label="Send later"
               active={draft.sendTiming === "scheduled"}
               onClick={() => set("sendTiming", "scheduled")}
             />
           </div>
           {draft.sendTiming === "scheduled" && (
-            <input
-              type="datetime-local"
-              value={draft.scheduledFor}
-              onChange={(e) => set("scheduledFor", e.target.value)}
-              className="w-full border bg-transparent p-3 text-sm outline-none"
-              style={{ borderColor: "var(--border-strong)", color: "var(--cream)", colorScheme: "dark" }}
-            />
+            <>
+              <input
+                type="datetime-local"
+                value={draft.scheduledFor}
+                onChange={(e) => set("scheduledFor", e.target.value)}
+                className="w-full border bg-transparent p-3 text-sm outline-none"
+                style={{
+                  borderColor: "var(--border-strong)",
+                  color: "var(--cream)",
+                  colorScheme: "dark",
+                }}
+              />
+              <p className="text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
+                Nothing reaches them before then — not even the link.
+              </p>
+            </>
           )}
         </section>
       </div>
@@ -208,6 +255,7 @@ export function MessageComposer({
         style={{
           borderColor: "var(--border)",
           background: "rgba(14, 13, 11, 0.95)",
+          backdropFilter: "blur(16px)",
           paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.25rem)",
         }}
       >
@@ -223,12 +271,12 @@ export function MessageComposer({
           </button>
           {!readyForPayment && (
             <p
-              className="mt-2 text-center text-[10px] leading-relaxed"
+              className="mt-2 text-center text-[11px] leading-relaxed"
               style={{ color: "var(--cream-faint)" }}
             >
               {!canContinue
-                ? "Fill in the recipient's name and a valid WhatsApp number to continue."
-                : "Recording works — but sending a voice or video message needs a Cloudflare R2 upload step that isn't built yet. Switch to Text above to continue."}
+                ? "Add their name and WhatsApp number to continue."
+                : "Voice and video recording works, but sending one needs media storage that isn't live yet. Switch to Write to continue."}
             </p>
           )}
         </div>
@@ -261,7 +309,7 @@ function Field({
   );
 }
 
-function TabButton({
+function Tab({
   label,
   active,
   onClick,
@@ -274,9 +322,11 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className="flex-1 border py-2.5 text-xs tracking-wide"
+      aria-pressed={active}
+      className="flex-1 border py-2.5 text-xs tracking-wide transition-colors"
       style={{
         borderColor: active ? "var(--gold)" : "var(--border)",
+        background: active ? "var(--gold-glow)" : "transparent",
         color: active ? "var(--gold-light)" : "var(--cream-faint)",
       }}
     >

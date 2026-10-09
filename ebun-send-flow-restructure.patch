@@ -1,0 +1,1296 @@
+diff --git a/apps/web/src/app/(consumer)/reveal/[token]/reveal-experience.tsx b/apps/web/src/app/(consumer)/reveal/[token]/reveal-experience.tsx
+index 4c54130..40fa079 100644
+--- a/apps/web/src/app/(consumer)/reveal/[token]/reveal-experience.tsx
++++ b/apps/web/src/app/(consumer)/reveal/[token]/reveal-experience.tsx
+@@ -1,5 +1,6 @@
+ "use client";
+ 
++import Link from "next/link";
+ import { useState, useTransition } from "react";
+ import { FulfillmentType } from "@ebun/types";
+ import type { RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
+@@ -565,6 +566,28 @@ function ClaimedScreen({
+         </p>
+       )}
+ 
++      {/*
++        The end of the recipient's journey, and the single highest-value
++        moment in the product — which until now did nothing at all.
++        The Brief calls the diaspora sender "Ebun's viral engine", on the
++        reasoning that "every gift introduces a new recipient who then
++        becomes a sender". There was no path from receiving to sending:
++        the screen simply stopped, and the most likely sender Ebun will
++        ever have closed the tab.
++      */}
++      <div className="flex flex-col gap-3">
++        <p className="text-center text-xs leading-relaxed" style={{ color: "var(--cream-faint)" }}>
++          Screenshot this — you&rsquo;ll need the code at the counter.
++        </p>
++        <Link
++          href="/send"
++          className="w-full py-3.5 text-center text-sm font-medium tracking-wide"
++          style={{ background: "var(--gold)", color: "var(--ink)" }}
++        >
++          Send one back
++        </Link>
++      </div>
++
+       {redemption.vendorHint && (
+         <div className="border px-4 py-3.5" style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}>
+           <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+diff --git a/apps/web/src/app/(consumer)/send/message-composer.tsx b/apps/web/src/app/(consumer)/send/compose.tsx
+similarity index 54%
+rename from apps/web/src/app/(consumer)/send/message-composer.tsx
+rename to apps/web/src/app/(consumer)/send/compose.tsx
+index 8ebb185..944a40e 100644
+--- a/apps/web/src/app/(consumer)/send/message-composer.tsx
++++ b/apps/web/src/app/(consumer)/send/compose.tsx
+@@ -3,8 +3,10 @@
+ import { useState } from "react";
+ import type { RecordedMedia } from "@/lib/media-recording/use-media-recorder";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
+-import { type OccasionId, messagePlaceholder } from "@/lib/occasions";
++import { OCCASIONS, type OccasionId, messagePlaceholder } from "@/lib/occasions";
++import { formatNaira } from "@/lib/format-money";
+ import { MediaRecorderPanel } from "./media-recorder-panel";
++import { RevealPreview } from "./reveal-preview";
+ 
+ export type MessageType = "text" | "voice" | "video";
+ export type SendTiming = "now" | "scheduled";
+@@ -29,19 +31,32 @@ export interface MessageDraft {
+ const PHONE_PATTERN = /^\+[1-9]\d{6,14}$/;
+ const MESSAGE_MAX_LENGTH = 2000;
+ 
+-export function MessageComposer({
++/**
++ * Who it's for and what you want to say — one screen, because that is
++ * one thought. Splitting the recipient onto its own step made the flow
++ * four gates long for a product competing with a bank transfer.
++ *
++ * The occasion lives here now rather than as the flow's first screen.
++ * It was a full gate that collected nothing: CreateOrderDto has no
++ * occasion field, so the only thing it ever did was choose a
++ * placeholder and print a row on the review summary. Demoted to what it
++ * actually is — a prompt for someone staring at an empty message box.
++ */
++export function Compose({
+   gift,
+-  occasion,
+   draft,
++  occasion,
+   onChangeDraft,
+-  onBack,
++  onChangeOccasion,
++  onChangeGift,
+   onContinue,
+ }: {
+   gift: GiftCatalogItem;
+-  occasion: OccasionId | null;
+   draft: MessageDraft;
++  occasion: OccasionId | null;
+   onChangeDraft: (draft: MessageDraft) => void;
+-  onBack: () => void;
++  onChangeOccasion: (occasion: OccasionId | null) => void;
++  onChangeGift: () => void;
+   onContinue: () => void;
+ }) {
+   const [touchedPhone, setTouchedPhone] = useState(false);
+@@ -56,48 +71,52 @@ export function MessageComposer({
+   // Recording works (see media-recorder-panel.tsx), but sending a
+   // recorded message doesn't — CreateOrderService rejects any
+   // messageType besides "text" today (no R2 upload step exists yet).
+-  // Blocking here, before the review screen, rather than letting a
+-  // real submit attempt fail with a 400 the sender can't do anything
+-  // about.
++  // Blocking here rather than letting a real submit fail with a 400 the
++  // sender can do nothing about.
+   const readyForPayment = canContinue && !isRecordingMode;
+ 
+   return (
+     <>
+       <button
+         type="button"
+-        onClick={onBack}
+-        className="mb-2 self-start text-xs tracking-wide"
+-        style={{ color: "var(--cream-dim)" }}
++        onClick={onChangeGift}
++        className="mb-5 flex w-full items-center gap-3 border p-3 text-left transition-colors hover:border-[color:var(--border-strong)]"
++        style={{ borderColor: "var(--border)", background: "var(--panel)" }}
+       >
+-        ← Change gift
++        <span className="min-w-0 flex-1">
++          <span className="block truncate text-sm" style={{ color: "var(--cream)" }}>
++            {gift.name}
++          </span>
++          <span className="block text-xs" style={{ color: "var(--gold-light)" }}>
++            {formatNaira(gift.basePrice)}
++          </span>
++        </span>
++        <span className="shrink-0 text-xs" style={{ color: "var(--cream-dim)" }}>
++          Change
++        </span>
+       </button>
+ 
+-      <div className="flex flex-col gap-1.5 pb-7 text-center">
+-        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
+-          Add your message
++      <div className="pb-7">
++        <h1 className="font-display text-3xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
++          Who&rsquo;s it for?
+         </h1>
+-        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
+-          Sending {gift.name}
+-        </p>
+       </div>
+ 
+       <div className="flex flex-col gap-8 pb-44">
+         <section className="flex flex-col gap-4">
+-          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
+-            Who&rsquo;s it for
+-          </h2>
+-          <Field label="Recipient's name">
++          <Field label="Their name">
+             <input
+               value={draft.recipientName}
+               onChange={(e) => set("recipientName", e.target.value)}
+               maxLength={200}
+               placeholder="Ada"
++              autoComplete="off"
+               className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
+               style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+             />
+           </Field>
+           <Field
+-            label="WhatsApp number"
++            label="Their WhatsApp number"
+             error={
+               touchedPhone && draft.recipientPhone.trim().length > 0 && !phoneIsValid
+                 ? "Include the country code, e.g. +2348012345678"
+@@ -110,36 +129,60 @@ export function MessageComposer({
+               onBlur={() => setTouchedPhone(true)}
+               placeholder="+2348012345678"
+               inputMode="tel"
++              autoComplete="tel"
+               className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
+               style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+             />
+           </Field>
+         </section>
+ 
++        {/*
++          Sits above the message box, not below it. Buried under the
++          composer it was the last thing on the screen and the first
++          thing hidden by the sticky pay bar — the one element whose
++          entire job is to be seen before the sender decides the effort
++          is worth it. Up here it personalises the moment a name is
++          typed, which is the earliest point Ebun can show what it is.
++        */}
++        <RevealPreview
++          gift={gift}
++          recipientName={draft.recipientName}
++          message={draft.messageType === "text" ? draft.text : ""}
++        />
++
+         <section className="flex flex-col gap-4">
+-          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
+-            Your message
+-          </h2>
+           <div className="flex gap-2">
+-            <TabButton
+-              label="Text"
+-              active={draft.messageType === "text"}
+-              onClick={() => set("messageType", "text")}
+-            />
+-            <TabButton
+-              label="Voice"
+-              active={draft.messageType === "voice"}
+-              onClick={() => set("messageType", "voice")}
+-            />
+-            <TabButton
+-              label="Video"
+-              active={draft.messageType === "video"}
+-              onClick={() => set("messageType", "video")}
+-            />
++            <Tab label="Write" active={draft.messageType === "text"} onClick={() => set("messageType", "text")} />
++            <Tab label="Voice" active={draft.messageType === "voice"} onClick={() => set("messageType", "voice")} />
++            <Tab label="Video" active={draft.messageType === "video"} onClick={() => set("messageType", "video")} />
+           </div>
+ 
+           {draft.messageType === "text" && (
+             <>
++              <p className="text-xs" style={{ color: "var(--cream-faint)" }}>
++                Stuck? Pick a prompt.
++              </p>
++              <div className="flex flex-wrap gap-1.5" aria-label="Message starting points">
++                {OCCASIONS.map((item) => {
++                  const active = occasion === item.id;
++                  return (
++                    <button
++                      key={item.id}
++                      type="button"
++                      aria-pressed={active}
++                      onClick={() => onChangeOccasion(active ? null : item.id)}
++                      className="border px-2.5 py-1.5 text-[11px] transition-colors"
++                      style={{
++                        borderColor: active ? "var(--gold)" : "var(--border)",
++                        background: active ? "var(--gold-glow)" : "transparent",
++                        color: active ? "var(--gold-light)" : "var(--cream-faint)",
++                      }}
++                    >
++                      {item.label}
++                    </button>
++                  );
++                })}
++              </div>
+               <textarea
+                 value={draft.text}
+                 onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
+@@ -148,9 +191,11 @@ export function MessageComposer({
+                 className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
+                 style={{ borderColor: "var(--border)", color: "var(--cream)" }}
+               />
+-              <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
+-                {draft.text.length}/{MESSAGE_MAX_LENGTH}
+-              </p>
++              {draft.text.length > MESSAGE_MAX_LENGTH - 200 && (
++                <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
++                  {draft.text.length}/{MESSAGE_MAX_LENGTH}
++                </p>
++              )}
+             </>
+           )}
+ 
+@@ -175,30 +220,32 @@ export function MessageComposer({
+           )}
+         </section>
+ 
+-        <section className="flex flex-col gap-4">
+-          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
+-            When should it land
+-          </h2>
++        <section className="flex flex-col gap-3">
+           <div className="flex gap-2">
+-            <TabButton
+-              label="Send now"
+-              active={draft.sendTiming === "now"}
+-              onClick={() => set("sendTiming", "now")}
+-            />
+-            <TabButton
+-              label="Schedule"
++            <Tab label="Send now" active={draft.sendTiming === "now"} onClick={() => set("sendTiming", "now")} />
++            <Tab
++              label="Send later"
+               active={draft.sendTiming === "scheduled"}
+               onClick={() => set("sendTiming", "scheduled")}
+             />
+           </div>
+           {draft.sendTiming === "scheduled" && (
+-            <input
+-              type="datetime-local"
+-              value={draft.scheduledFor}
+-              onChange={(e) => set("scheduledFor", e.target.value)}
+-              className="w-full border bg-transparent p-3 text-sm outline-none"
+-              style={{ borderColor: "var(--border-strong)", color: "var(--cream)", colorScheme: "dark" }}
+-            />
++            <>
++              <input
++                type="datetime-local"
++                value={draft.scheduledFor}
++                onChange={(e) => set("scheduledFor", e.target.value)}
++                className="w-full border bg-transparent p-3 text-sm outline-none"
++                style={{
++                  borderColor: "var(--border-strong)",
++                  color: "var(--cream)",
++                  colorScheme: "dark",
++                }}
++              />
++              <p className="text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
++                Nothing reaches them before then — not even the link.
++              </p>
++            </>
+           )}
+         </section>
+       </div>
+@@ -208,6 +255,7 @@ export function MessageComposer({
+         style={{
+           borderColor: "var(--border)",
+           background: "rgba(14, 13, 11, 0.95)",
++          backdropFilter: "blur(16px)",
+           paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.25rem)",
+         }}
+       >
+@@ -223,12 +271,12 @@ export function MessageComposer({
+           </button>
+           {!readyForPayment && (
+             <p
+-              className="mt-2 text-center text-[10px] leading-relaxed"
++              className="mt-2 text-center text-[11px] leading-relaxed"
+               style={{ color: "var(--cream-faint)" }}
+             >
+               {!canContinue
+-                ? "Fill in the recipient's name and a valid WhatsApp number to continue."
+-                : "Recording works — but sending a voice or video message needs a Cloudflare R2 upload step that isn't built yet. Switch to Text above to continue."}
++                ? "Add their name and WhatsApp number to continue."
++                : "Voice and video recording works, but sending one needs media storage that isn't live yet. Switch to Write to continue."}
+             </p>
+           )}
+         </div>
+@@ -261,7 +309,7 @@ function Field({
+   );
+ }
+ 
+-function TabButton({
++function Tab({
+   label,
+   active,
+   onClick,
+@@ -274,9 +322,11 @@ function TabButton({
+     <button
+       type="button"
+       onClick={onClick}
+-      className="flex-1 border py-2.5 text-xs tracking-wide"
++      aria-pressed={active}
++      className="flex-1 border py-2.5 text-xs tracking-wide transition-colors"
+       style={{
+         borderColor: active ? "var(--gold)" : "var(--border)",
++        background: active ? "var(--gold-glow)" : "transparent",
+         color: active ? "var(--gold-light)" : "var(--cream-faint)",
+       }}
+     >
+diff --git a/apps/web/src/app/(consumer)/send/gift-picker.tsx b/apps/web/src/app/(consumer)/send/gift-picker.tsx
+new file mode 100644
+index 0000000..6114813
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/gift-picker.tsx
+@@ -0,0 +1,194 @@
++"use client";
++
++import { useMemo, useState } from "react";
++import { FulfillmentType } from "@ebun/types";
++import { formatNaira } from "@/lib/format-money";
++import type { GiftCatalogItem } from "@/lib/gifts/types";
++
++const CATEGORY_LABEL: Record<GiftCatalogItem["category"], string> = {
++  food: "Food & drink",
++  experience: "Experiences",
++  keepsake: "Keepsakes",
++  utility: "Airtime & bills",
++};
++
++/**
++ * The entry point, and the hook.
++ *
++ * Replaces the old two-tap pattern (select a card, then press
++ * "Personalise" on a sticky bar) with one: tapping a gift IS choosing
++ * it. The sticky bar existed to confirm a selection the sender had
++ * already made by tapping, which is a tap spent on nothing — and the
++ * gift is shown again, with a way back, on the very next screen, so
++ * nothing is lost by moving straight on.
++ *
++ * Cards are built to work with no photograph, because today there are
++ * none. A card that leans on an image looks broken without one; this
++ * one leads with the gift's name in display type and treats the image,
++ * when it arrives, as reinforcement rather than the subject.
++ */
++export function GiftPicker({
++  catalog,
++  onChoose,
++}: {
++  catalog: GiftCatalogItem[];
++  onChoose: (gift: GiftCatalogItem) => void;
++}) {
++  const [category, setCategory] = useState<GiftCatalogItem["category"] | "all">("all");
++
++  const categories = useMemo(
++    () => [...new Set(catalog.map((item) => item.category))] as GiftCatalogItem["category"][],
++    [catalog],
++  );
++  const visible =
++    category === "all" ? catalog : catalog.filter((item) => item.category === category);
++
++  return (
++    <>
++      <div className="pb-6">
++        <h1 className="font-display text-3xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
++          What are you sending?
++        </h1>
++        <p className="mt-2 text-sm" style={{ color: "var(--cream-dim)" }}>
++          Pick one. You&rsquo;ll add your message next.
++        </p>
++      </div>
++
++      {categories.length > 1 && (
++        <div className="mb-5 flex gap-2 overflow-x-auto pb-1" aria-label="Gift categories">
++          <CategoryChip active={category === "all"} onClick={() => setCategory("all")}>
++            Everything
++          </CategoryChip>
++          {categories.map((item) => (
++            <CategoryChip
++              key={item}
++              active={category === item}
++              onClick={() => setCategory(item)}
++            >
++              {CATEGORY_LABEL[item]}
++            </CategoryChip>
++          ))}
++        </div>
++      )}
++
++      <div className="flex flex-col gap-3 pb-12">
++        {catalog.length === 0 && (
++          <div
++            className="border p-6 text-center text-sm leading-relaxed"
++            style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
++          >
++            The gift list didn&rsquo;t load. Check your connection and reload the page.
++          </div>
++        )}
++
++        {visible.map((item) => (
++          <GiftCard key={item.id} item={item} onChoose={() => onChoose(item)} />
++        ))}
++      </div>
++    </>
++  );
++}
++
++function CategoryChip({
++  active,
++  children,
++  onClick,
++}: {
++  active: boolean;
++  children: React.ReactNode;
++  onClick: () => void;
++}) {
++  return (
++    <button
++      type="button"
++      onClick={onClick}
++      aria-pressed={active}
++      className="shrink-0 border px-3.5 py-2 text-xs transition-colors"
++      style={{
++        borderColor: active ? "var(--gold)" : "var(--border)",
++        background: active ? "var(--gold-glow)" : "transparent",
++        color: active ? "var(--gold-light)" : "var(--cream-dim)",
++      }}
++    >
++      {children}
++    </button>
++  );
++}
++
++/**
++ * How the recipient actually gets it, in their words.
++ *
++ * Each fulfillment type is genuinely different and a sender choosing
++ * between them needs to know which: a voucher is collected in person, a
++ * top-up just arrives, a physical gift is delivered. Lumping VTU in
++ * with vouchers told a sender buying airtime that someone would have to
++ * walk into a shop for it.
++ */
++function describeCollection(item: GiftCatalogItem): string {
++  switch (item.deliveryType) {
++    case FulfillmentType.Physical:
++      return item.deliveryWindow ? `Delivered in ${item.deliveryWindow}` : "Delivered";
++    case FulfillmentType.Vtu:
++      return "Sent to their line in seconds";
++    default:
++      return "Collected in person";
++  }
++}
++
++function GiftCard({
++  item,
++  onChoose,
++}: {
++  item: GiftCatalogItem;
++  onChoose: () => void;
++}) {
++  const collection = describeCollection(item);
++
++  return (
++    <button
++      type="button"
++      onClick={onChoose}
++      className="flex w-full gap-4 border p-4 text-left transition-colors duration-150 hover:border-[color:var(--border-strong)]"
++      style={{ borderColor: "var(--border)", background: "var(--panel)" }}
++    >
++      {/*
++        No placeholder frame when there is no photograph. An empty
++        bordered square repeated down the list reads as an image that
++        failed to load; without it the card is simply type-led, which
++        looks like a decision rather than a gap. The catalogue has no
++        images today, so this is the state that actually ships.
++      */}
++      {item.imageUrl && (
++        <div
++          className="h-20 w-20 shrink-0 overflow-hidden border"
++          style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}
++        >
++          {/* eslint-disable-next-line @next/next/no-img-element -- catalog images are remote URLs */}
++          <img src={item.imageUrl} alt="" className="h-full w-full object-cover" />
++        </div>
++      )}
++
++      <div className="min-w-0 flex-1">
++        <h2 className="font-display text-xl leading-tight" style={{ color: "var(--cream)" }}>
++          {item.name}
++        </h2>
++        {item.description && (
++          <p
++            className="mt-1.5 text-xs leading-relaxed"
++            style={{ color: "var(--cream-dim)" }}
++          >
++            {item.description}
++          </p>
++        )}
++        <div className="mt-3 flex items-baseline gap-3">
++          <span className="text-sm" style={{ color: "var(--gold-light)" }}>
++            {formatNaira(item.basePrice)}
++          </span>
++          <span className="text-[11px]" style={{ color: "var(--cream-faint)" }}>
++            {collection}
++          </span>
++        </div>
++      </div>
++    </button>
++  );
++}
+diff --git a/apps/web/src/app/(consumer)/send/gift-selector.tsx b/apps/web/src/app/(consumer)/send/gift-selector.tsx
+deleted file mode 100644
+index f590e94..0000000
+--- a/apps/web/src/app/(consumer)/send/gift-selector.tsx
++++ /dev/null
+@@ -1,232 +0,0 @@
+-"use client";
+-
+-import { useMemo, useState } from "react";
+-import { FulfillmentType } from "@ebun/types";
+-import { GiftMark } from "@/components/icons";
+-import { formatNaira } from "@/lib/format-money";
+-import type { GiftCatalogItem } from "@/lib/gifts/types";
+-
+-const CATEGORY_LABEL: Record<GiftCatalogItem["category"], string> = {
+-  food: "Food & drink",
+-  experience: "Experiences",
+-  keepsake: "Keepsakes",
+-  utility: "Utility",
+-};
+-
+-/**
+- * Second phase of the sender flow. Filtering and selection are purely
+- * local display state; the selected catalog item is still passed through
+- * unchanged to the existing message and payment steps.
+- */
+-export function GiftSelector({
+-  catalog,
+-  initialSelectedId,
+-  onContinue,
+-  onBack,
+-}: {
+-  catalog: GiftCatalogItem[];
+-  initialSelectedId: string | null;
+-  onContinue: (gift: GiftCatalogItem) => void;
+-  onBack: () => void;
+-}) {
+-  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
+-  const [category, setCategory] = useState<GiftCatalogItem["category"] | "all">("all");
+-
+-  const categories = useMemo(
+-    () => [...new Set(catalog.map((item) => item.category))] as GiftCatalogItem["category"][],
+-    [catalog],
+-  );
+-  const visibleCatalog =
+-    category === "all" ? catalog : catalog.filter((item) => item.category === category);
+-  const selected = catalog.find((item) => item.id === selectedId) ?? null;
+-
+-  return (
+-    <>
+-      <button
+-        type="button"
+-        onClick={onBack}
+-        className="mb-5 self-start text-xs tracking-wide transition-colors hover:text-[color:var(--cream)]"
+-        style={{ color: "var(--cream-dim)" }}
+-      >
+-        ← Occasion
+-      </button>
+-
+-      <div className="pb-5">
+-        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
+-          Choose a gift
+-        </h1>
+-        <p className="mt-2 text-sm" style={{ color: "var(--cream-dim)" }}>
+-          Thoughtful options, ready to make their day.
+-        </p>
+-      </div>
+-
+-      {categories.length > 1 && (
+-        <div className="mb-4 flex gap-2 overflow-x-auto pb-1" aria-label="Gift categories">
+-          <CategoryButton active={category === "all"} onClick={() => setCategory("all")}>
+-            All gifts
+-          </CategoryButton>
+-          {categories.map((itemCategory) => (
+-            <CategoryButton
+-              key={itemCategory}
+-              active={category === itemCategory}
+-              onClick={() => setCategory(itemCategory)}
+-            >
+-              {CATEGORY_LABEL[itemCategory]}
+-            </CategoryButton>
+-          ))}
+-        </div>
+-      )}
+-
+-      <div className={selected ? "flex flex-col gap-3 pb-32" : "flex flex-col gap-3 pb-10"}>
+-        {catalog.length === 0 && (
+-          <div
+-            className="border p-5 text-center text-sm leading-relaxed"
+-            style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
+-          >
+-            Couldn&rsquo;t load the gift catalogue right now. Check your connection and reload the
+-            page.
+-          </div>
+-        )}
+-
+-        {visibleCatalog.map((item) => (
+-          <GiftCard
+-            key={item.id}
+-            item={item}
+-            selected={item.id === selectedId}
+-            onSelect={() => setSelectedId(item.id)}
+-          />
+-        ))}
+-      </div>
+-
+-      {selected && (
+-        <div
+-          className="fixed inset-x-0 bottom-0 z-10 border-t px-7 pt-3"
+-          style={{
+-            borderColor: "var(--border)",
+-            background: "rgba(14, 13, 11, 0.96)",
+-            backdropFilter: "blur(16px)",
+-            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)",
+-          }}
+-        >
+-          <div className="mx-auto flex max-w-[440px] items-center justify-between gap-4">
+-            <div className="min-w-0">
+-              <p className="truncate text-sm" style={{ color: "var(--cream)" }}>
+-                {selected.name}
+-              </p>
+-              <p className="mt-0.5 text-xs" style={{ color: "var(--gold-light)" }}>
+-                {formatNaira(selected.basePrice)}
+-              </p>
+-            </div>
+-            <button
+-              type="button"
+-              onClick={() => onContinue(selected)}
+-              className="min-h-12 shrink-0 px-5 text-sm font-semibold transition-colors hover:bg-[color:var(--gold-light)]"
+-              style={{ background: "var(--gold)", color: "var(--ink)" }}
+-            >
+-              Personalise <span aria-hidden="true">→</span>
+-            </button>
+-          </div>
+-        </div>
+-      )}
+-    </>
+-  );
+-}
+-
+-function CategoryButton({
+-  active,
+-  children,
+-  onClick,
+-}: {
+-  active: boolean;
+-  children: React.ReactNode;
+-  onClick: () => void;
+-}) {
+-  return (
+-    <button
+-      type="button"
+-      onClick={onClick}
+-      aria-pressed={active}
+-      className="shrink-0 border px-3 py-2 text-xs transition-colors"
+-      style={{
+-        borderColor: active ? "var(--gold)" : "var(--border)",
+-        background: active ? "var(--gold-glow)" : "transparent",
+-        color: active ? "var(--gold-light)" : "var(--cream-dim)",
+-      }}
+-    >
+-      {children}
+-    </button>
+-  );
+-}
+-
+-function GiftCard({
+-  item,
+-  selected,
+-  onSelect,
+-}: {
+-  item: GiftCatalogItem;
+-  selected: boolean;
+-  onSelect: () => void;
+-}) {
+-  const fulfillmentLabel =
+-    item.deliveryType === FulfillmentType.Physical ? "Delivered" : "Redeem in person";
+-
+-  return (
+-    <button
+-      type="button"
+-      onClick={onSelect}
+-      aria-pressed={selected}
+-      className="relative flex w-full gap-4 border p-3 text-left transition-[border-color,background-color] duration-150"
+-      style={{
+-        borderColor: selected ? "var(--gold)" : "var(--border)",
+-        background: selected ? "var(--gold-glow)" : "var(--panel)",
+-      }}
+-    >
+-      <div
+-        className="flex h-22 w-22 shrink-0 items-center justify-center border"
+-        style={{
+-          borderColor: selected ? "var(--border-strong)" : "var(--border)",
+-          background: "var(--panel-raised)",
+-        }}
+-      >
+-        {item.imageUrl ? (
+-          // eslint-disable-next-line @next/next/no-img-element -- catalog images are remote URLs
+-          <img src={item.imageUrl} alt="" className="h-full w-full object-cover" />
+-        ) : (
+-          <GiftMark className="h-8 w-8 text-[color:var(--gold-dim)]" />
+-        )}
+-      </div>
+-
+-      <div className="min-w-0 flex-1 pr-5">
+-        <div className="flex items-start justify-between gap-3">
+-          <h2 className="font-display text-xl leading-tight" style={{ color: "var(--cream)" }}>
+-            {item.name}
+-          </h2>
+-          <span className="shrink-0 text-sm" style={{ color: "var(--gold-light)" }}>
+-            {formatNaira(item.basePrice)}
+-          </span>
+-        </div>
+-        {item.description && (
+-          <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+-            {item.description}
+-          </p>
+-        )}
+-        <p className="mt-3 text-[10px] tracking-[0.12em] uppercase" style={{ color: "var(--gold-dim)" }}>
+-          {fulfillmentLabel}
+-          {item.deliveryWindow ? " · " + item.deliveryWindow : ""}
+-        </p>
+-      </div>
+-
+-      <span
+-        aria-hidden="true"
+-        className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full border"
+-        style={{
+-          borderColor: selected ? "var(--gold)" : "var(--border-strong)",
+-          background: selected ? "var(--gold)" : "transparent",
+-          color: "var(--ink)",
+-        }}
+-      >
+-        {selected ? "✓" : ""}
+-      </span>
+-    </button>
+-  );
+-}
+diff --git a/apps/web/src/app/(consumer)/send/occasion-selector.tsx b/apps/web/src/app/(consumer)/send/occasion-selector.tsx
+deleted file mode 100644
+index 1208c56..0000000
+--- a/apps/web/src/app/(consumer)/send/occasion-selector.tsx
++++ /dev/null
+@@ -1,102 +0,0 @@
+-"use client";
+-
+-import { useState } from "react";
+-import { OCCASIONS, type OccasionId } from "@/lib/occasions";
+-
+-/**
+- * First phase of the sender flow, per the Product Brief (occasion ->
+- * gift -> personalise -> pay). Selection remains client-side only:
+- * it shapes the message prompt and review summary without changing the
+- * order request or any API contract.
+- */
+-export function OccasionSelector({
+-  initialSelected,
+-  onContinue,
+-}: {
+-  initialSelected: OccasionId | null;
+-  onContinue: (occasion: OccasionId) => void;
+-}) {
+-  const [selected, setSelected] = useState<OccasionId | null>(initialSelected);
+-  const selectedLabel = OCCASIONS.find((occasion) => occasion.id === selected)?.label;
+-
+-  return (
+-    <>
+-      <div className="pb-6">
+-        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
+-          What&rsquo;s the occasion?
+-        </h1>
+-        <p className="mt-2 text-sm" style={{ color: "var(--cream-dim)" }}>
+-          Choose one to shape the message that follows.
+-        </p>
+-      </div>
+-
+-      <div className={selected ? "grid grid-cols-2 gap-3 pb-32" : "grid grid-cols-2 gap-3 pb-10"}>
+-        {OCCASIONS.map((occasion, index) => {
+-          const active = occasion.id === selected;
+-
+-          return (
+-            <button
+-              key={occasion.id}
+-              type="button"
+-              onClick={() => setSelected(occasion.id)}
+-              aria-pressed={active}
+-              className="flex min-h-28 flex-col justify-between border p-4 text-left transition-[border-color,background-color] duration-150"
+-              style={{
+-                borderColor: active ? "var(--gold)" : "var(--border)",
+-                background: active ? "var(--gold-glow)" : "transparent",
+-              }}
+-            >
+-              <span
+-                className="text-[10px] tracking-[0.18em]"
+-                style={{ color: active ? "var(--gold)" : "var(--gold-dim)" }}
+-              >
+-                {String(index + 1).padStart(2, "0")}
+-              </span>
+-              <span className="flex items-end justify-between gap-2">
+-                <span
+-                  className="font-display text-xl leading-tight"
+-                  style={{ color: active ? "var(--gold-light)" : "var(--cream)" }}
+-                >
+-                  {occasion.label}
+-                </span>
+-                {active && (
+-                  <span
+-                    aria-hidden="true"
+-                    className="mb-1 h-1.5 w-1.5 shrink-0 rounded-full"
+-                    style={{ background: "var(--gold)" }}
+-                  />
+-                )}
+-              </span>
+-            </button>
+-          );
+-        })}
+-      </div>
+-
+-      {selected && selectedLabel && (
+-        <div
+-          className="fixed inset-x-0 bottom-0 z-10 border-t px-7 pt-4"
+-          style={{
+-            borderColor: "var(--border)",
+-            background: "rgba(14, 13, 11, 0.96)",
+-            backdropFilter: "blur(16px)",
+-            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)",
+-          }}
+-        >
+-          <div className="mx-auto flex max-w-[440px] items-center justify-between gap-4">
+-            <p className="font-display min-w-0 truncate text-lg" style={{ color: "var(--cream)" }}>
+-              {selectedLabel}
+-            </p>
+-            <button
+-              type="button"
+-              onClick={() => onContinue(selected)}
+-              className="min-h-12 shrink-0 px-5 text-sm font-semibold transition-colors hover:bg-[color:var(--gold-light)]"
+-              style={{ background: "var(--gold)", color: "var(--ink)" }}
+-            >
+-              Choose gift <span aria-hidden="true">→</span>
+-            </button>
+-          </div>
+-        </div>
+-      )}
+-    </>
+-  );
+-}
+diff --git a/apps/web/src/app/(consumer)/send/reveal-preview.tsx b/apps/web/src/app/(consumer)/send/reveal-preview.tsx
+new file mode 100644
+index 0000000..fa9a365
+--- /dev/null
++++ b/apps/web/src/app/(consumer)/send/reveal-preview.tsx
+@@ -0,0 +1,109 @@
++"use client";
++
++import { GiftMark } from "@/components/icons";
++import type { GiftCatalogItem } from "@/lib/gifts/types";
++
++/**
++ * What the recipient will see, shown to the sender while they are still
++ * deciding whether this is worth the effort.
++ *
++ * This is the single most important screen element in the sender flow.
++ * Ebun asks for more work than the thing it replaces — a bank transfer
++ * is a number, an amount and a tap — and the reason to accept that extra
++ * work is an experience that happens to somebody else, later, out of
++ * sight. Every version of this flow before this one charged the cost up
++ * front and delivered the value where the sender could never see it.
++ *
++ * Deliberately NOT a phone mockup with a notch and a status bar. A
++ * drawn device frame is decoration that competes with the thing it is
++ * framing; this is a quiet card that borrows the reveal screen's own
++ * display type and gold so it reads as a window onto that moment
++ * rather than a picture of a phone.
++ */
++export function RevealPreview({
++  gift,
++  recipientName,
++  message,
++  senderName,
++}: {
++  gift: GiftCatalogItem;
++  recipientName: string;
++  message: string;
++  senderName?: string;
++}) {
++  const name = recipientName.trim();
++  const body = message.trim();
++  const from = senderName?.trim();
++
++  return (
++    <figure className="m-0 flex flex-col gap-3">
++      <figcaption className="text-xs" style={{ color: "var(--cream-dim)" }}>
++        {name ? `What ${name} opens` : "What they open"}
++      </figcaption>
++
++      <div
++        className="flex flex-col gap-5 border px-5 py-6"
++        style={{
++          borderColor: "var(--border-strong)",
++          background: "var(--panel)",
++        }}
++      >
++        <p
++          className="font-display text-xl leading-snug"
++          style={{ color: "var(--cream)" }}
++        >
++          {name ? `${name}, someone's` : "Someone's"}
++          <br />
++          thinking of you.
++        </p>
++
++        <div
++          className="flex gap-4 border-t pt-5"
++          style={{ borderColor: "var(--border)" }}
++        >
++          <div
++            className="flex h-14 w-14 shrink-0 items-center justify-center border"
++            style={{
++              borderColor: "var(--border)",
++              background: "var(--panel-raised)",
++            }}
++          >
++            {gift.imageUrl ? (
++              // eslint-disable-next-line @next/next/no-img-element -- catalog images are remote URLs
++              <img src={gift.imageUrl} alt="" className="h-full w-full object-cover" />
++            ) : (
++              <GiftMark className="h-6 w-6 text-[color:var(--gold-dim)]" />
++            )}
++          </div>
++          <div className="min-w-0 flex-1">
++            <p className="font-display text-lg leading-tight" style={{ color: "var(--cream)" }}>
++              {gift.name}
++            </p>
++            {body ? (
++              <p
++                className="mt-2 text-xs leading-relaxed"
++                style={{ color: "var(--cream-dim)" }}
++              >
++                &ldquo;{body.length > 120 ? `${body.slice(0, 120)}…` : body}&rdquo;
++              </p>
++            ) : (
++              // An empty state that tells the sender what is missing and
++              // why it matters, rather than leaving a silent gap.
++              <p
++                className="mt-2 text-xs leading-relaxed"
++                style={{ color: "var(--cream-faint)" }}
++              >
++                Your message appears here. This is the part they remember.
++              </p>
++            )}
++            {from && (
++              <p className="mt-3 text-[11px]" style={{ color: "var(--gold-dim)" }}>
++                From {from}
++              </p>
++            )}
++          </div>
++        </div>
++      </div>
++    </figure>
++  );
++}
+diff --git a/apps/web/src/app/(consumer)/send/review-and-pay.tsx b/apps/web/src/app/(consumer)/send/review-and-pay.tsx
+index 39284b9..9e9a537 100644
+--- a/apps/web/src/app/(consumer)/send/review-and-pay.tsx
++++ b/apps/web/src/app/(consumer)/send/review-and-pay.tsx
+@@ -4,19 +4,25 @@ import { useState } from "react";
+ import { CreateOrderError, createOrder } from "@/lib/orders/create-order";
+ import { formatNaira } from "@/lib/format-money";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
+-import { type OccasionId, getOccasionLabel } from "@/lib/occasions";
+-import type { MessageDraft } from "./message-composer";
++import type { MessageDraft } from "./compose";
+ 
+ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+ 
++/**
++ * The last step: who's paying, and how much.
++ *
++ * The summary is short on purpose. The sender has just come from a
++ * screen that showed them the recipient's whole experience, message
++ * included — repeating it line by line here is a second review of
++ * something already reviewed, and every row is one more thing between
++ * a decided sender and Paystack.
++ */
+ export function ReviewAndPay({
+   gift,
+-  occasion,
+   message,
+   onBack,
+ }: {
+   gift: GiftCatalogItem;
+-  occasion: OccasionId | null;
+   message: MessageDraft;
+   onBack: () => void;
+ }) {
+@@ -69,18 +75,18 @@ export function ReviewAndPay({
+       <button
+         type="button"
+         onClick={onBack}
+-        className="mb-2 self-start text-xs tracking-wide"
++        className="mb-5 self-start text-xs tracking-wide transition-colors hover:text-[color:var(--cream)]"
+         style={{ color: "var(--cream-dim)" }}
+       >
+-        ← Edit message
++        ← Back to your message
+       </button>
+ 
+-      <div className="flex flex-col gap-1.5 pb-7 text-center">
+-        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
+-          Review &amp; pay
++      <div className="pb-7">
++        <h1 className="font-display text-3xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
++          Last step.
+         </h1>
+-        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
+-          One last check before it&rsquo;s on its way.
++        <p className="mt-2 text-sm" style={{ color: "var(--cream-dim)" }}>
++          We need these for your receipt.
+         </p>
+       </div>
+ 
+@@ -89,28 +95,20 @@ export function ReviewAndPay({
+           className="flex flex-col gap-3 border p-4"
+           style={{ borderColor: "var(--border)" }}
+         >
+-          {getOccasionLabel(occasion) && (
+-            // Display only — not submitted; CreateOrderDto has no occasion field.
+-            <SummaryRow label="Occasion" value={getOccasionLabel(occasion) as string} />
+-          )}
+-          <SummaryRow label="Gift" value={gift.name} />
+-          <SummaryRow label="For" value={message.recipientName} />
+-          <SummaryRow label="To" value={message.recipientPhone} />
+-          <SummaryRow
+-            label="Message"
+-            value={message.text.trim() ? `"${message.text.trim()}"` : "No message attached"}
+-          />
++          <SummaryRow label="Sending" value={gift.name} />
+           <SummaryRow
+-            label="Timing"
+-            value={
+-              message.sendTiming === "scheduled" && message.scheduledFor
+-                ? new Date(message.scheduledFor).toLocaleString("en-NG", {
+-                    dateStyle: "medium",
+-                    timeStyle: "short",
+-                  })
+-                : "Sent immediately"
+-            }
++            label="To"
++            value={`${message.recipientName} · ${message.recipientPhone}`}
+           />
++          {message.sendTiming === "scheduled" && message.scheduledFor && (
++            <SummaryRow
++              label="Arrives"
++              value={new Date(message.scheduledFor).toLocaleString("en-NG", {
++                dateStyle: "medium",
++                timeStyle: "short",
++              })}
++            />
++          )}
+           <div
+             className="mt-1 flex items-baseline justify-between border-t pt-3"
+             style={{ borderColor: "var(--border)" }}
+@@ -125,9 +123,6 @@ export function ReviewAndPay({
+         </section>
+ 
+         <section className="flex flex-col gap-4">
+-          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
+-            Your details
+-          </h2>
+           <Field label="Your name">
+             <input
+               value={senderName}
+diff --git a/apps/web/src/app/(consumer)/send/send-experience.tsx b/apps/web/src/app/(consumer)/send/send-experience.tsx
+index 0aab7ac..99d794f 100644
+--- a/apps/web/src/app/(consumer)/send/send-experience.tsx
++++ b/apps/web/src/app/(consumer)/send/send-experience.tsx
+@@ -3,12 +3,11 @@
+ import { useState } from "react";
+ import type { GiftCatalogItem } from "@/lib/gifts/types";
+ import type { OccasionId } from "@/lib/occasions";
+-import { GiftSelector } from "./gift-selector";
+-import { MessageComposer, type MessageDraft } from "./message-composer";
+-import { OccasionSelector } from "./occasion-selector";
++import { Compose, type MessageDraft } from "./compose";
++import { GiftPicker } from "./gift-picker";
+ import { ReviewAndPay } from "./review-and-pay";
+ 
+-type Phase = "occasion" | "gift" | "message" | "review";
++type Phase = "gift" | "compose" | "pay";
+ 
+ export interface SendDraft {
+   occasion: OccasionId | null;
+@@ -27,22 +26,31 @@ const EMPTY_MESSAGE: MessageDraft = {
+ };
+ 
+ const PHASES: { id: Phase; label: string }[] = [
+-  { id: "occasion", label: "Occasion" },
+   { id: "gift", label: "Gift" },
+-  { id: "message", label: "Message" },
+-  { id: "review", label: "Pay" },
++  { id: "compose", label: "Message" },
++  { id: "pay", label: "Pay" },
+ ];
+ 
+ /**
+- * Owns the whole sender-flow wizard's state — one client component
+- * across phases, same reasoning as reveal-experience.tsx: this is
+- * fundamentally one form that submits together as a single
+- * POST /orders call, not several independently-navigable pages, so
+- * there's no reason to fight Next.js routing to pass state between
+- * separate route segments.
++ * Three steps, down from four.
++ *
++ * The flow this replaces opened on an occasion picker, which was a full
++ * gate that collected nothing — CreateOrderDto has no occasion field,
++ * so its entire effect was choosing a message placeholder. For a
++ * product whose competition is a bank transfer (a number, an amount, a
++ * tap), a screen that costs the sender a decision and returns no value
++ * is the most expensive thing in the app. The occasion now sits beside
++ * the message box, doing its one real job.
++ *
++ * Recipient details moved in with the message because "who it's for and
++ * what I want to say" is one thought, not two.
++ *
++ * Still one client component across phases, same reasoning as
++ * reveal-experience.tsx: this is one form that submits as a single
++ * POST /orders, not several independently-navigable pages.
+  */
+ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+-  const [phase, setPhase] = useState<Phase>("occasion");
++  const [phase, setPhase] = useState<Phase>("gift");
+   const [draft, setDraft] = useState<SendDraft>({
+     occasion: null,
+     gift: null,
+@@ -54,17 +62,14 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
+       <header className="pt-5 pb-7">
+         <div className="flex items-center justify-between">
+-          <p
+-            className="font-display text-base tracking-[0.2em]"
+-            style={{ color: "var(--gold)" }}
+-          >
++          <p className="font-display text-base tracking-[0.2em]" style={{ color: "var(--gold)" }}>
+             EBUN
+           </p>
+           <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
+             Step {currentPhaseIndex + 1} of {PHASES.length}
+           </p>
+         </div>
+-        <ol className="mt-4 grid grid-cols-4 gap-1.5" aria-label="Send a gift progress">
++        <ol className="mt-4 grid grid-cols-3 gap-1.5" aria-label="Send a gift progress">
+           {PHASES.map((item, index) => {
+             const isCurrent = index === currentPhaseIndex;
+             const isComplete = index < currentPhaseIndex;
+@@ -87,45 +92,33 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
+         </ol>
+       </header>
+ 
+-      {phase === "occasion" && (
+-        <OccasionSelector
+-          initialSelected={draft.occasion}
+-          onContinue={(occasion) => {
+-            setDraft((prev) => ({ ...prev, occasion }));
+-            setPhase("gift");
+-          }}
+-        />
+-      )}
+-
+       {phase === "gift" && (
+-        <GiftSelector
++        <GiftPicker
+           catalog={catalog}
+-          initialSelectedId={draft.gift?.id ?? null}
+-          onBack={() => setPhase("occasion")}
+-          onContinue={(gift) => {
++          onChoose={(gift) => {
+             setDraft((prev) => ({ ...prev, gift }));
+-            setPhase("message");
++            setPhase("compose");
+           }}
+         />
+       )}
+ 
+-      {phase === "message" && draft.gift && (
+-        <MessageComposer
++      {phase === "compose" && draft.gift && (
++        <Compose
+           gift={draft.gift}
+-          occasion={draft.occasion}
+           draft={draft.message}
++          occasion={draft.occasion}
+           onChangeDraft={(message) => setDraft((prev) => ({ ...prev, message }))}
+-          onBack={() => setPhase("gift")}
+-          onContinue={() => setPhase("review")}
++          onChangeOccasion={(occasion) => setDraft((prev) => ({ ...prev, occasion }))}
++          onChangeGift={() => setPhase("gift")}
++          onContinue={() => setPhase("pay")}
+         />
+       )}
+ 
+-      {phase === "review" && draft.gift && (
++      {phase === "pay" && draft.gift && (
+         <ReviewAndPay
+           gift={draft.gift}
+-          occasion={draft.occasion}
+           message={draft.message}
+-          onBack={() => setPhase("message")}
++          onBack={() => setPhase("compose")}
+         />
+       )}
+     </div>
+diff --git a/apps/web/src/lib/occasions.ts b/apps/web/src/lib/occasions.ts
+index b792814..f595f4d 100644
+--- a/apps/web/src/lib/occasions.ts
++++ b/apps/web/src/lib/occasions.ts
+@@ -2,12 +2,15 @@
+  * The six occasions named in the Product Brief's sender flow — nothing
+  * added. Order is the display order.
+  *
+- * NOT sent to the backend: CreateOrderDto has no occasion field, so this
+- * is captured client-side and used for two things only — shaping the
+- * message placeholder (below) and showing on the review summary.
+- * Persisting it (a column + a DTO field) is worth doing eventually for
+- * analytics on which occasions drive volume, but it's a schema change and
+- * a separate decision, not something to sneak into a UI slice.
++ * NOT sent to the backend: CreateOrderDto has no occasion field. It now
++ * does exactly one job — shaping the message placeholder below — and the
++ * UI reflects that: it used to be the sender flow's first screen, a full
++ * gate that cost a decision and returned nothing, and it is now a row of
++ * prompts beside the message box.
++ *
++ * If an occasion column and DTO field are ever added, this becomes real
++ * data worth asking for, and earns a more prominent place back. Until
++ * then it is a writing aid, and is presented as one.
+  */
+ export const OCCASIONS = [
+   { id: "birthday", label: "Birthday" },

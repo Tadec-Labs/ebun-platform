@@ -2,12 +2,15 @@
  * The six occasions named in the Product Brief's sender flow — nothing
  * added. Order is the display order.
  *
- * NOT sent to the backend: CreateOrderDto has no occasion field, so this
- * is captured client-side and used for two things only — shaping the
- * message placeholder (below) and showing on the review summary.
- * Persisting it (a column + a DTO field) is worth doing eventually for
- * analytics on which occasions drive volume, but it's a schema change and
- * a separate decision, not something to sneak into a UI slice.
+ * NOT sent to the backend: CreateOrderDto has no occasion field. It now
+ * does exactly one job — shaping the message placeholder below — and the
+ * UI reflects that: it used to be the sender flow's first screen, a full
+ * gate that cost a decision and returned nothing, and it is now a row of
+ * prompts beside the message box.
+ *
+ * If an occasion column and DTO field are ever added, this becomes real
+ * data worth asking for, and earns a more prominent place back. Until
+ * then it is a writing aid, and is presented as one.
  */
 export const OCCASIONS = [
   { id: "birthday", label: "Birthday" },

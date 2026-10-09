@@ -4,19 +4,25 @@ import { useState } from "react";
 import { CreateOrderError, createOrder } from "@/lib/orders/create-order";
 import { formatNaira } from "@/lib/format-money";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
-import { type OccasionId, getOccasionLabel } from "@/lib/occasions";
-import type { MessageDraft } from "./message-composer";
+import type { MessageDraft } from "./compose";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * The last step: who's paying, and how much.
+ *
+ * The summary is short on purpose. The sender has just come from a
+ * screen that showed them the recipient's whole experience, message
+ * included — repeating it line by line here is a second review of
+ * something already reviewed, and every row is one more thing between
+ * a decided sender and Paystack.
+ */
 export function ReviewAndPay({
   gift,
-  occasion,
   message,
   onBack,
 }: {
   gift: GiftCatalogItem;
-  occasion: OccasionId | null;
   message: MessageDraft;
   onBack: () => void;
 }) {
@@ -69,18 +75,18 @@ export function ReviewAndPay({
       <button
         type="button"
         onClick={onBack}
-        className="mb-2 self-start text-xs tracking-wide"
+        className="mb-5 self-start text-xs tracking-wide transition-colors hover:text-[color:var(--cream)]"
         style={{ color: "var(--cream-dim)" }}
       >
-        ← Edit message
+        ← Back to your message
       </button>
 
-      <div className="flex flex-col gap-1.5 pb-7 text-center">
-        <h1 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
-          Review &amp; pay
+      <div className="pb-7">
+        <h1 className="font-display text-3xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
+          Last step.
         </h1>
-        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
-          One last check before it&rsquo;s on its way.
+        <p className="mt-2 text-sm" style={{ color: "var(--cream-dim)" }}>
+          We need these for your receipt.
         </p>
       </div>
 
@@ -89,28 +95,20 @@ export function ReviewAndPay({
           className="flex flex-col gap-3 border p-4"
           style={{ borderColor: "var(--border)" }}
         >
-          {getOccasionLabel(occasion) && (
-            // Display only — not submitted; CreateOrderDto has no occasion field.
-            <SummaryRow label="Occasion" value={getOccasionLabel(occasion) as string} />
+          <SummaryRow label="Sending" value={gift.name} />
+          <SummaryRow
+            label="To"
+            value={`${message.recipientName} · ${message.recipientPhone}`}
+          />
+          {message.sendTiming === "scheduled" && message.scheduledFor && (
+            <SummaryRow
+              label="Arrives"
+              value={new Date(message.scheduledFor).toLocaleString("en-NG", {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            />
           )}
-          <SummaryRow label="Gift" value={gift.name} />
-          <SummaryRow label="For" value={message.recipientName} />
-          <SummaryRow label="To" value={message.recipientPhone} />
-          <SummaryRow
-            label="Message"
-            value={message.text.trim() ? `"${message.text.trim()}"` : "No message attached"}
-          />
-          <SummaryRow
-            label="Timing"
-            value={
-              message.sendTiming === "scheduled" && message.scheduledFor
-                ? new Date(message.scheduledFor).toLocaleString("en-NG", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })
-                : "Sent immediately"
-            }
-          />
           <div
             className="mt-1 flex items-baseline justify-between border-t pt-3"
             style={{ borderColor: "var(--border)" }}
@@ -125,9 +123,6 @@ export function ReviewAndPay({
         </section>
 
         <section className="flex flex-col gap-4">
-          <h2 className="text-[11px] tracking-wide uppercase" style={{ color: "var(--gold-dim)" }}>
-            Your details
-          </h2>
           <Field label="Your name">
             <input
               value={senderName}

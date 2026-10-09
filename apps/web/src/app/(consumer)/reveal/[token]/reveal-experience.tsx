@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { FulfillmentType } from "@ebun/types";
 import type { RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
@@ -564,6 +565,28 @@ function ClaimedScreen({
           })}
         </p>
       )}
+
+      {/*
+        The end of the recipient's journey, and the single highest-value
+        moment in the product — which until now did nothing at all.
+        The Brief calls the diaspora sender "Ebun's viral engine", on the
+        reasoning that "every gift introduces a new recipient who then
+        becomes a sender". There was no path from receiving to sending:
+        the screen simply stopped, and the most likely sender Ebun will
+        ever have closed the tab.
+      */}
+      <div className="flex flex-col gap-3">
+        <p className="text-center text-xs leading-relaxed" style={{ color: "var(--cream-faint)" }}>
+          Screenshot this — you&rsquo;ll need the code at the counter.
+        </p>
+        <Link
+          href="/send"
+          className="w-full py-3.5 text-center text-sm font-medium tracking-wide"
+          style={{ background: "var(--gold)", color: "var(--ink)" }}
+        >
+          Send one back
+        </Link>
+      </div>
 
       {redemption.vendorHint && (
         <div className="border px-4 py-3.5" style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}>

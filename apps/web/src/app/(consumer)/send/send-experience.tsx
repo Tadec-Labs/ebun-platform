@@ -3,12 +3,11 @@
 import { useState } from "react";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 import type { OccasionId } from "@/lib/occasions";
-import { GiftSelector } from "./gift-selector";
-import { MessageComposer, type MessageDraft } from "./message-composer";
-import { OccasionSelector } from "./occasion-selector";
+import { Compose, type MessageDraft } from "./compose";
+import { GiftPicker } from "./gift-picker";
 import { ReviewAndPay } from "./review-and-pay";
 
-type Phase = "occasion" | "gift" | "message" | "review";
+type Phase = "gift" | "compose" | "pay";
 
 export interface SendDraft {
   occasion: OccasionId | null;
@@ -27,22 +26,31 @@ const EMPTY_MESSAGE: MessageDraft = {
 };
 
 const PHASES: { id: Phase; label: string }[] = [
-  { id: "occasion", label: "Occasion" },
   { id: "gift", label: "Gift" },
-  { id: "message", label: "Message" },
-  { id: "review", label: "Pay" },
+  { id: "compose", label: "Message" },
+  { id: "pay", label: "Pay" },
 ];
 
 /**
- * Owns the whole sender-flow wizard's state — one client component
- * across phases, same reasoning as reveal-experience.tsx: this is
- * fundamentally one form that submits together as a single
- * POST /orders call, not several independently-navigable pages, so
- * there's no reason to fight Next.js routing to pass state between
- * separate route segments.
+ * Three steps, down from four.
+ *
+ * The flow this replaces opened on an occasion picker, which was a full
+ * gate that collected nothing — CreateOrderDto has no occasion field,
+ * so its entire effect was choosing a message placeholder. For a
+ * product whose competition is a bank transfer (a number, an amount, a
+ * tap), a screen that costs the sender a decision and returns no value
+ * is the most expensive thing in the app. The occasion now sits beside
+ * the message box, doing its one real job.
+ *
+ * Recipient details moved in with the message because "who it's for and
+ * what I want to say" is one thought, not two.
+ *
+ * Still one client component across phases, same reasoning as
+ * reveal-experience.tsx: this is one form that submits as a single
+ * POST /orders, not several independently-navigable pages.
  */
 export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
-  const [phase, setPhase] = useState<Phase>("occasion");
+  const [phase, setPhase] = useState<Phase>("gift");
   const [draft, setDraft] = useState<SendDraft>({
     occasion: null,
     gift: null,
@@ -54,17 +62,14 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
       <header className="pt-5 pb-7">
         <div className="flex items-center justify-between">
-          <p
-            className="font-display text-base tracking-[0.2em]"
-            style={{ color: "var(--gold)" }}
-          >
+          <p className="font-display text-base tracking-[0.2em]" style={{ color: "var(--gold)" }}>
             EBUN
           </p>
           <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
             Step {currentPhaseIndex + 1} of {PHASES.length}
           </p>
         </div>
-        <ol className="mt-4 grid grid-cols-4 gap-1.5" aria-label="Send a gift progress">
+        <ol className="mt-4 grid grid-cols-3 gap-1.5" aria-label="Send a gift progress">
           {PHASES.map((item, index) => {
             const isCurrent = index === currentPhaseIndex;
             const isComplete = index < currentPhaseIndex;
@@ -87,45 +92,33 @@ export function SendExperience({ catalog }: { catalog: GiftCatalogItem[] }) {
         </ol>
       </header>
 
-      {phase === "occasion" && (
-        <OccasionSelector
-          initialSelected={draft.occasion}
-          onContinue={(occasion) => {
-            setDraft((prev) => ({ ...prev, occasion }));
-            setPhase("gift");
-          }}
-        />
-      )}
-
       {phase === "gift" && (
-        <GiftSelector
+        <GiftPicker
           catalog={catalog}
-          initialSelectedId={draft.gift?.id ?? null}
-          onBack={() => setPhase("occasion")}
-          onContinue={(gift) => {
+          onChoose={(gift) => {
             setDraft((prev) => ({ ...prev, gift }));
-            setPhase("message");
+            setPhase("compose");
           }}
         />
       )}
 
-      {phase === "message" && draft.gift && (
-        <MessageComposer
+      {phase === "compose" && draft.gift && (
+        <Compose
           gift={draft.gift}
-          occasion={draft.occasion}
           draft={draft.message}
+          occasion={draft.occasion}
           onChangeDraft={(message) => setDraft((prev) => ({ ...prev, message }))}
-          onBack={() => setPhase("gift")}
-          onContinue={() => setPhase("review")}
+          onChangeOccasion={(occasion) => setDraft((prev) => ({ ...prev, occasion }))}
+          onChangeGift={() => setPhase("gift")}
+          onContinue={() => setPhase("pay")}
         />
       )}
 
-      {phase === "review" && draft.gift && (
+      {phase === "pay" && draft.gift && (
         <ReviewAndPay
           gift={draft.gift}
-          occasion={draft.occasion}
           message={draft.message}
-          onBack={() => setPhase("message")}
+          onBack={() => setPhase("compose")}
         />
       )}
     </div>
