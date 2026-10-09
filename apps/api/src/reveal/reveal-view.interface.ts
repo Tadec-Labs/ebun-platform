@@ -39,5 +39,7 @@ export interface RevealView {
     status: RedemptionStatus;
     fallbackCode: string;
     qrPayload: string;
+    /** The redemption's own expiry, so the recipient's screen can say how long they have. */
+    expiresAt: string;
   };
 }

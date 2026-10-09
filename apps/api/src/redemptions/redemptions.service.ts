@@ -1,8 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { OrderStatus } from '@ebun/types';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { OrderStatus, RedemptionStatus } from '@ebun/types';
 import { OrdersService } from '../orders/orders.service';
-import { RedemptionsRepository, RedemptionRow } from './redemptions.repository';
+import {
+  RedemptionLookupRow,
+  RedemptionsRepository,
+  RedemptionRow,
+} from './redemptions.repository';
 import { RedemptionConflictException } from './exceptions/redemption-conflict.exception';
+import { RedemptionNotRedeemableException } from './exceptions/redemption-not-redeemable.exception';
 
 export interface CompleteRedemptionParams {
   redemptionToken: string;
@@ -10,8 +15,38 @@ export interface CompleteRedemptionParams {
   vendorConfirmedBy: string | null;
   ipAddress: string | null;
   userAgent: string | null;
-  /** Who's completing this — 'vendor' for a real in-person scan, 'system' for a no-vendor-needed type (VTU) auto-completing right after accept. */
-  actorType: 'vendor' | 'system';
+  /**
+   * Who's completing this — 'vendor' for a real in-person scan,
+   * 'system' for a no-vendor-needed type (VTU) auto-completing right
+   * after accept, 'admin' for an Ebun staff member confirming on a
+   * vendor's behalf from /ops. The third exists because until a
+   * vendor-facing scanner is built, every real collection is a staff
+   * member typing the code the recipient reads out — recording that as
+   * 'vendor' would put a claim in the audit log that isn't true.
+   */
+  actorType: 'vendor' | 'system' | 'admin';
+}
+
+/**
+ * What ops is allowed to see about a code before confirming it.
+ * Deliberately does NOT carry redemption_token: possessing that token
+ * is what completes a redemption, and a lookup — which any staff member
+ * can run against any code — must not hand it out. The complete call
+ * re-reads the token server-side from the same code instead.
+ */
+export interface RedemptionLookupView {
+  code: string;
+  redemptionNumber: string;
+  status: RedemptionStatus;
+  orderNumber: string | null;
+  recipientName: string | null;
+  giftName: string | null;
+  expiresAt: string;
+  completedAt: string | null;
+  /** True only when a confirm would actually succeed right now. */
+  redeemable: boolean;
+  /** Plain-language reason it can't be collected, when redeemable is false. */
+  blockedReason: string | null;
 }
 
 /**
@@ -38,6 +73,121 @@ export class RedemptionsService {
     orderExpiresAt: string,
   ): Promise<RedemptionRow> {
     return this.repository.createPendingOrFetch(orderId, orderExpiresAt);
+  }
+
+  /**
+   * Looks a code up for ops, without changing anything.
+   *
+   * `redeemable` is computed here rather than left to the caller so
+   * every surface agrees on what "can be collected" means, and so the
+   * reason is phrased for the person at the counter rather than
+   * leaking status enums into the UI.
+   */
+  async lookupByFallbackCode(code: string): Promise<RedemptionLookupView> {
+    const row = await this.repository.findByFallbackCode(code);
+    if (!row) {
+      throw new NotFoundException('No gift found for that code.');
+    }
+
+    const { redeemable, blockedReason } = this.assessRedeemability(row);
+
+    return {
+      code: row.fallback_code,
+      redemptionNumber: row.redemption_number,
+      status: row.status,
+      orderNumber: row.orders?.order_number ?? null,
+      recipientName: row.orders?.recipient_name ?? null,
+      giftName: row.orders?.gift_templates?.name ?? null,
+      expiresAt: row.expires_at,
+      completedAt: row.completed_at,
+      redeemable,
+      blockedReason,
+    };
+  }
+
+  /**
+   * The ops counterpart of POST /redeem: same atomic
+   * attempt_redemption() underneath, reached by the code a recipient
+   * can read aloud instead of a token only a scanner could supply.
+   *
+   * Re-checks redeemability first so the common refusals (already
+   * collected, expired, not yet claimed by the recipient) come back as
+   * a specific, actionable message. attempt_redemption() would refuse
+   * most of these too, but only as an undifferentiated null — and the
+   * order-status check has no equivalent there at all: completing a
+   * redemption whose order never reached reveal_opened would succeed
+   * in the redemptions table while the order's own transition failed,
+   * leaving the two permanently disagreeing (see complete() below).
+   */
+  async completeByFallbackCode(params: {
+    code: string;
+    vendorId: string;
+    confirmedBy: string;
+    actorId: string | null;
+    ipAddress: string | null;
+    userAgent: string | null;
+  }): Promise<{ redemption: RedemptionRow; orderId: string }> {
+    const row = await this.repository.findByFallbackCode(params.code);
+    if (!row) {
+      throw new NotFoundException('No gift found for that code.');
+    }
+
+    const { redeemable, blockedReason } = this.assessRedeemability(row);
+    if (!redeemable) {
+      throw new RedemptionNotRedeemableException(
+        blockedReason ?? 'This gift cannot be collected.',
+      );
+    }
+
+    const redemption = await this.complete({
+      redemptionToken: row.redemption_token,
+      vendorId: params.vendorId,
+      vendorConfirmedBy: params.confirmedBy,
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+      actorType: 'admin',
+    });
+
+    return { redemption, orderId: row.order_id };
+  }
+
+  private assessRedeemability(row: RedemptionLookupRow): {
+    redeemable: boolean;
+    blockedReason: string | null;
+  } {
+    const blocked = (reason: string) => ({
+      redeemable: false,
+      blockedReason: reason,
+    });
+
+    if (row.status === RedemptionStatus.Completed) {
+      return blocked('This gift has already been collected.');
+    }
+    if (
+      row.status === RedemptionStatus.Failed ||
+      row.status === RedemptionStatus.Expired
+    ) {
+      return blocked('This code is no longer valid.');
+    }
+    if (new Date(row.expires_at) <= new Date()) {
+      // Checked against the timestamp, not trusted from status alone —
+      // nothing sweeps redemptions to 'expired' on a schedule yet, so a
+      // genuinely expired row can still read 'pending'. Same reasoning
+      // as RevealService's own expiry check.
+      return blocked('This code has expired.');
+    }
+
+    const orderStatus = row.orders?.status;
+    if (orderStatus === undefined) {
+      return blocked('This code is not linked to an order — contact support.');
+    }
+    if (orderStatus !== OrderStatus.RevealOpened) {
+      return blocked(
+        "The recipient hasn't opened and claimed this gift yet, so there's nothing to hand over.",
+      );
+    }
+
+    return { redeemable: true, blockedReason: null };
   }
 
   /**

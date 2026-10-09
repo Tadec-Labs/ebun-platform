@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { FulfillmentType } from "@ebun/types";
 import type { RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
-import { DevScenarioSwitcher } from "./components/dev-scenario-switcher";
+import { claimGiftAction } from "./actions";
 import { HoldToUnwrap } from "./components/hold-to-unwrap";
 import { GiftMark, LockGlyph } from "@/components/icons";
 import { MessagePlayer } from "./components/message-player";
@@ -11,14 +11,15 @@ import { ScratchPanel } from "./components/scratch-panel";
 import { StatusLine } from "./components/status-line";
 
 /**
- * Phase transitions below are local component state — nothing here
- * calls a real endpoint yet. When wiring the API:
- *  - reveal -> claimed:        POST /reveal/:token/accept (exists today)
- *  - reveal -> address:        no endpoint yet (physical fulfillment work, separate thread)
- *  - address -> transit:       no endpoint yet — needs somewhere to persist orders.delivery_address
- *  - arrival-message -> fulfilled: no endpoint yet — needs a way to record "recipient opened it"
- * transit/arrival-lock are reached directly on page load for a
- * returning visitor (see initialPhase), not via a button here.
+ * Phase is local state; what it is allowed to start as comes from the
+ * server (see initialPhase). Only one transition talks to the API:
+ *  - reveal -> claimed:        POST /reveal/:token/accept, via claimGiftAction
+ * The physical-journey phases below still have no endpoints behind
+ * them — address capture and arrival-triggered reveal have no backend
+ * contract — and no physical order can reach them today, because the
+ * two delivered gift templates are withheld from the catalog until
+ * that fulfillment path exists. The screens are kept rather than
+ * deleted: they are the spec for that work, not dead code.
  */
 type Phase =
   | "entry"
@@ -60,34 +61,50 @@ function initialPhase(payload: RevealPayload): Phase {
   }
 }
 
-/**
- * The real redemption record is created server-side by
- * POST /reveal/:token/accept (see RevealService.acceptGift), but that
- * endpoint doesn't return it in the response yet (see ./lib/reveal/types.ts).
- * This stands in for that response so the claimed screen has something
- * to render when reached via the on-page "Claim" action rather than a
- * pre-seeded mock scenario. Delete once the real endpoint returns it.
- */
-function mockRedemption(): RedemptionDetails {
-  return {
-    fallbackCode: "EBN-4M8-2LP",
-    qrPayload: "ebun:redeem:local-mock-token",
-    vendorHint: "Any Ebun founding-partner spot — full list sent in your next message.",
-    validUntil: undefined,
-  };
-}
-
 export function RevealExperience({ token, initial }: { token: string; initial: RevealPayload }) {
   const [phase, setPhase] = useState<Phase>(() => initialPhase(initial));
   const [scratched, setScratched] = useState(
     !["ready", "not_ready", "expired", "unavailable"].includes(initial.screenState),
   );
   const [address, setAddress] = useState("");
-  // mockRedemption() returns fixed literal values (no randomness), so
-  // deriving it inline is safe and stable — no need to stash it in
-  // state just to avoid recomputing.
-  const redemption = initial.redemption ?? mockRedemption();
+  // Starts as whatever the server already knew (a returning visitor who
+  // claimed on an earlier visit), and is replaced by the real record
+  // the claim call returns. Never invented locally: a code this screen
+  // made up is a code no vendor can honour.
+  const [claimed, setClaimed] = useState(() =>
+    initial.redemption
+      ? { redemption: initial.redemption, qrSvg: initial.qrSvg ?? null }
+      : null,
+  );
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claiming, startClaim] = useTransition();
   const isPhysical = initial.fulfillmentType === FulfillmentType.Physical;
+
+  function claim() {
+    setClaimError(null);
+    startClaim(async () => {
+      const result = await claimGiftAction(token);
+      if (!result.ok) {
+        setClaimError(result.message);
+        return;
+      }
+      if (result.payload.redemption) {
+        setClaimed({
+          redemption: result.payload.redemption,
+          qrSvg: result.payload.qrSvg ?? null,
+        });
+        setPhase("claimed");
+        return;
+      }
+      // Accepted, but came back without a redemption — a VTU gift
+      // (which auto-completes and has nothing to collect) or an order
+      // that moved on. The server's own view is the authority on what
+      // to show next, so follow it rather than guessing.
+      setPhase(
+        result.payload.screenState === "redeemed" ? "redeemed" : "not_ready",
+      );
+    });
+  }
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7 pb-10">
@@ -115,7 +132,9 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
             payload={initial}
             scratched={scratched}
             onScratched={() => setScratched(true)}
-            onPrimaryAction={() => setPhase(isPhysical ? "address" : "claimed")}
+            onPrimaryAction={() => (isPhysical ? setPhase("address") : claim())}
+            claiming={claiming}
+            claimError={claimError}
           />
         )}
 
@@ -147,8 +166,12 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
           />
         )}
 
-        {phase === "claimed" && (
-          <ClaimedScreen giftName={initial.giftName} redemption={redemption} />
+        {phase === "claimed" && claimed && (
+          <ClaimedScreen
+            giftName={initial.giftName}
+            redemption={claimed.redemption}
+            qrSvg={claimed.qrSvg}
+          />
         )}
 
         {phase === "redeemed" && (
@@ -168,7 +191,6 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
         )}
       </div>
 
-      <DevScenarioSwitcher current={token} />
     </div>
   );
 }
@@ -265,11 +287,15 @@ function RevealScreen({
   scratched,
   onScratched,
   onPrimaryAction,
+  claiming,
+  claimError,
 }: {
   payload: RevealPayload;
   scratched: boolean;
   onScratched: () => void;
   onPrimaryAction: () => void;
+  claiming: boolean;
+  claimError: string | null;
 }) {
   const isPhysical = payload.fulfillmentType === FulfillmentType.Physical;
 
@@ -313,14 +339,32 @@ function RevealScreen({
       </ScratchPanel>
 
       {scratched && (
-        <button
-          type="button"
-          onClick={onPrimaryAction}
-          className="w-full py-3.5 text-sm font-medium tracking-wide"
-          style={{ background: "var(--gold)", color: "var(--ink)" }}
-        >
-          {isPhysical ? "Continue" : "Claim your gift"}
-        </button>
+        <div className="flex flex-col gap-3">
+          {claimError && (
+            <p
+              role="alert"
+              className="border px-4 py-3 text-xs leading-relaxed"
+              style={{ borderColor: "var(--gold-dim)", color: "var(--cream-dim)" }}
+            >
+              {claimError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={onPrimaryAction}
+            disabled={claiming}
+            className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-60"
+            style={{ background: "var(--gold)", color: "var(--ink)" }}
+          >
+            {claiming
+              ? "Claiming\u2026"
+              : isPhysical
+                ? "Continue"
+                : claimError
+                  ? "Try again"
+                  : "Claim your gift"}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -460,9 +504,11 @@ function ArrivalMessageScreen({
 function ClaimedScreen({
   giftName,
   redemption,
+  qrSvg,
 }: {
   giftName?: string;
   redemption: RedemptionDetails;
+  qrSvg: string | null;
 }) {
   return (
     <div className="flex flex-1 flex-col justify-center gap-8">
@@ -479,12 +525,25 @@ function ClaimedScreen({
         className="flex flex-col items-center gap-4 border border-dashed px-6 py-8"
         style={{ borderColor: "var(--gold-dim)" }}
       >
-        <div
-          className="flex h-36 w-36 items-center justify-center text-[10px] tracking-wide"
-          style={{ background: "var(--cream)", color: "var(--ink)" }}
-        >
-          QR CODE
-        </div>
+        {qrSvg ? (
+          <div
+            className="h-40 w-40 [&>svg]:h-full [&>svg]:w-full"
+            role="img"
+            aria-label={`QR code for collection code ${redemption.fallbackCode}`}
+            // The markup is produced by the QR encoder on our own
+            // server from our own token — no recipient input reaches
+            // it. Inlined rather than served as an <img> so it needs no
+            // second request and no storage for a single-use picture.
+            dangerouslySetInnerHTML={{ __html: qrSvg }}
+          />
+        ) : (
+          <p
+            className="flex h-40 w-40 items-center justify-center px-4 text-center text-[11px] leading-snug"
+            style={{ background: "var(--cream)", color: "var(--ink)" }}
+          >
+            Read the code below out at the counter.
+          </p>
+        )}
         <div className="text-center">
           <p className="font-display text-2xl tracking-[0.1em]" style={{ color: "var(--gold-light)" }}>
             {redemption.fallbackCode}
@@ -494,6 +553,17 @@ function ClaimedScreen({
           </p>
         </div>
       </div>
+
+      {redemption.validUntil && (
+        <p className="text-center text-xs" style={{ color: "var(--cream-dim)" }}>
+          Valid until{" "}
+          {new Date(redemption.validUntil).toLocaleDateString("en-NG", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })}
+        </p>
+      )}
 
       {redemption.vendorHint && (
         <div className="border px-4 py-3.5" style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}>

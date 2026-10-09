@@ -65,3 +65,19 @@ export const VENDOR_CATEGORIES: { value: VendorCategory; label: string }[] = [
   { value: "keepsake", label: "Keepsake" },
   { value: "utility", label: "Utility" },
 ];
+
+/** Mirrors apps/api/src/redemptions/redemptions.service.ts's RedemptionLookupView. */
+export interface RedemptionLookup {
+  code: string;
+  redemptionNumber: string;
+  status: "pending" | "initiated" | "completed" | "failed" | "expired";
+  orderNumber: string | null;
+  recipientName: string | null;
+  giftName: string | null;
+  expiresAt: string;
+  completedAt: string | null;
+  /** True only when a confirm would actually succeed right now. */
+  redeemable: boolean;
+  /** Plain-language reason it can't be collected, when redeemable is false. */
+  blockedReason: string | null;
+}

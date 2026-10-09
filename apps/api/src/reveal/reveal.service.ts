@@ -244,6 +244,7 @@ export class RevealService {
           status: existingRedemption.status,
           fallbackCode: existingRedemption.fallback_code,
           qrPayload: existingRedemption.redemption_token,
+          expiresAt: existingRedemption.expires_at as string,
         };
       }
     }

@@ -51,7 +51,12 @@ export interface RedemptionDetails {
 export interface RevealPayload {
   screenState: RevealScreenState;
   orderStatus: OrderStatus;
-  fulfillmentType: FulfillmentType;
+  /**
+   * Absent for not_ready / expired / unavailable: the API deliberately
+   * returns nothing but the state for a link that isn't valid to view,
+   * and those screens don't branch on fulfillment anyway.
+   */
+  fulfillmentType?: FulfillmentType;
   recipientName?: string;
   senderName?: string | null;
   giftName?: string;
@@ -60,16 +65,28 @@ export interface RevealPayload {
   theme?: "gold" | "red" | "white" | "green";
   message?: RevealMessage;
   redemption?: RedemptionDetails;
+  /**
+   * The redemption QR, pre-rendered to SVG on the server (see ./qr.ts)
+   * so the encoder never reaches the browser bundle. Null when
+   * rendering failed — the fallback code alone is enough to collect.
+   */
+  qrSvg?: string | null;
   /** Physical, in_transit only — e.g. "Arriving this evening". Display copy, not a timestamp to compute against. */
   deliveryEtaLabel?: string;
 }
 
 /**
- * Illustrative only — mock data below sets `screenState` directly rather
- * than deriving it, since the real inputs (order + redemption + address
- * presence) don't exist yet. Kept here so the mapping is written down
- * once, in one place, ahead of wiring the real endpoint — not because
- * anything currently calls it.
+ * The order's status, in this screen's vocabulary. Now the real
+ * mapping used by get-reveal-view.ts, not the illustrative sketch it
+ * started as — with one thing it structurally cannot answer: whether a
+ * redemption record exists yet. "scratch this" and "here is your code"
+ * are both orderStatus reveal_opened, so the caller layers that
+ * distinction on top.
+ *
+ * hasDeliveryAddress is still always false at every call site: the
+ * physical journey has no backend contract, so no order can have one.
+ * Kept in the signature because the branch it drives is already
+ * written and correct for when that work lands.
  */
 export function deriveScreenState(
   orderStatus: OrderStatus,

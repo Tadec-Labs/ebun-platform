@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
-import { RedemptionStatus } from '@ebun/types';
+import { OrderStatus, RedemptionStatus } from '@ebun/types';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
 
 export interface RedemptionRow {
@@ -11,6 +11,28 @@ export interface RedemptionRow {
   fallback_code: string;
   status: RedemptionStatus;
   [key: string]: unknown;
+}
+
+/**
+ * One redemption plus just enough of its order and gift for an ops
+ * screen to show WHAT is being collected and FOR WHOM before anyone
+ * confirms it — PostgREST embedding rather than three round trips.
+ *
+ * Embedded relations are typed nullable because PostgREST returns null
+ * for a missing one rather than failing; in practice order_id is NOT
+ * NULL and orders.gift_template_id is NOT NULL, so null here would mean
+ * a broken row, which the service surfaces rather than guesses past.
+ */
+export interface RedemptionLookupRow extends RedemptionRow {
+  expires_at: string;
+  completed_at: string | null;
+  orders: {
+    id: string;
+    order_number: string | null;
+    recipient_name: string;
+    status: OrderStatus;
+    gift_templates: { name: string } | null;
+  } | null;
 }
 
 /**
@@ -109,6 +131,36 @@ export class RedemptionsRepository {
       .eq('order_id', orderId)
       .maybeSingle()) as {
       data: RedemptionRow | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data;
+  }
+
+  /**
+   * Read-only lookup by the human-typed code, for ops redemption.
+   * fallback_code is UNIQUE in the schema, so maybeSingle() is exact:
+   * zero rows means no such code, which is an ordinary answer here
+   * (mistyped, or a code from some other system), not an error.
+   *
+   * redemption_token IS selected — the ops flow needs it to call
+   * attempt_redemption() — but it must never leave the service layer;
+   * see RedemptionsService.lookupByFallbackCode.
+   */
+  async findByFallbackCode(code: string): Promise<RedemptionLookupRow | null> {
+    const response = (await this.supabase
+      .from('redemptions')
+      .select(
+        'id, order_id, redemption_number, redemption_token, fallback_code, ' +
+          'status, expires_at, completed_at, ' +
+          'orders(id, order_number, recipient_name, status, gift_templates(name))',
+      )
+      .eq('fallback_code', code)
+      .maybeSingle()) as {
+      data: RedemptionLookupRow | null;
       error: PostgrestError | null;
     };
 

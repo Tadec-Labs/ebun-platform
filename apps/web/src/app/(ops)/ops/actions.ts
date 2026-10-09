@@ -6,12 +6,20 @@ import { API_BASE_URL } from "@/lib/api-config";
 import { parseNairaToKobo } from "@/lib/format-money";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
 import { clearOpsToken, setOpsToken } from "@/lib/ops/session";
-import type { ActionResult, Offering, Vendor } from "@/lib/ops/types";
+import type { ActionResult, Offering, RedemptionLookup, Vendor } from "@/lib/ops/types";
 
-const fail = (errors: string[]): ActionResult => ({ ok: false, errors });
+/**
+ * Narrower than ActionResult on purpose: both helpers below only ever
+ * produce a failure, and typing them as the full union would force
+ * every caller returning a richer success shape (lookupRedemptionAction,
+ * say) to cast its way out.
+ */
+type ActionFailure = { ok: false; errors: string[] };
+
+const fail = (errors: string[]): ActionFailure => ({ ok: false, errors });
 
 /** Only OpsApiError is a user-facing failure. Anything else — notably Next's redirect() — must keep propagating. */
-function asFailure(error: unknown): ActionResult {
+function asFailure(error: unknown): ActionFailure {
   if (error instanceof OpsApiError) return fail(error.messages);
   throw error;
 }
@@ -202,4 +210,58 @@ export async function removeOfferingAction(vendorId: string, giftTemplateId: str
   revalidatePath(`/ops/vendors/${vendorId}`);
   revalidatePath("/ops/vendors");
   return { ok: true };
+}
+
+// ---------------------------------------------------------- redemption
+
+export type LookupResult =
+  | { ok: true; redemption: RedemptionLookup }
+  | { ok: false; errors: string[] };
+
+/**
+ * Reads a code back without changing anything, so whoever is at the
+ * counter can see WHAT they're handing over and to WHOM before
+ * confirming. Deliberately a separate step from completing: collection
+ * is irreversible and single-use, and a one-tap "redeem" on a typo is
+ * a gift destroyed.
+ */
+export async function lookupRedemptionAction(rawCode: string): Promise<LookupResult> {
+  const code = rawCode.trim();
+  if (!code) return fail(["Enter the code from the recipient's screen."]);
+
+  try {
+    const redemption = await opsFetch<RedemptionLookup>(
+      `/ops/redemptions/${encodeURIComponent(code)}`,
+    );
+    return { ok: true, redemption };
+  } catch (error) {
+    return asFailure(error);
+  }
+}
+
+/**
+ * The irreversible half. The API re-reads the redemption token from
+ * this same code server-side — it is never sent to the browser — and
+ * re-checks that the gift can still be collected before the atomic
+ * attempt_redemption() runs, so two people confirming the same code at
+ * once cannot both succeed.
+ */
+export async function completeRedemptionAction(input: {
+  code: string;
+  vendorId: string;
+}): Promise<ActionResult> {
+  if (!input.vendorId) {
+    return fail(["Choose which vendor is handing this over."]);
+  }
+
+  try {
+    await opsFetch<{ redemptionNumber: string; status: string }>(
+      `/ops/redemptions/${encodeURIComponent(input.code)}/complete`,
+      { method: "POST", body: { vendorId: input.vendorId } },
+    );
+  } catch (error) {
+    return asFailure(error);
+  }
+
+  return { ok: true, message: "Collected. The recipient's page now shows it as handed over." };
 }
