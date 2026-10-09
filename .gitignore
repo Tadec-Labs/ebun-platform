@@ -49,3 +49,9 @@ Thumbs.db
 
 # Certificates / private keys
 *.pem
+
+# Patch files — work is delivered as patches and applied locally; a
+# committed .patch duplicates the source it was already applied as, and
+# has twice shipped INSTEAD of that source. See git show --stat before
+# every push.
+*.patch

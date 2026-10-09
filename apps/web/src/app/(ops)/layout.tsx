@@ -27,6 +27,9 @@ export default async function OpsLayout({ children }: LayoutProps<"/">) {
             <span className="font-semibold tracking-tight">Ebun Ops</span>
             {signedIn && (
               <nav className="flex gap-4 text-zinc-600">
+                <Link href="/ops/orders" className="hover:text-zinc-900">
+                  Orders
+                </Link>
                 <Link href="/ops/vendors" className="hover:text-zinc-900">
                   Vendors
                 </Link>

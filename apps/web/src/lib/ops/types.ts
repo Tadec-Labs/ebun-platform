@@ -122,3 +122,166 @@ export const GIFT_DELIVERY_TYPES: { value: GiftDeliveryType; label: string; hint
     hint: "Airtime, data or bills — delivered automatically in seconds.",
   },
 ];
+
+/* ------------------------------------------------------------------ */
+/* Orders — mirrors apps/api/src/orders/ops-orders.service.ts          */
+/* ------------------------------------------------------------------ */
+
+/** Mirrors packages/types OrderStatus. Kept as a string union here rather than
+ *  importing the enum: these values only ever arrive as JSON and get compared
+ *  or rendered, and apps/web has no other reason to depend on @ebun/types. */
+export type OrderStatusValue =
+  | "draft"
+  | "pending_payment"
+  | "paid"
+  | "processing"
+  | "vendor_notified"
+  | "vendor_accepted"
+  | "vendor_declined"
+  | "vendor_timeout"
+  | "fulfillment_in_progress"
+  | "dispatched"
+  | "delivered"
+  | "voucher_issued"
+  | "ready_for_redemption"
+  | "reveal_opened"
+  | "redeemed"
+  | "fulfilled"
+  | "payment_failed"
+  | "fulfillment_failed"
+  | "redemption_failed"
+  | "expired"
+  | "cancelled"
+  | "refunded";
+
+export interface OrderSummary {
+  id: string;
+  orderNumber: string | null;
+  status: OrderStatusValue;
+  giftName: string | null;
+  recipientName: string;
+  recipientPhone: string;
+  vendorName: string | null;
+  totalAmount: number; // kobo
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  scheduledSendAt: string | null;
+  stuck: boolean;
+}
+
+export interface OrderListResult {
+  orders: OrderSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  stuckCount: number;
+  stuckAfterMinutes: number;
+}
+
+export interface OrderEvent {
+  id: string;
+  eventType: string;
+  actorType: "user" | "vendor" | "system" | "webhook" | "admin" | "cron";
+  actorId: string | null;
+  previousState: string | null;
+  newState: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface OrderDetail extends OrderSummary {
+  giftValue: number;
+  deliveryFee: number;
+  serviceFee: number;
+  vendorPayoutAmount: number | null;
+  vendorPaidAt: string | null;
+  paystackReference: string | null;
+  paymentVerifiedAt: string | null;
+  /** Whether a message was attached and of what kind — never its contents. */
+  messageType: "text" | "voice" | "video" | null;
+  revealTheme: string;
+  revealOpenedAt: string | null;
+  whatsappSentAt: string | null;
+  deliveryAddress: string | null;
+  deliveryZone: string | null;
+  isDiasporaSender: boolean;
+  isCorporateOrder: boolean;
+  senderCountryCode: string | null;
+  notes: string | null;
+  events: OrderEvent[];
+  allowedTransitions: { normal: OrderStatusValue[]; adminOverride: OrderStatusValue[] };
+  terminal: boolean;
+  stuckAfterMinutes: number;
+}
+
+/**
+ * Plain-language labels. The enum values are engineering vocabulary;
+ * whoever is working the queue at 9pm should not have to translate
+ * "ready_for_redemption" in their head.
+ */
+export const ORDER_STATUS_LABEL: Record<OrderStatusValue, string> = {
+  draft: "Draft",
+  pending_payment: "Awaiting payment",
+  paid: "Paid",
+  processing: "Processing",
+  vendor_notified: "Vendor notified",
+  vendor_accepted: "Vendor accepted",
+  vendor_declined: "Vendor declined",
+  vendor_timeout: "Vendor didn’t respond",
+  fulfillment_in_progress: "Being fulfilled",
+  dispatched: "Dispatched",
+  delivered: "Delivered",
+  voucher_issued: "Voucher issued",
+  ready_for_redemption: "Ready to collect",
+  reveal_opened: "Opened by recipient",
+  redeemed: "Collected",
+  fulfilled: "Done",
+  payment_failed: "Payment failed",
+  fulfillment_failed: "Fulfilment failed",
+  redemption_failed: "Collection failed",
+  expired: "Expired",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
+
+export type StatusTone = "green" | "grey" | "amber" | "red" | "blue";
+
+/**
+ * Tone by what the state MEANS commercially, not by where it sits in
+ * the graph: red is money taken and something broken, amber is waiting
+ * on someone, green is money earned and the gift delivered.
+ */
+export const ORDER_STATUS_TONE: Record<OrderStatusValue, StatusTone> = {
+  draft: "grey",
+  pending_payment: "grey",
+  paid: "blue",
+  processing: "blue",
+  vendor_notified: "amber",
+  vendor_accepted: "blue",
+  vendor_declined: "red",
+  vendor_timeout: "red",
+  fulfillment_in_progress: "blue",
+  dispatched: "blue",
+  delivered: "blue",
+  voucher_issued: "amber",
+  ready_for_redemption: "amber",
+  reveal_opened: "amber",
+  redeemed: "green",
+  fulfilled: "green",
+  payment_failed: "grey",
+  fulfillment_failed: "red",
+  redemption_failed: "red",
+  expired: "red",
+  cancelled: "grey",
+  refunded: "grey",
+};
+
+/** Grouped for the filter UI, so the common questions are one click. */
+export const ORDER_STATUS_GROUPS: { label: string; statuses: OrderStatusValue[] }[] = [
+  { label: "Needs attention", statuses: ["fulfillment_failed", "redemption_failed", "vendor_declined", "vendor_timeout", "expired"] },
+  { label: "In flight", statuses: ["paid", "processing", "vendor_notified", "vendor_accepted", "fulfillment_in_progress", "dispatched", "delivered"] },
+  { label: "With the recipient", statuses: ["voucher_issued", "ready_for_redemption", "reveal_opened"] },
+  { label: "Settled", statuses: ["redeemed", "fulfilled", "refunded", "cancelled"] },
+  { label: "Never paid", statuses: ["draft", "pending_payment", "payment_failed"] },
+];
