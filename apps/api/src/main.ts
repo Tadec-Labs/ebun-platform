@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { resolvePort } from './config/port';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
@@ -31,6 +32,13 @@ async function bootstrap() {
       transform: true,
     }),
   );
-  await app.listen(process.env.PORT ?? 3000);
+  // Defaults to 3001, not 3000 — see config/port.ts. Hosts inject PORT,
+  // so the default is local dev only, where 3000 is Next's dev server
+  // and apps/web already calls :3001.
+  const port = resolvePort();
+  await app.listen(port);
+  // Logged because the symptom of getting this wrong is a frontend that
+  // shows "couldn't load" with nothing in the API's own output.
+  console.log(`Ebun API listening on http://localhost:${port}`);
 }
 void bootstrap();

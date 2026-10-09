@@ -1,0 +1,105 @@
+diff --git a/apps/api/src/config/port.spec.ts b/apps/api/src/config/port.spec.ts
+new file mode 100644
+index 0000000..9792057
+--- /dev/null
++++ b/apps/api/src/config/port.spec.ts
+@@ -0,0 +1,25 @@
++import { DEFAULT_PORT, resolvePort } from './port';
++
++describe('resolvePort', () => {
++  it('does not default to 3000, which belongs to the web dev server', () => {
++    // This is the whole point of the module. If someone "tidies" the
++    // default back to 3000, local dev silently breaks again: the API and
++    // Next fight for the port and /send reports an unreachable catalogue.
++    expect(DEFAULT_PORT).not.toBe(3000);
++    expect(resolvePort({})).toBe(DEFAULT_PORT);
++  });
++
++  it('honours the port a host injects', () => {
++    expect(resolvePort({ PORT: '8080' })).toBe(8080);
++  });
++
++  it('treats an empty PORT as unset', () => {
++    expect(resolvePort({ PORT: '  ' })).toBe(DEFAULT_PORT);
++  });
++
++  it('refuses a malformed PORT rather than quietly binding elsewhere', () => {
++    for (const bad of ['abc', '0', '70000', '3001.5']) {
++      expect(() => resolvePort({ PORT: bad })).toThrow(/not a valid port/);
++    }
++  });
++});
+diff --git a/apps/api/src/config/port.ts b/apps/api/src/config/port.ts
+new file mode 100644
+index 0000000..f6da3c0
+--- /dev/null
++++ b/apps/api/src/config/port.ts
+@@ -0,0 +1,26 @@
++/**
++ * The port the API binds to.
++ *
++ * Kept out of main.ts so the default is testable. The default matters
++ * more than it looks: 3000 is Next's dev server, so an API defaulting to
++ * 3000 fights apps/web for the port locally, and whichever loses is
++ * invisible — the frontend just reports that it couldn't load anything.
++ *
++ * Hosts (Railway, Fly, Render) all inject PORT, so the default is a
++ * local-dev concern only.
++ */
++export const DEFAULT_PORT = 3001;
++
++export function resolvePort(env: NodeJS.ProcessEnv = process.env): number {
++  const raw = env.PORT?.trim();
++  if (!raw) return DEFAULT_PORT;
++
++  const port = Number(raw);
++  // A malformed PORT must not silently fall back: on a host that injects
++  // PORT, binding something else means the platform's health check never
++  // reaches us and the deploy fails with no explanation.
++  if (!Number.isInteger(port) || port < 1 || port > 65535) {
++    throw new Error(`PORT is not a valid port number: ${raw}`);
++  }
++  return port;
++}
+diff --git a/apps/api/src/main.ts b/apps/api/src/main.ts
+index 884817a..c1d6f07 100644
+--- a/apps/api/src/main.ts
++++ b/apps/api/src/main.ts
+@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
+ import { ConfigService } from '@nestjs/config';
+ import { NestFactory } from '@nestjs/core';
+ import { AppModule } from './app.module';
++import { resolvePort } from './config/port';
+ 
+ async function bootstrap() {
+   const app = await NestFactory.create(AppModule, { rawBody: true });
+@@ -31,6 +32,13 @@ async function bootstrap() {
+       transform: true,
+     }),
+   );
+-  await app.listen(process.env.PORT ?? 3000);
++  // Defaults to 3001, not 3000 — see config/port.ts. Hosts inject PORT,
++  // so the default is local dev only, where 3000 is Next's dev server
++  // and apps/web already calls :3001.
++  const port = resolvePort();
++  await app.listen(port);
++  // Logged because the symptom of getting this wrong is a frontend that
++  // shows "couldn't load" with nothing in the API's own output.
++  console.log(`Ebun API listening on http://localhost:${port}`);
+ }
+ void bootstrap();
+diff --git a/apps/web/src/lib/api-config.ts b/apps/web/src/lib/api-config.ts
+index bbee818..5085257 100644
+--- a/apps/web/src/lib/api-config.ts
++++ b/apps/web/src/lib/api-config.ts
+@@ -1,6 +1,7 @@
+-// Defaults to :3001 for local dev specifically because apps/api's own
+-// default (3000) collides with Next's dev server default — run the API
+-// locally with `PORT=3001 pnpm --filter api start:dev` to match this.
++// Defaults to :3001 for local dev, which is also apps/api's own default
++// (see apps/api/src/main.ts) — 3000 belongs to Next's dev server, so the
++// API cannot have it. Nothing needs setting locally: `pnpm --filter api
++// start:dev` and `pnpm --filter web dev` agree out of the box.
+ // In deployment, NEXT_PUBLIC_API_BASE_URL must be set explicitly
+ // (Vercel Project Settings -> Environment Variables) to the real API
+ // URL — there's no sensible production default to fall back to.
