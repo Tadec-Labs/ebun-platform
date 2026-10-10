@@ -118,6 +118,11 @@ export class OrdersService {
     return this.ordersRepository.recordRevealSent(orderId, revealUrl);
   }
 
+  /** Delegates straight through — see OrdersRepository.recordPaymentVerified. */
+  async recordPaymentVerified(orderId: string) {
+    return this.ordersRepository.recordPaymentVerified(orderId);
+  }
+
   /**
    * No guard needed here — this is order genesis, not a transition;
    * there's no "from" state to validate against. Always creates as

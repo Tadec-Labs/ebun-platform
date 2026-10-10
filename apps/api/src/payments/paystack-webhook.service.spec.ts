@@ -35,6 +35,7 @@ describe('PaystackWebhookService', () => {
   let ordersService: {
     findByPaystackReference: jest.Mock;
     transitionNormal: jest.Mock;
+    recordPaymentVerified: jest.Mock;
   };
   let idempotency: { claim: jest.Mock };
   let fulfillment: { start: jest.Mock };
@@ -43,6 +44,7 @@ describe('PaystackWebhookService', () => {
     ordersService = {
       findByPaystackReference: jest.fn(),
       transitionNormal: jest.fn(),
+      recordPaymentVerified: jest.fn().mockResolvedValue(undefined),
     };
     idempotency = { claim: jest.fn().mockResolvedValue(true) };
     fulfillment = { start: jest.fn().mockResolvedValue(undefined) };
@@ -87,6 +89,49 @@ describe('PaystackWebhookService', () => {
         paystackTransactionId: 999,
       }),
     );
+    expect(fulfillment.start).toHaveBeenCalledWith('order-1');
+  });
+
+  it('stamps payment_verified_at, after the transition rather than before', async () => {
+    // The column exists in the schema and nothing wrote it, so every
+    // order read as "payment verified: never" — including healthy ones.
+    const { raw, signature, dto } = makePayload();
+    const calls: string[] = [];
+    ordersService.findByPaystackReference.mockResolvedValue({
+      id: 'order-1',
+      status: OrderStatus.PendingPayment,
+      total_amount: 500000,
+    });
+    ordersService.transitionNormal.mockImplementation(() => {
+      calls.push('transition');
+      return Promise.resolve();
+    });
+    ordersService.recordPaymentVerified.mockImplementation(() => {
+      calls.push('stamp');
+      return Promise.resolve();
+    });
+
+    await sut.handle(raw, signature, dto);
+
+    expect(ordersService.recordPaymentVerified).toHaveBeenCalledWith('order-1');
+    // Order matters: the transition is the compare-and-swap that decides
+    // whether this webhook won the race. Stamping first would mark an
+    // order verified even when a concurrent writer took the transition.
+    expect(calls).toEqual(['transition', 'stamp']);
+  });
+
+  it('still fulfils when the verification stamp fails — a missing timestamp must not cost a delivery', async () => {
+    const { raw, signature, dto } = makePayload();
+    ordersService.findByPaystackReference.mockResolvedValue({
+      id: 'order-1',
+      status: OrderStatus.PendingPayment,
+      total_amount: 500000,
+    });
+    ordersService.recordPaymentVerified.mockRejectedValue(
+      new Error('column is having a bad day'),
+    );
+
+    await expect(sut.handle(raw, signature, dto)).resolves.toBeUndefined();
     expect(fulfillment.start).toHaveBeenCalledWith('order-1');
   });
 

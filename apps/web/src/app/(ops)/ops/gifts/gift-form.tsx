@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { saveGiftAction } from "../actions";
 import {
+  DELIVERY_TYPE_LABEL,
   GIFT_DELIVERY_TYPES,
   VENDOR_CATEGORIES,
   type GiftTemplate,
@@ -59,7 +60,10 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
             className={input}
           />
         </Field>
-        <Field label="Price (₦)" hint="What the sender pays. Set what you pay the vendor on their own page.">
+        <Field
+          label="Price (₦)"
+          hint="What the sender pays. Set what you pay the vendor on their own page."
+        >
           <input
             name="basePrice"
             required
@@ -69,7 +73,10 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
             className={input}
           />
         </Field>
-        <Field label="Description" hint="One or two lines. Shown under the name.">
+        <Field
+          label="Description"
+          hint="One or two lines. Shown under the name."
+        >
           <textarea
             name="description"
             rows={3}
@@ -80,7 +87,11 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
           />
         </Field>
         <Field label="Category">
-          <select name="category" defaultValue={gift?.category ?? "food"} className={input}>
+          <select
+            name="category"
+            defaultValue={gift?.category ?? "food"}
+            className={input}
+          >
             {VENDOR_CATEGORIES.map((category) => (
               <option key={category.value} value={category.value}>
                 {category.label}
@@ -95,23 +106,47 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
           How they get it
         </legend>
         <Field label="Delivery">
-          <select
-            name="deliveryType"
-            defaultValue={gift?.deliveryType ?? "digital_voucher"}
-            className={input}
-          >
-            {GIFT_DELIVERY_TYPES.map((type) => (
-              <option key={type.value} value={type.value}>
-                {type.label}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-zinc-500">
-            Delivered-to-an-address gifts aren&rsquo;t offered: nothing fulfils them yet, so an
-            order would take the money and stop.
-          </span>
+          {gift ? (
+            // Read-only once the gift exists, and NOT submitted — the API
+            // rejects deliveryType on update. The select used to render
+            // here could only represent digital_voucher and vtu, so
+            // editing a `physical` gift for any reason at all silently
+            // converted it to a voucher. Plain text, no hidden input:
+            // the value must not travel with the form.
+            <>
+              <p className="py-1.5 font-medium">
+                {DELIVERY_TYPE_LABEL[gift.deliveryType]}
+              </p>
+              <span className="text-xs text-zinc-500">
+                Can&rsquo;t be changed — orders already reference this gift, and
+                changing how it&rsquo;s fulfilled would change what they bought.
+                Add a new gift instead.
+              </span>
+            </>
+          ) : (
+            <>
+              <select
+                name="deliveryType"
+                defaultValue="digital_voucher"
+                className={input}
+              >
+                {GIFT_DELIVERY_TYPES.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-zinc-500">
+                Delivered-to-an-address gifts aren&rsquo;t offered: nothing
+                fulfils them yet, so an order would take the money and stop.
+              </span>
+            </>
+          )}
         </Field>
-        <Field label="Timing note" hint="Shown to the sender, e.g. “Redeemable anytime this week”.">
+        <Field
+          label="Timing note"
+          hint="Shown to the sender, e.g. “Redeemable anytime this week”."
+        >
           <input
             name="deliveryWindow"
             maxLength={120}
@@ -159,25 +194,36 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
           <span>
             On sale
             <span className="block text-xs text-zinc-500">
-              New gifts start off sale, so nothing goes live before you&rsquo;ve checked the price.
+              New gifts start off sale, so nothing goes live before you&rsquo;ve
+              checked the price.
             </span>
           </span>
         </label>
         <label className="flex items-center gap-2">
-          <input type="checkbox" name="featured" defaultChecked={gift?.featured ?? false} />
+          <input
+            type="checkbox"
+            name="featured"
+            defaultChecked={gift?.featured ?? false}
+          />
           <span>Featured</span>
         </label>
       </fieldset>
 
       {errors.length > 0 && (
-        <ul role="alert" className="list-disc rounded border border-red-300 bg-red-50 py-2 pr-3 pl-8 text-red-800">
+        <ul
+          role="alert"
+          className="list-disc rounded border border-red-300 bg-red-50 py-2 pr-3 pl-8 text-red-800"
+        >
           {errors.map((message) => (
             <li key={message}>{message}</li>
           ))}
         </ul>
       )}
       {saved && (
-        <p role="status" className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-900">
+        <p
+          role="status"
+          className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-900"
+        >
           {saved}
         </p>
       )}

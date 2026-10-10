@@ -106,6 +106,19 @@ export interface GiftTemplate {
 }
 
 /**
+ * Every delivery type a template can hold, including the two that can no
+ * longer be created. An existing `physical` gift still has to render
+ * somewhere, and labelling it honestly is the whole point — the edit
+ * form used to be unable to represent it and silently overwrote it.
+ */
+export const DELIVERY_TYPE_LABEL: Record<GiftTemplate["deliveryType"], string> = {
+  digital_voucher: "Collected in person",
+  vtu: "Sent to their phone",
+  physical: "Delivered to an address — not fulfillable",
+  experience: "Booked experience — not fulfillable",
+};
+
+/**
  * Only the two the fulfilment orchestrator can complete. Physical and
  * experience take the money and then raise — see the API's
  * CREATABLE_DELIVERY_TYPES for why they are not offered.

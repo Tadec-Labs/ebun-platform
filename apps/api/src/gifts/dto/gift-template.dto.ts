@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsEmpty,
   IsIn,
   IsInt,
   IsOptional,
@@ -153,9 +154,31 @@ export class UpdateGiftTemplateDto {
   @Max(100_000_000_000)
   basePrice?: number;
 
-  @ValidateIf((o: UpdateGiftTemplateDto) => o.deliveryType !== undefined)
-  @IsIn(CREATABLE_DELIVERY_TYPES)
-  deliveryType?: (typeof CREATABLE_DELIVERY_TYPES)[number];
+  /**
+   * IMMUTABLE. A template's fulfilment type is not an editable
+   * property — changing it changes what was sold, retroactively, for
+   * every order that already references this template.
+   *
+   * This field previously accepted CREATABLE_DELIVERY_TYPES, which
+   * holds only digital_voucher and vtu. Since the ops form's select
+   * offers exactly those two and always submits one, opening ANY
+   * `physical` template and saving it — even just to flip the on-sale
+   * toggle — silently rewrote it to a voucher. That is how
+   * "A Pizza, Delivered" went back on sale at ₦9,500 as a collection
+   * voucher: the form could not represent `physical`, so it
+   * overwrote it.
+   *
+   * Rejected loudly rather than quietly stripped by `whitelist: true`,
+   * matching this codebase's loud-over-silent bias: a caller still
+   * sending this field has a stale form and should be told, not
+   * ignored. Changing a template's fulfilment type is a migration,
+   * deliberately written, not a form submission.
+   */
+  @IsEmpty({
+    message:
+      'deliveryType cannot be changed after a gift is created — create a new gift instead.',
+  })
+  deliveryType?: never;
 
   @Transform(blankToNull)
   @IsOptional()

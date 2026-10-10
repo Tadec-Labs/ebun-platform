@@ -172,6 +172,34 @@ export class OrdersRepository {
     return response.data ?? null;
   }
 
+  /**
+   * Stamps the moment the backend itself verified a payment — HMAC
+   * checked, amount matched against the order. Written only by
+   * PaystackWebhookService, after the transition to `paid` has
+   * succeeded.
+   *
+   * Does NOT touch order.status: the transition is the state machine's
+   * job and has already happened by the time this runs. This column is
+   * evidence, not state — it is what lets ops distinguish "we verified
+   * this with Paystack" from "the row says paid", which is exactly the
+   * distinction that matters in a dispute.
+   */
+  async recordPaymentVerified(id: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('orders')
+      .update({ payment_verified_at: new Date().toISOString() })
+      .eq('id', id)
+      // Never overwrite an existing stamp: the first verification is
+      // the one that happened. A second write would only ever come
+      // from a replay, and moving the timestamp forward would quietly
+      // destroy the evidence of when the real one occurred.
+      .is('payment_verified_at', null);
+
+    if (error) {
+      throw error;
+    }
+  }
+
   /** Records that the reveal link was actually sent — does NOT touch order.status (reveal delivery and order state are separate concerns; see order-state-machine.ts's reveal_opened edge, which fires on the recipient actually opening the link, not on us sending it). */
   async recordRevealSent(id: string, revealUrl: string): Promise<void> {
     const { error } = await this.supabase

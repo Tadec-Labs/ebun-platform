@@ -285,6 +285,35 @@ describe('ops gift routes over HTTP', () => {
     }
   });
 
+  it('refuses to change deliveryType on an existing gift', async () => {
+    // This is how "A Pizza, Delivered" (a `physical` template) went back
+    // on sale as a ₦9,500 collection voucher: the ops form's select can
+    // only represent digital_voucher and vtu and always submitted one,
+    // so saving the gift for ANY reason silently rewrote what had been
+    // sold. Rejected loudly rather than stripped, so a stale form is
+    // told rather than ignored.
+    asRole('ebun_admin');
+    const res = await request(app.getHttpServer())
+      .patch(`/ops/gifts/${UUID}`)
+      .set('Authorization', 'Bearer good')
+      .send({ deliveryType: 'digital_voucher' })
+      .expect(400);
+
+    expect(JSON.stringify(res.body)).toContain('cannot be changed');
+    expect(gifts.update).not.toHaveBeenCalled();
+  });
+
+  it('still allows every other field to be edited', async () => {
+    asRole('ebun_admin');
+    await request(app.getHttpServer())
+      .patch(`/ops/gifts/${UUID}`)
+      .set('Authorization', 'Bearer good')
+      .send({ available: true, basePrice: 950000 })
+      .expect(200);
+
+    expect(gifts.update).toHaveBeenCalled();
+  });
+
   it('403s roles that may not change what is on sale', async () => {
     for (const role of ['ebun_support', 'ebun_finance', 'vendor', 'sender']) {
       asRole(role);

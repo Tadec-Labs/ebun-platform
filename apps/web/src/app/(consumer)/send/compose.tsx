@@ -3,7 +3,11 @@
 import { useState } from "react";
 import type { RecordedMedia } from "@/lib/media-recording/use-media-recorder";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
-import { OCCASIONS, type OccasionId, messagePlaceholder } from "@/lib/occasions";
+import {
+  OCCASIONS,
+  type OccasionId,
+  messagePlaceholder,
+} from "@/lib/occasions";
 import { formatNaira } from "@/lib/format-money";
 import { MediaRecorderPanel } from "./media-recorder-panel";
 import { RevealPreview } from "./reveal-preview";
@@ -67,7 +71,8 @@ export function Compose({
     onChangeDraft({ ...draft, [key]: value });
   }
 
-  const isRecordingMode = draft.messageType === "voice" || draft.messageType === "video";
+  const isRecordingMode =
+    draft.messageType === "voice" || draft.messageType === "video";
   // Recording works (see media-recorder-panel.tsx), but sending a
   // recorded message doesn't — CreateOrderService rejects any
   // messageType besides "text" today (no R2 upload step exists yet).
@@ -77,6 +82,28 @@ export function Compose({
 
   return (
     <>
+      {/*
+        Step 3 has had a labelled "← Back to your message" since it was
+        built; step 2 only had the gift card below, whose "Change" reads
+        as part of a summary rather than as navigation — the flow
+        appeared to be one-way from here. Same control, same position,
+        same wording pattern as step 3, so going back means the same
+        thing on every step.
+
+        Note this does NOT make the browser's own back button work:
+        /send is one route holding its step in local state, so back
+        still leaves the flow entirely. Fixing that means driving the
+        step from the URL, which is a larger change than this one.
+      */}
+      <button
+        type="button"
+        onClick={onChangeGift}
+        className="mb-5 self-start text-xs tracking-wide transition-colors hover:text-[color:var(--cream)]"
+        style={{ color: "var(--cream-dim)" }}
+      >
+        ← Back to gifts
+      </button>
+
       <button
         type="button"
         onClick={onChangeGift}
@@ -84,20 +111,32 @@ export function Compose({
         style={{ borderColor: "var(--border)", background: "var(--panel)" }}
       >
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm" style={{ color: "var(--cream)" }}>
+          <span
+            className="block truncate text-sm"
+            style={{ color: "var(--cream)" }}
+          >
             {gift.name}
           </span>
-          <span className="block text-xs" style={{ color: "var(--gold-light)" }}>
+          <span
+            className="block text-xs"
+            style={{ color: "var(--gold-light)" }}
+          >
             {formatNaira(gift.basePrice)}
           </span>
         </span>
-        <span className="shrink-0 text-xs" style={{ color: "var(--cream-dim)" }}>
-          Change
+        <span
+          className="shrink-0 text-xs underline underline-offset-2"
+          style={{ color: "var(--cream-dim)" }}
+        >
+          Change gift
         </span>
       </button>
 
       <div className="pb-7">
-        <h1 className="font-display text-3xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
+        <h1
+          className="font-display text-3xl leading-tight font-normal"
+          style={{ color: "var(--cream)" }}
+        >
           Who&rsquo;s it for?
         </h1>
       </div>
@@ -112,13 +151,18 @@ export function Compose({
               placeholder="Ada"
               autoComplete="off"
               className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
-              style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+              style={{
+                borderColor: "var(--border-strong)",
+                color: "var(--cream)",
+              }}
             />
           </Field>
           <Field
             label="Their WhatsApp number"
             error={
-              touchedPhone && draft.recipientPhone.trim().length > 0 && !phoneIsValid
+              touchedPhone &&
+              draft.recipientPhone.trim().length > 0 &&
+              !phoneIsValid
                 ? "Include the country code, e.g. +2348012345678"
                 : undefined
             }
@@ -131,7 +175,10 @@ export function Compose({
               inputMode="tel"
               autoComplete="tel"
               className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
-              style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+              style={{
+                borderColor: "var(--border-strong)",
+                color: "var(--cream)",
+              }}
             />
           </Field>
         </section>
@@ -152,9 +199,21 @@ export function Compose({
 
         <section className="flex flex-col gap-4">
           <div className="flex gap-2">
-            <Tab label="Write" active={draft.messageType === "text"} onClick={() => set("messageType", "text")} />
-            <Tab label="Voice" active={draft.messageType === "voice"} onClick={() => set("messageType", "voice")} />
-            <Tab label="Video" active={draft.messageType === "video"} onClick={() => set("messageType", "video")} />
+            <Tab
+              label="Write"
+              active={draft.messageType === "text"}
+              onClick={() => set("messageType", "text")}
+            />
+            <Tab
+              label="Voice"
+              active={draft.messageType === "voice"}
+              onClick={() => set("messageType", "voice")}
+            />
+            <Tab
+              label="Video"
+              active={draft.messageType === "video"}
+              onClick={() => set("messageType", "video")}
+            />
           </div>
 
           {draft.messageType === "text" && (
@@ -162,7 +221,10 @@ export function Compose({
               <p className="text-xs" style={{ color: "var(--cream-faint)" }}>
                 Stuck? Pick a prompt.
               </p>
-              <div className="flex flex-wrap gap-1.5" aria-label="Message starting points">
+              <div
+                className="flex flex-wrap gap-1.5"
+                aria-label="Message starting points"
+              >
                 {OCCASIONS.map((item) => {
                   const active = occasion === item.id;
                   return (
@@ -175,7 +237,9 @@ export function Compose({
                       style={{
                         borderColor: active ? "var(--gold)" : "var(--border)",
                         background: active ? "var(--gold-glow)" : "transparent",
-                        color: active ? "var(--gold-light)" : "var(--cream-faint)",
+                        color: active
+                          ? "var(--gold-light)"
+                          : "var(--cream-faint)",
                       }}
                     >
                       {item.label}
@@ -185,14 +249,19 @@ export function Compose({
               </div>
               <textarea
                 value={draft.text}
-                onChange={(e) => set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
+                onChange={(e) =>
+                  set("text", e.target.value.slice(0, MESSAGE_MAX_LENGTH))
+                }
                 rows={5}
                 placeholder={messagePlaceholder(occasion, draft.recipientName)}
                 className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
                 style={{ borderColor: "var(--border)", color: "var(--cream)" }}
               />
               {draft.text.length > MESSAGE_MAX_LENGTH - 200 && (
-                <p className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
+                <p
+                  className="text-right text-[10px]"
+                  style={{ color: "var(--cream-faint)" }}
+                >
                   {draft.text.length}/{MESSAGE_MAX_LENGTH}
                 </p>
               )}
@@ -222,7 +291,11 @@ export function Compose({
 
         <section className="flex flex-col gap-3">
           <div className="flex gap-2">
-            <Tab label="Send now" active={draft.sendTiming === "now"} onClick={() => set("sendTiming", "now")} />
+            <Tab
+              label="Send now"
+              active={draft.sendTiming === "now"}
+              onClick={() => set("sendTiming", "now")}
+            />
             <Tab
               label="Send later"
               active={draft.sendTiming === "scheduled"}
@@ -242,7 +315,10 @@ export function Compose({
                   colorScheme: "dark",
                 }}
               />
-              <p className="text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
+              <p
+                className="text-[11px] leading-relaxed"
+                style={{ color: "var(--cream-faint)" }}
+              >
                 Nothing reaches them before then — not even the link.
               </p>
             </>

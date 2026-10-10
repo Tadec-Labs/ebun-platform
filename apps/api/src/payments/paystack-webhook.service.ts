@@ -93,6 +93,33 @@ export class PaystackWebhookService {
       },
     );
 
+    // Stamp the column that proves this payment was verified
+    // server-side. It exists in the schema for exactly this and was
+    // never written by anything, so every order read as "payment
+    // verified: never" — including healthy ones — which makes the
+    // field worse than useless on an ops screen.
+    //
+    // After the transition, not before: the transition is the atomic
+    // compare-and-swap that decides whether this webhook won the race.
+    // Stamping first would mark an order verified even when a
+    // concurrent writer took the transition and this call threw.
+    //
+    // Failure here is logged, not thrown, for the same reason the
+    // fulfilment call below is: the payment genuinely was confirmed and
+    // the order has already moved to `paid`. Failing the request now
+    // would tell Paystack to redeliver something that already happened,
+    // and the idempotency key is claimed, so the redelivery would be
+    // rejected anyway. A missing timestamp is a cosmetic loss; a
+    // retried webhook is not.
+    try {
+      await this.ordersService.recordPaymentVerified(order.id);
+    } catch (err) {
+      this.logger.error(
+        `Could not stamp payment_verified_at for order ${order.id} — the payment WAS verified and the order is 'paid'; only the timestamp is missing.`,
+        err instanceof Error ? err.stack : err,
+      );
+    }
+
     // Kicked off synchronously, in the same request — see
     // FulfillmentOrchestratorService's file header for the full
     // rationale and the known failure mode this creates. Deliberately

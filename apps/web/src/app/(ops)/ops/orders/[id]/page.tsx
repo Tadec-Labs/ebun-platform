@@ -96,10 +96,62 @@ export default async function OrderDetailPage({
     throw error;
   }
 
-  const margin =
-    order.vendorPayoutAmount === null
-      ? null
-      : order.totalAmount - order.vendorPayoutAmount;
+  // Only the fields that have something to say. The page previously
+  // rendered every column in the row, which meant roughly half of it
+  // was permanently empty — fees are hardcoded 0, vendor payout and
+  // margin are never calculated, no vendor is ever assigned — and the
+  // History panel, the only part that actually explains an order, sat
+  // below all of it off the bottom of the screen. A field whose
+  // feature does not exist yet is noise, not information.
+  const details: { label: string; value: React.ReactNode }[] = [];
+  const push = (label: string, value: React.ReactNode) =>
+    details.push({ label, value });
+
+  if (order.vendorName) push("Vendor", order.vendorName);
+  if (order.messageType)
+    // What KIND, never the contents — the message is between the sender
+    // and one named person.
+    push("Message", MESSAGE_KIND[order.messageType] ?? order.messageType);
+  if (order.deliveryAddress) push("Address", order.deliveryAddress);
+  if (order.deliveryZone) push("Zone", order.deliveryZone);
+  if (order.serviceFee > 0) push("Service fee", formatNaira(order.serviceFee));
+  if (order.deliveryFee > 0)
+    push("Delivery fee", formatNaira(order.deliveryFee));
+  if (order.vendorPayoutAmount !== null) {
+    push("Vendor payout", formatNaira(order.vendorPayoutAmount));
+    push(
+      "Ebun margin",
+      formatNaira(order.totalAmount - order.vendorPayoutAmount),
+    );
+  }
+  if (order.vendorPaidAt) push("Vendor paid", formatWhen(order.vendorPaidAt));
+  if (order.paystackReference)
+    push(
+      "Paystack ref",
+      <span className="font-mono break-all">{order.paystackReference}</span>,
+    );
+  if (order.paymentVerifiedAt)
+    push("Payment verified", formatWhen(order.paymentVerifiedAt));
+  if (order.scheduledSendAt)
+    push("Scheduled for", formatWhen(order.scheduledSendAt));
+  if (order.whatsappSentAt)
+    push("WhatsApp sent", formatWhen(order.whatsappSentAt));
+  if (order.revealOpenedAt)
+    push("Reveal opened", formatWhen(order.revealOpenedAt));
+  push(
+    "Expires",
+    <>
+      {formatWhen(order.expiresAt)}{" "}
+      <span className="text-zinc-500">({formatRelative(order.expiresAt)})</span>
+    </>,
+  );
+  if (order.isDiasporaSender)
+    push(
+      "Sender",
+      `Diaspora${order.senderCountryCode ? ` (${order.senderCountryCode})` : ""}`,
+    );
+  if (order.isCorporateOrder) push("Corporate", "Yes");
+  if (order.revealTheme !== "gold") push("Theme", order.revealTheme);
 
   return (
     <>
@@ -110,7 +162,7 @@ export default async function OrderDetailPage({
         ← Orders
       </Link>
 
-      <div className="mt-3 mb-5 flex flex-wrap items-center gap-3">
+      <div className="mt-3 mb-4 flex flex-wrap items-center gap-3">
         <h1 className="font-mono text-lg font-semibold">
           {order.orderNumber ?? order.id.slice(0, 8)}
         </h1>
@@ -119,7 +171,7 @@ export default async function OrderDetailPage({
       </div>
 
       {order.stuck && (
-        <p className="mb-5 rounded border border-red-300 bg-red-50 px-3 py-2 text-red-900">
+        <p className="mb-4 rounded border border-red-300 bg-red-50 px-3 py-2 text-red-900">
           This order was paid for and has been sitting mid-fulfilment since{" "}
           {formatRelative(order.updatedAt)}. Fulfilment runs inside the Paystack
           webhook and will not retry on its own — it needs a manual retry or a
@@ -127,157 +179,28 @@ export default async function OrderDetailPage({
         </p>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <section className="rounded border border-zinc-200 bg-white p-4">
-          <h2 className="mb-3 font-medium">Gift</h2>
-          <dl className="grid grid-cols-2 gap-3">
-            <Field label="Gift">{order.giftName ?? "—"}</Field>
-            <Field label="Vendor">
-              {order.vendorName ?? (
-                <span className="text-amber-700">Not assigned</span>
-              )}
-            </Field>
-            <Field label="Recipient">{order.recipientName}</Field>
-            <Field label="Phone">{order.recipientPhone}</Field>
-            <Field label="Message">
-              {order.messageType ? (
-                // Deliberately what KIND, never the contents — the
-                // message is between the sender and one named person.
-                (MESSAGE_KIND[order.messageType] ?? order.messageType)
-              ) : (
-                <span className="text-zinc-500">None</span>
-              )}
-            </Field>
-            <Field label="Theme">{order.revealTheme}</Field>
-            {order.deliveryAddress && (
-              <Field label="Address">{order.deliveryAddress}</Field>
-            )}
-            {order.deliveryZone && (
-              <Field label="Zone">{order.deliveryZone}</Field>
-            )}
-          </dl>
-        </section>
+      {/* The four things you need before reading anything else. */}
+      <dl className="mb-6 grid gap-x-6 gap-y-3 rounded border border-zinc-200 bg-white p-4 sm:grid-cols-4">
+        <Field label="Gift">{order.giftName ?? "—"}</Field>
+        <Field label="Recipient">
+          <div>{order.recipientName}</div>
+          <div className="text-zinc-500">{order.recipientPhone}</div>
+        </Field>
+        <Field label="Sender paid">
+          <span className="font-medium">{formatNaira(order.totalAmount)}</span>
+        </Field>
+        <Field label="Placed">
+          <div>{formatWhen(order.createdAt)}</div>
+          <div className="text-zinc-500">
+            last change {formatRelative(order.updatedAt)}
+          </div>
+        </Field>
+      </dl>
 
-        <section className="rounded border border-zinc-200 bg-white p-4">
-          <h2 className="mb-3 font-medium">Money</h2>
-          <dl className="grid grid-cols-2 gap-3">
-            <Field label="Sender paid">
-              <span className="font-medium">
-                {formatNaira(order.totalAmount)}
-              </span>
-            </Field>
-            <Field label="Gift value">{formatNaira(order.giftValue)}</Field>
-            <Field label="Service fee">{formatNaira(order.serviceFee)}</Field>
-            <Field label="Delivery fee">{formatNaira(order.deliveryFee)}</Field>
-            <Field label="Vendor payout">
-              {order.vendorPayoutAmount === null ? (
-                <span className="text-zinc-500">Not calculated</span>
-              ) : (
-                formatNaira(order.vendorPayoutAmount)
-              )}
-            </Field>
-            <Field label="Ebun margin">
-              {margin === null ? (
-                <span className="text-zinc-500">—</span>
-              ) : (
-                formatNaira(margin)
-              )}
-            </Field>
-            <Field label="Paystack ref">
-              <span className="font-mono break-all">
-                {order.paystackReference ?? "—"}
-              </span>
-            </Field>
-            <Field label="Payment verified">
-              {order.paymentVerifiedAt ? (
-                formatWhen(order.paymentVerifiedAt)
-              ) : (
-                <span className="text-amber-700">Never</span>
-              )}
-            </Field>
-          </dl>
-        </section>
-
-        <section className="rounded border border-zinc-200 bg-white p-4">
-          <h2 className="mb-3 font-medium">Delivery</h2>
-          <dl className="grid grid-cols-2 gap-3">
-            <Field label="Placed">{formatWhen(order.createdAt)}</Field>
-            <Field label="Last change">
-              {formatWhen(order.updatedAt)}{" "}
-              <span className="text-zinc-500">
-                ({formatRelative(order.updatedAt)})
-              </span>
-            </Field>
-            <Field label="Scheduled for">
-              {order.scheduledSendAt
-                ? formatWhen(order.scheduledSendAt)
-                : "Sent immediately"}
-            </Field>
-            <Field label="WhatsApp sent">
-              {order.whatsappSentAt ? formatWhen(order.whatsappSentAt) : "—"}
-            </Field>
-            <Field label="Reveal opened">
-              {order.revealOpenedAt
-                ? formatWhen(order.revealOpenedAt)
-                : "Not yet"}
-            </Field>
-            <Field label="Expires">
-              {formatWhen(order.expiresAt)}{" "}
-              <span className="text-zinc-500">
-                ({formatRelative(order.expiresAt)})
-              </span>
-            </Field>
-            <Field label="Sender">
-              {order.isDiasporaSender
-                ? `Diaspora${order.senderCountryCode ? ` (${order.senderCountryCode})` : ""}`
-                : "Nigeria"}
-            </Field>
-            <Field label="Corporate">
-              {order.isCorporateOrder ? "Yes" : "No"}
-            </Field>
-          </dl>
-          {order.notes && (
-            <p className="mt-3 rounded bg-zinc-50 px-3 py-2 text-zinc-700">
-              {order.notes}
-            </p>
-          )}
-        </section>
-
-        <section className="rounded border border-zinc-200 bg-white p-4">
-          <h2 className="mb-1 font-medium">Where it can go next</h2>
-          <p className="mb-3 text-zinc-600">
-            What the order state machine currently permits. Nothing here is
-            actionable yet — transitions still happen in the API.
-          </p>
-          <dl className="space-y-3">
-            <Field label="Automatically">
-              {order.allowedTransitions.normal.length === 0 ? (
-                <span className="text-zinc-500">
-                  Nowhere — nothing moves this on its own.
-                </span>
-              ) : (
-                order.allowedTransitions.normal.map(statusName).join(", ")
-              )}
-            </Field>
-            <Field label="By staff override">
-              {order.allowedTransitions.adminOverride.length === 0 ? (
-                <span className="text-zinc-500">Nothing available.</span>
-              ) : (
-                order.allowedTransitions.adminOverride
-                  .map(statusName)
-                  .join(", ")
-              )}
-            </Field>
-          </dl>
-          {order.terminal && (
-            <p className="mt-3 text-zinc-600">
-              This order has reached the end of its life.
-            </p>
-          )}
-        </section>
-      </div>
-
-      <section className="mt-6">
+      {/* Directly under the summary, because this is what answers
+          "what happened to this order" — the question the page exists
+          for. Everything else is reference and sits below it. */}
+      <section className="mb-6">
         <h2 className="mb-1 font-medium">History</h2>
         <p className="mb-3 text-zinc-600">
           Every recorded event for this order, oldest first, straight from the
@@ -285,8 +208,8 @@ export default async function OrderDetailPage({
         </p>
         {order.events.length === 0 ? (
           <div className="rounded border border-dashed border-zinc-300 bg-white px-6 py-8 text-center text-zinc-600">
-            {/* Worth saying out loud: an order with no events is itself a
-                finding, not an empty state to shrug at. */}
+            {/* An order with no events is itself a finding, not an
+                empty state to shrug at. */}
             Nothing recorded. Every state change should write an audit event, so
             an order with none is worth investigating.
           </div>
@@ -327,6 +250,27 @@ export default async function OrderDetailPage({
           </ol>
         )}
       </section>
+
+      {details.length > 0 && (
+        <details className="rounded border border-zinc-200 bg-white">
+          <summary className="cursor-pointer px-4 py-3 font-medium select-none">
+            Everything else ({details.length})
+          </summary>
+          <dl className="grid gap-x-6 gap-y-3 border-t border-zinc-100 px-4 py-4 sm:grid-cols-3">
+            {details.map((item) => (
+              <Field key={item.label} label={item.label}>
+                {item.value}
+              </Field>
+            ))}
+          </dl>
+        </details>
+      )}
+
+      {order.notes && (
+        <p className="mt-4 rounded border border-zinc-200 bg-zinc-50 px-3 py-2 text-zinc-700">
+          {order.notes}
+        </p>
+      )}
     </>
   );
 }
