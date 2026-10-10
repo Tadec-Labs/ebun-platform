@@ -13,6 +13,11 @@ export interface OrderConfirmation {
    * delivery not being live yet, and a permanent safety net regardless.
    */
   revealUrl: string | null;
+  /**
+   * E.164. Present exactly when revealUrl is — used only to open a
+   * WhatsApp chat with the recipient so the sender can send the link.
+   */
+  recipientPhone: string | null;
   /** Set when the sender chose to send later. Null means it went out immediately. */
   scheduledSendAt: string | null;
 }

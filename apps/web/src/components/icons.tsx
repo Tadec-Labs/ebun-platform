@@ -69,3 +69,24 @@ export function LockGlyph({ className }: IconProps) {
     </svg>
   );
 }
+
+/**
+ * A plain speech bubble for the "Send on WhatsApp" action. Deliberately
+ * not WhatsApp's logo — the button's label names the app; the glyph only
+ * has to say "message".
+ */
+export function ChatGlyph({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 12a8 8 0 1 1 3.4 6.55L4 19.5l1-3.3A7.96 7.96 0 0 1 4 12Z" />
+    </svg>
+  );
+}

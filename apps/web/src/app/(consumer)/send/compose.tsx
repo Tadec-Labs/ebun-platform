@@ -53,6 +53,7 @@ export function Compose({
   onChangeDraft,
   onChangeOccasion,
   onChangeGift,
+  allowScheduling,
   onContinue,
 }: {
   gift: GiftCatalogItem;
@@ -61,6 +62,7 @@ export function Compose({
   onChangeDraft: (draft: MessageDraft) => void;
   onChangeOccasion: (occasion: OccasionId | null) => void;
   onChangeGift: () => void;
+  allowScheduling: boolean;
   onContinue: () => void;
 }) {
   const [touchedPhone, setTouchedPhone] = useState(false);
@@ -289,6 +291,14 @@ export function Compose({
           )}
         </section>
 
+        {/*
+          Hidden, not disabled, while the sender delivers the link
+          themselves: a scheduled gift needs something on Ebun's side to
+          send it at the chosen time, and with automatic WhatsApp
+          delivery off there is nothing. A greyed-out option would only
+          raise the question of why. sendTiming stays "now" either way.
+        */}
+        {allowScheduling && (
         <section className="flex flex-col gap-3">
           <div className="flex gap-2">
             <Tab
@@ -324,6 +334,7 @@ export function Compose({
             </>
           )}
         </section>
+        )}
       </div>
 
       <div

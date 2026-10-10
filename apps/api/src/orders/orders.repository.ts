@@ -229,13 +229,14 @@ export class OrdersRepository {
     | 'status'
     | 'order_number'
     | 'recipient_name'
+    | 'recipient_phone'
     | 'reveal_token'
     | 'scheduled_send_at'
   > | null> {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'status, order_number, recipient_name, reveal_token, scheduled_send_at',
+        'status, order_number, recipient_name, recipient_phone, reveal_token, scheduled_send_at',
       )
       .eq('paystack_reference', reference)
       .maybeSingle()) as {
@@ -244,6 +245,7 @@ export class OrdersRepository {
         | 'status'
         | 'order_number'
         | 'recipient_name'
+        | 'recipient_phone'
         | 'reveal_token'
         | 'scheduled_send_at'
       > | null;

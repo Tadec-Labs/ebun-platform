@@ -91,15 +91,25 @@ export class OrdersService {
       : null;
     const stillEmbargoed = scheduledFor !== null && scheduledFor > new Date();
 
+    const linkAvailable = status === 'confirmed' && !stillEmbargoed;
+
     return {
       status,
       orderNumber: order.order_number,
       recipientName: order.recipient_name,
       scheduledSendAt: scheduledFor ? scheduledFor.toISOString() : null,
-      revealUrl:
-        status === 'confirmed' && !stillEmbargoed
-          ? `${webAppBaseUrl}/reveal/${order.reveal_token}`
-          : null,
+      revealUrl: linkAvailable
+        ? `${webAppBaseUrl}/reveal/${order.reveal_token}`
+        : null,
+      // Released on exactly the same condition as revealUrl, because its
+      // only use is addressing that link: the confirmation page opens a
+      // WhatsApp chat with this number, message pre-filled. It is the
+      // number the sender typed a minute ago, behind the same bearer
+      // credential (the unguessable Paystack reference) that already
+      // releases the reveal link — which is the more valuable of the
+      // two. Before payment confirms, there is nothing to send, so the
+      // endpoint has no reason to echo personal data back.
+      recipientPhone: linkAvailable ? order.recipient_phone : null,
     };
   }
 

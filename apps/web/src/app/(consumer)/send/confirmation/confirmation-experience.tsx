@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { CheckGlyph } from "@/components/icons";
+import { ChatGlyph, CheckGlyph } from "@/components/icons";
 import {
   type OrderConfirmation,
   getOrderConfirmation,
 } from "@/lib/orders/get-order-confirmation";
+import { giftMessage, whatsappChatUrl } from "@/lib/whatsapp-share";
 
 // The webhook that actually confirms payment is asynchronous — usually a
 // couple of seconds behind the redirect, occasionally much longer. Poll
@@ -21,7 +22,18 @@ type ViewState =
   | { kind: "timeout"; data?: OrderConfirmation }
   | { kind: "not_found" };
 
-export function ConfirmationExperience({ reference }: { reference: string | null }) {
+export function ConfirmationExperience({
+  reference,
+  autoDelivery,
+}: {
+  reference: string | null;
+  /**
+   * Whether Ebun delivers the WhatsApp message itself (see
+   * lib/feature-flags.ts). Off, the sender sends the link — so sending
+   * becomes this screen's main action rather than a fallback.
+   */
+  autoDelivery: boolean;
+}) {
   const [state, setState] = useState<ViewState>(() =>
     reference ? { kind: "checking" } : { kind: "not_found" },
   );
@@ -93,18 +105,44 @@ export function ConfirmationExperience({ reference }: { reference: string | null
           />
         )}
 
-        {state.kind === "confirmed" && (
-          <>
-            <Centered
-              mark={<ConfirmedRing />}
-              title="Payment received."
-              body={deliveryPromise(state.data)}
-            />
-            <Receipt data={state.data} />
-            {state.data.revealUrl && <RevealLinkFallback url={state.data.revealUrl} />}
-            <PrimaryLink href="/send">Send another gift</PrimaryLink>
-          </>
-        )}
+        {state.kind === "confirmed" &&
+          (autoDelivery ? (
+            <>
+              <Centered
+                mark={<ConfirmedRing />}
+                title="Payment received."
+                body={deliveryPromise(state.data)}
+              />
+              <Receipt data={state.data} />
+              {state.data.revealUrl && (
+                <SendItYourself data={state.data} revealUrl={state.data.revealUrl} prominence="fallback" />
+              )}
+              <PrimaryLink href="/send">Send another gift</PrimaryLink>
+            </>
+          ) : state.data.revealUrl ? (
+            <>
+              <Centered
+                mark={<ConfirmedRing />}
+                title={`Now send it to ${firstName(state.data.recipientName)}.`}
+                body="Payment received and the gift is ready. One tap opens WhatsApp with your message already written — just press send."
+              />
+              <SendItYourself data={state.data} revealUrl={state.data.revealUrl} prominence="primary" />
+              <Receipt data={state.data} />
+              <SecondaryLink href="/send">Send another gift</SecondaryLink>
+            </>
+          ) : (
+            // Paid, but the link is held back: a gift scheduled before
+            // "Send later" was switched off, still before its date.
+            <>
+              <Centered
+                mark={<ConfirmedRing />}
+                title="Payment received."
+                body={scheduledSelfSendPromise(state.data)}
+              />
+              <Receipt data={state.data} />
+              <SecondaryLink href="/send">Send another gift</SecondaryLink>
+            </>
+          ))}
 
         {state.kind === "unsuccessful" && (
           <>
@@ -198,47 +236,117 @@ function ConfirmedRing() {
   );
 }
 
+function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
 /**
- * Shown whenever a reveal link exists, not just while WhatsApp delivery
- * is unconfigured — a sender whose recipient never gets the WhatsApp
- * message, for any reason, still has a way to forward the gift
- * themselves rather than hitting a dead end.
+ * Sending the gift. Used two ways:
+ *
+ * "primary" — WhatsApp delivery is the sender's job (automatic delivery
+ * off). The whole screen exists to get this tapped, so it leads, with
+ * the recipient's name in the button: a named action reads as one step
+ * left, not as a feature to evaluate.
+ *
+ * "fallback" — Ebun sends the WhatsApp message, and this is the safety
+ * net for when it doesn't arrive. Same controls, quieter.
+ *
+ * Opens a chat with the recipient's number directly (wa.me/<number>),
+ * because the sender has just typed that number and making them hunt
+ * for the contact again is a step that loses people. "A different chat"
+ * covers the cases where that's wrong — a family group, a second
+ * number, someone saved under a nickname.
  */
-function RevealLinkFallback({ url }: { url: string }) {
+function SendItYourself({
+  data,
+  revealUrl,
+  prominence,
+}: {
+  data: OrderConfirmation;
+  revealUrl: string;
+  prominence: "primary" | "fallback";
+}) {
+  const [opened, setOpened] = useState(false);
   const [copied, setCopied] = useState(false);
+  const name = firstName(data.recipientName);
+  const text = giftMessage(data.recipientName, revealUrl);
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(revealUrl);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard access can fail (permissions, insecure context) —
-      // the link is still visible and selectable by hand either way.
+      // Clipboard can be refused (permissions, insecure context). The
+      // link is still on screen to select by hand.
     }
   }
 
+  const primary = prominence === "primary";
+
   return (
-    <div className="flex flex-col gap-2 border p-4" style={{ borderColor: "var(--border)" }}>
-      <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-        You can also send this link yourself, in case the WhatsApp message is delayed.
-      </p>
-      <div className="flex items-center gap-3">
-        <span
-          className="flex-1 truncate text-xs"
-          style={{ color: "var(--gold-light)" }}
+    <div
+      className="flex flex-col gap-3"
+      style={primary ? undefined : { borderTop: "1px solid var(--border)", paddingTop: "1.25rem" }}
+    >
+      {!primary && (
+        <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+          Message not arrived? Send the link yourself.
+        </p>
+      )}
+
+      <a
+        href={whatsappChatUrl(data.recipientPhone, text)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => setOpened(true)}
+        className={`flex w-full items-center justify-center gap-2.5 text-sm font-medium tracking-wide transition-opacity hover:opacity-90 ${
+          primary ? "py-4" : "border py-3"
+        }`}
+        style={
+          primary
+            ? { background: "var(--gold)", color: "var(--ink)" }
+            : { borderColor: "var(--border-strong)", color: "var(--gold-light)" }
+        }
+      >
+        <ChatGlyph className="h-[18px] w-[18px]" />
+        {opened ? `Open WhatsApp again` : `Send to ${name} on WhatsApp`}
+      </a>
+
+      {opened && primary && (
+        <p className="text-center text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }} role="status">
+          Once you&rsquo;ve pressed send in WhatsApp, you&rsquo;re done. {name} opens it from there.
+        </p>
+      )}
+
+      <div className="flex items-center justify-center gap-5 text-xs">
+        <a
+          href={whatsappChatUrl(null, text)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-4 transition-colors hover:text-[color:var(--cream)]"
+          style={{ color: "var(--cream-dim)" }}
         >
-          {url}
+          Send to a different chat
+        </a>
+        <span aria-hidden="true" style={{ color: "var(--cream-faint)" }}>
+          ·
         </span>
         <button
           type="button"
           onClick={() => void handleCopy()}
-          className="flex-shrink-0 px-3 py-1.5 text-[11px] tracking-wide"
-          style={{ background: "var(--gold)", color: "var(--ink)" }}
+          className="underline underline-offset-4 transition-colors hover:text-[color:var(--cream)]"
+          style={{ color: "var(--cream-dim)" }}
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? "Link copied" : "Copy link"}
         </button>
       </div>
+
+      {primary && (
+        <p className="text-center text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
+          Anyone with this link can open the gift, so send it only to {name}.
+        </p>
+      )}
     </div>
   );
 }
@@ -260,6 +368,26 @@ function deliveryPromise(data: OrderConfirmation): string {
     minute: "2-digit",
   });
   return `Saved for ${when}. ${data.recipientName} will get a WhatsApp message then — nothing reaches them before.`;
+}
+
+/**
+ * Only reachable for a gift scheduled while automatic delivery was
+ * expected, now that it isn't: the link stays held back until the date
+ * (see OrdersService.getConfirmation), so the honest instruction is to
+ * come back to this page then.
+ */
+function scheduledSelfSendPromise(data: OrderConfirmation): string {
+  if (!data.scheduledSendAt) {
+    return "Your gift is ready. Refresh this page in a moment to send it.";
+  }
+  const when = new Date(data.scheduledSendAt).toLocaleString("en-NG", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `Saved for ${when}. Come back to this page then and you'll be able to send it to ${firstName(data.recipientName)} on WhatsApp.`;
 }
 
 function Receipt({ data }: { data: OrderConfirmation }) {
@@ -286,6 +414,18 @@ function PrimaryLink({ href, children }: { href: string; children: React.ReactNo
       href={href}
       className="block w-full py-3.5 text-center text-sm font-medium tracking-wide"
       style={{ background: "var(--gold)", color: "var(--ink)" }}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function SecondaryLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="block w-full py-2 text-center text-xs tracking-wide underline underline-offset-4 transition-colors hover:text-[color:var(--cream)]"
+      style={{ color: "var(--cream-dim)" }}
     >
       {children}
     </Link>

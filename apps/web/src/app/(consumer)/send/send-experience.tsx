@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 import type { OccasionId } from "@/lib/occasions";
 import { Compose, type MessageDraft } from "./compose";
@@ -52,9 +52,12 @@ const PHASES: { id: Phase; label: string }[] = [
 export function SendExperience({
   catalog,
   catalogReachable,
+  allowScheduling,
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
+  /** "Send later" only exists while Ebun delivers the message itself. */
+  allowScheduling: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>("gift");
   const [draft, setDraft] = useState<SendDraft>({
@@ -64,8 +67,24 @@ export function SendExperience({
   });
   const currentPhaseIndex = PHASES.findIndex((item) => item.id === phase);
 
+  // Each step is a new screen to the sender, but it's the same page to
+  // the browser, so scroll position carried over: tapping a gift low in
+  // the grid opened the message step halfway down its form, past the
+  // recipient fields. Start every step at the top. Instant, not smooth —
+  // a smooth scroll on a screen that has just changed reads as lag.
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [phase]);
+
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
+    // The gift step widens on larger screens so the grid can show three
+    // across; the writing and paying steps stay phone-width, where a
+    // form reads best whatever the screen.
+    <div
+      className={`mx-auto flex min-h-dvh w-full flex-col px-7 ${
+        phase === "gift" ? "max-w-[440px] md:max-w-[880px]" : "max-w-[440px]"
+      }`}
+    >
       <header className="pt-5 pb-7">
         <div className="flex items-center justify-between">
           <p className="font-display text-base tracking-[0.2em]" style={{ color: "var(--gold)" }}>
@@ -117,6 +136,7 @@ export function SendExperience({
           onChangeDraft={(message) => setDraft((prev) => ({ ...prev, message }))}
           onChangeOccasion={(occasion) => setDraft((prev) => ({ ...prev, occasion }))}
           onChangeGift={() => setPhase("gift")}
+          allowScheduling={allowScheduling}
           onContinue={() => setPhase("pay")}
         />
       )}

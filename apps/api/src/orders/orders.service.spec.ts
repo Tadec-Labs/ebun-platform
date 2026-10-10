@@ -147,6 +147,7 @@ describe('OrdersService', () => {
         status: OrderStatus.Paid,
         order_number: 'EBN-0042',
         recipient_name: 'Ada',
+        recipient_phone: '+2348012345678',
         reveal_token: 'token-abc',
       });
 
@@ -163,6 +164,7 @@ describe('OrdersService', () => {
         orderNumber: 'EBN-0042',
         recipientName: 'Ada',
         revealUrl: 'https://ebun.example/reveal/token-abc',
+        recipientPhone: '+2348012345678',
         scheduledSendAt: null,
       });
     });
@@ -172,6 +174,7 @@ describe('OrdersService', () => {
         status: OrderStatus.PendingPayment,
         order_number: 'EBN-0043',
         recipient_name: 'Chidi',
+        recipient_phone: '+2348099999999',
         reveal_token: 'token-def',
       });
 
@@ -185,6 +188,8 @@ describe('OrdersService', () => {
       // useful to show yet, and no reason to leak a working-looking
       // link early.
       expect(result.revealUrl).toBeNull();
+      // Nothing to send yet, so no reason to echo the number back.
+      expect(result.recipientPhone).toBeNull();
     });
 
     it('throws NotFoundException for an unknown reference', async () => {
@@ -211,6 +216,7 @@ describe('OrdersService', () => {
       expect(Object.keys(result).sort()).toEqual([
         'orderNumber',
         'recipientName',
+        'recipientPhone',
         'revealUrl',
         'scheduledSendAt',
         'status',
@@ -227,6 +233,7 @@ describe('OrdersService', () => {
         status: OrderStatus.VoucherIssued,
         order_number: 'EBN-0045',
         recipient_name: 'Tunde',
+        recipient_phone: '+2348011111111',
         reveal_token: 'token-jkl',
         scheduled_send_at: sendAt.toISOString(),
       });
@@ -236,6 +243,7 @@ describe('OrdersService', () => {
         .then((result) => {
           expect(result.status).toBe('confirmed');
           expect(result.revealUrl).toBeNull();
+          expect(result.recipientPhone).toBeNull();
           expect(result.scheduledSendAt).toBe(sendAt.toISOString());
         });
     });
@@ -246,6 +254,7 @@ describe('OrdersService', () => {
         status: OrderStatus.VoucherIssued,
         order_number: 'EBN-0046',
         recipient_name: 'Tunde',
+        recipient_phone: '+2348011111111',
         reveal_token: 'token-mno',
         scheduled_send_at: sendAt.toISOString(),
       });
@@ -258,6 +267,7 @@ describe('OrdersService', () => {
       // Past the date it reverts to its real purpose: the sender's
       // fallback if the WhatsApp message never lands.
       expect(result.revealUrl).toBe('https://ebun.example/reveal/token-mno');
+      expect(result.recipientPhone).toBe('+2348011111111');
     });
   });
 });

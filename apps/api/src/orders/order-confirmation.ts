@@ -25,6 +25,12 @@ export interface OrderConfirmationView {
    */
   revealUrl: string | null;
   /**
+   * E.164, e.g. +2348012345678. Null whenever revealUrl is null — it
+   * exists only so the sender can open a WhatsApp chat with the
+   * recipient and send the link themselves.
+   */
+  recipientPhone: string | null;
+  /**
    * Set when the sender chose to send the gift later. The confirmation
    * screen uses it to say when it goes out, and it is also why
    * revealUrl is withheld until then.

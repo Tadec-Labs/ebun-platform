@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { whatsappAutoDeliveryEnabled } from "@/lib/feature-flags";
 import { ConfirmationExperience } from "./confirmation-experience";
 
 export const metadata: Metadata = {
@@ -16,5 +17,10 @@ export default async function ConfirmationPage({
   const raw = params.reference ?? params.trxref;
   const reference = Array.isArray(raw) ? raw[0] : raw;
 
-  return <ConfirmationExperience reference={reference ?? null} />;
+  return (
+    <ConfirmationExperience
+      reference={reference ?? null}
+      autoDelivery={whatsappAutoDeliveryEnabled()}
+    />
+  );
 }
