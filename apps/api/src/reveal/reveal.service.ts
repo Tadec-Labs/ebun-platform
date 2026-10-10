@@ -1,10 +1,11 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { FulfillmentType, OrderStatus, RedemptionStatus } from '@ebun/types';
 import { OrdersService } from '../orders/orders.service';
 import { OrderRow } from '../orders/orders.repository';
 import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { RedemptionsService } from '../redemptions/redemptions.service';
+import { VendorsService } from '../vendors/vendors.service';
 import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
 import type { MediaUrlResolver } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
@@ -42,11 +43,14 @@ const TERMINAL_NEGATIVE_STATES = new Set([
  */
 @Injectable()
 export class RevealService {
+  private readonly logger = new Logger(RevealService.name);
+
   constructor(
     private readonly ordersService: OrdersService,
     private readonly giftsService: GiftsService,
     private readonly usersService: UsersService,
     private readonly redemptions: RedemptionsService,
+    private readonly vendors: VendorsService,
     @Inject(MEDIA_URL_RESOLVER)
     private readonly mediaResolver: MediaUrlResolver,
   ) {}
@@ -246,9 +250,32 @@ export class RevealService {
           qrPayload: existingRedemption.redemption_token,
           expiresAt: existingRedemption.expires_at as string,
         };
+        view.collectAt = await this.collectionPoints(order.gift_template_id);
       }
     }
 
     return view;
+  }
+
+  /**
+   * Never allowed to take the voucher down with it. The code and QR are
+   * the gift; the list of places is help finding where to use it. If the
+   * lookup fails, the recipient still gets their code (and the screen's
+   * no-locations wording), and the failure is logged for us rather than
+   * shown to them as an error page.
+   */
+  private async collectionPoints(
+    giftTemplateId: string,
+  ): Promise<NonNullable<RevealView['collectAt']>> {
+    try {
+      return await this.vendors.collectionPointsForGift(giftTemplateId);
+    } catch (err) {
+      this.logger.warn(
+        `Collection points lookup failed for gift template ${giftTemplateId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return [];
+    }
   }
 }

@@ -101,6 +101,34 @@ export function VendorForm({
         </Field>
       </Section>
 
+      {/* Recipient-facing — the only part of this form a customer ever
+          reads. Shown on the gift screen once someone claims a gift this
+          vendor offers. */}
+      <Section title="Where recipients collect">
+        <Field
+          label="Pickup address"
+          hint="Shown to people collecting a gift here, exactly as written. Add a landmark if it helps. Leave blank and this vendor isn't listed as a place to collect."
+        >
+          <textarea
+            name="pickupAddress"
+            rows={2}
+            maxLength={300}
+            placeholder="12 Admiralty Way, opposite Mega Plaza, Lekki Phase 1"
+            defaultValue={vendor?.pickupAddress ?? ""}
+            className={input}
+          />
+        </Field>
+        <Field label="Opening hours" hint="When the counter can hand a gift over.">
+          <input
+            name="pickupHours"
+            maxLength={120}
+            placeholder="Mon–Sat, 10am–9pm"
+            defaultValue={vendor?.pickupHours ?? ""}
+            className={input}
+          />
+        </Field>
+      </Section>
+
       <Section title="Coverage">
         <Field label="Service areas" hint="Comma-separated neighbourhoods, e.g. Lekki Phase 1, Yaba">
           <textarea name="serviceAreas" rows={2} defaultValue={vendor?.serviceAreas.join(", ")} className={input} />

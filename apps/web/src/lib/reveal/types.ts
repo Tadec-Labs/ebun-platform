@@ -41,11 +41,19 @@ export interface RevealMessage {
 }
 
 /** Only ever populated once a digital_voucher order reaches "claimed". */
+/** A place that will accept the code. Public business details only. */
+export interface CollectionPoint {
+  name: string;
+  address: string;
+  hours: string | null;
+}
+
 export interface RedemptionDetails {
   fallbackCode: string;
   qrPayload: string;
-  vendorHint?: string;
   validUntil?: string; // ISO date, display only
+  /** Where the code can be used. Empty = no vendor with an address yet. */
+  collectAt: CollectionPoint[];
 }
 
 export interface RevealPayload {

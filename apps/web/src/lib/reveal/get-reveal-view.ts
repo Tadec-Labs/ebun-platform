@@ -34,6 +34,7 @@ interface ApiRevealView {
     qrPayload: string;
     expiresAt: string;
   };
+  collectAt?: { name: string; address: string; hours: string | null }[];
 }
 
 export type RevealFetchResult =
@@ -135,10 +136,11 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
       fallbackCode: view.redemption.fallbackCode,
       qrPayload: view.redemption.qrPayload,
       validUntil: view.redemption.expiresAt,
-      // No vendorHint: nothing assigns a vendor to an order yet, so
-      // there is no honest answer to "where do I take this". Inventing
-      // one would send someone to a counter that has never heard of
-      // Ebun. The ClaimedScreen simply omits the box.
+      // Exactly the vendors whose counter will accept this code (see
+      // VendorsService.collectionPointsForGift). Empty is a real answer
+      // — no address entered yet — and the screen says so plainly
+      // rather than inventing somewhere.
+      collectAt: view.collectAt ?? [],
     };
     payload.qrSvg = await renderQrSvg(view.redemption.qrPayload);
   }

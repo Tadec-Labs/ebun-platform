@@ -6,6 +6,7 @@ import { OrderRow } from '../orders/orders.repository';
 import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { RedemptionsService } from '../redemptions/redemptions.service';
+import { VendorsService } from '../vendors/vendors.service';
 import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
 
@@ -43,6 +44,7 @@ describe('RevealService', () => {
     findByOrderId: jest.Mock;
   };
   let mediaResolver: { resolvePlaybackUrl: jest.Mock };
+  let vendors: { collectionPointsForGift: jest.Mock };
 
   beforeEach(async () => {
     orders = { findByRevealToken: jest.fn(), transitionNormal: jest.fn() };
@@ -54,6 +56,7 @@ describe('RevealService', () => {
       findByOrderId: jest.fn().mockResolvedValue(null),
     };
     mediaResolver = { resolvePlaybackUrl: jest.fn() };
+    vendors = { collectionPointsForGift: jest.fn().mockResolvedValue([]) };
 
     gifts.findById.mockResolvedValue({
       id: 'template-1',
@@ -72,6 +75,7 @@ describe('RevealService', () => {
         { provide: GiftsService, useValue: gifts },
         { provide: UsersService, useValue: users },
         { provide: RedemptionsService, useValue: redemptions },
+        { provide: VendorsService, useValue: vendors },
         { provide: MEDIA_URL_RESOLVER, useValue: mediaResolver },
       ],
     }).compile();
@@ -278,6 +282,67 @@ describe('RevealService', () => {
         status: RedemptionStatus.Pending,
         fallbackCode: 'EBN-7K2-9XQ',
         qrPayload: 'redemption-token-1',
+      });
+    });
+
+    describe('where to collect', () => {
+      beforeEach(() => {
+        orders.findByRevealToken.mockResolvedValue(
+          makeOrder({ status: OrderStatus.RevealOpened }),
+        );
+        gifts.findById.mockResolvedValue({
+          id: 'template-1',
+          name: 'Voucher',
+          description: null,
+          image_url: null,
+          delivery_type: FulfillmentType.DigitalVoucher,
+        });
+      });
+
+      it('lists the places that accept the code alongside it', async () => {
+        redemptions.findByOrderId.mockResolvedValue({
+          status: RedemptionStatus.Pending,
+          fallback_code: 'EBN-7K2-9XQ',
+          redemption_token: 'redemption-token-1',
+        });
+        const points = [
+          {
+            name: 'Burger Hub',
+            address: '12 Admiralty Way, Lekki',
+            hours: 'Daily, 10am–10pm',
+          },
+        ];
+        vendors.collectionPointsForGift.mockResolvedValue(points);
+
+        const result = await sut.view('reveal-token-1');
+
+        expect(vendors.collectionPointsForGift).toHaveBeenCalledWith(
+          'template-1',
+        );
+        expect(result.collectAt).toEqual(points);
+      });
+
+      it('still returns the code when the places lookup fails — the voucher is the gift', async () => {
+        redemptions.findByOrderId.mockResolvedValue({
+          status: RedemptionStatus.Pending,
+          fallback_code: 'EBN-7K2-9XQ',
+          redemption_token: 'redemption-token-1',
+        });
+        vendors.collectionPointsForGift.mockRejectedValue(new Error('db down'));
+
+        const result = await sut.view('reveal-token-1');
+
+        expect(result.redemption?.fallbackCode).toBe('EBN-7K2-9XQ');
+        expect(result.collectAt).toEqual([]);
+      });
+
+      it('does not look up places before the gift has been claimed', async () => {
+        redemptions.findByOrderId.mockResolvedValue(null);
+
+        const result = await sut.view('reveal-token-1');
+
+        expect(vendors.collectionPointsForGift).not.toHaveBeenCalled();
+        expect(result.collectAt).toBeUndefined();
       });
     });
 

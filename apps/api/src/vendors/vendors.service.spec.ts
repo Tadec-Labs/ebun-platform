@@ -43,6 +43,8 @@ function makeVendor(overrides: Partial<VendorRow> = {}): VendorRow {
     response_timeout_minutes: 120,
     backup_vendor_id: null,
     notes: null,
+    pickup_address: null,
+    pickup_hours: null,
     created_at: '2026-10-05T00:00:00.000Z',
     updated_at: '2026-10-05T00:00:00.000Z',
     ...overrides,
@@ -71,6 +73,7 @@ describe('VendorsService', () => {
       listOfferings: jest.fn(),
       upsertOffering: jest.fn(),
       deleteOffering: jest.fn(),
+      listCollectionPoints: jest.fn(),
     };
     gifts = { findById: jest.fn() };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
@@ -394,6 +397,70 @@ describe('VendorsService', () => {
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ eventType: 'vendor_offering.removed' }),
       );
+    });
+  });
+
+  describe('collectionPointsForGift', () => {
+    const vendor = (overrides: Record<string, unknown> = {}) => ({
+      vendors: {
+        business_name: 'Burger Hub',
+        pickup_address: '12 Admiralty Way, Lekki',
+        pickup_hours: 'Daily, 10am–10pm',
+        active: true,
+        ...overrides,
+      },
+    });
+
+    it('lists active vendors with an address, sorted by name', async () => {
+      repository.listCollectionPoints.mockResolvedValue([
+        vendor({ business_name: 'Zest Grill' }),
+        vendor(),
+      ]);
+
+      const result = await sut.collectionPointsForGift('template-1');
+
+      expect(repository.listCollectionPoints).toHaveBeenCalledWith(
+        'template-1',
+      );
+      expect(result).toEqual([
+        {
+          name: 'Burger Hub',
+          address: '12 Admiralty Way, Lekki',
+          hours: 'Daily, 10am–10pm',
+        },
+        {
+          name: 'Zest Grill',
+          address: '12 Admiralty Way, Lekki',
+          hours: 'Daily, 10am–10pm',
+        },
+      ]);
+    });
+
+    it('leaves out inactive vendors — their counter no longer accepts codes', async () => {
+      repository.listCollectionPoints.mockResolvedValue([
+        vendor({ active: false }),
+      ]);
+
+      expect(await sut.collectionPointsForGift('template-1')).toEqual([]);
+    });
+
+    it('leaves out vendors with no pickup address, rather than listing a name with nowhere to go', async () => {
+      repository.listCollectionPoints.mockResolvedValue([
+        vendor({ pickup_address: null }),
+        vendor({ pickup_address: '   ' }),
+        { vendors: null },
+      ]);
+
+      expect(await sut.collectionPointsForGift('template-1')).toEqual([]);
+    });
+
+    it('treats blank hours as unknown', async () => {
+      repository.listCollectionPoints.mockResolvedValue([
+        vendor({ pickup_hours: ' ' }),
+      ]);
+
+      const [point] = await sut.collectionPointsForGift('template-1');
+      expect(point.hours).toBeNull();
     });
   });
 });

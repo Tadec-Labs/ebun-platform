@@ -166,6 +166,20 @@ export class CreateVendorDto {
   @MaxLength(2000)
   notes?: string;
 
+  /** Shown to recipients as where to collect. Free text: Lagos addresses rarely fit a structured form. */
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  pickupAddress?: string;
+
+  /** e.g. "Mon–Sat, 10am–9pm". */
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  pickupHours?: string;
+
   @IsOptional()
   @IsBoolean()
   active?: boolean;
@@ -278,6 +292,18 @@ export class UpdateVendorDto {
   @IsString()
   @MaxLength(2000)
   notes?: string | null;
+
+  @Transform(blankToNull)
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  pickupAddress?: string | null;
+
+  @Transform(blankToNull)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  pickupHours?: string | null;
 
   @ValidateIf((o: UpdateVendorDto) => o.active !== undefined)
   @IsBoolean()

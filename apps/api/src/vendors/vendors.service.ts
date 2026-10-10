@@ -59,6 +59,8 @@ export interface VendorView {
   responseTimeoutMinutes: number;
   backupVendorId: string | null;
   notes: string | null;
+  pickupAddress: string | null;
+  pickupHours: string | null;
   /**
    * The vendor's private counter-screen link. A credential, so it
    * travels only on the single-vendor read (never the list), only to
@@ -69,6 +71,13 @@ export interface VendorView {
   portalTokenRotatedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Where a recipient can collect a gift — public business details only. */
+export interface CollectionPointView {
+  name: string;
+  address: string;
+  hours: string | null;
 }
 
 export interface OfferingView {
@@ -103,6 +112,8 @@ const FIELD_MAP: Record<string, string> = {
   responseTimeoutMinutes: 'response_timeout_minutes',
   backupVendorId: 'backup_vendor_id',
   notes: 'notes',
+  pickupAddress: 'pickup_address',
+  pickupHours: 'pickup_hours',
   active: 'active',
   verified: 'verified',
 };
@@ -166,6 +177,8 @@ function toView(row: VendorRow): VendorView {
     responseTimeoutMinutes: row.response_timeout_minutes,
     backupVendorId: row.backup_vendor_id,
     notes: row.notes,
+    pickupAddress: row.pickup_address,
+    pickupHours: row.pickup_hours,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -336,6 +349,36 @@ export class VendorsService {
     });
 
     return toView(updated);
+  }
+
+  /**
+   * Where a recipient can take this gift's code — shown on their screen
+   * once they have claimed it.
+   *
+   * The rule mirrors what the vendor counter accepts, so the screen
+   * never sends someone to a counter that will turn them away: any
+   * vendor with an offering row for the gift, whether or not the
+   * offering is currently paused (VendorPortalController.sellsGift
+   * honours paused offerings for gifts already bought). Inactive
+   * vendors are left out — their counter link stops working — and so
+   * are vendors with no pickup address, because a name with nowhere to
+   * go is not an answer to "where do I collect this".
+   */
+  async collectionPointsForGift(
+    giftTemplateId: string,
+  ): Promise<CollectionPointView[]> {
+    const rows = await this.repository.listCollectionPoints(giftTemplateId);
+    const points: CollectionPointView[] = [];
+    for (const { vendors: vendor } of rows) {
+      const address = vendor?.pickup_address?.trim();
+      if (!vendor || !vendor.active || !address) continue;
+      points.push({
+        name: vendor.business_name,
+        address,
+        hours: vendor.pickup_hours?.trim() || null,
+      });
+    }
+    return points.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async listOfferings(vendorId: string): Promise<OfferingView[]> {

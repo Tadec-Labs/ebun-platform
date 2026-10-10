@@ -42,4 +42,11 @@ export interface RevealView {
     /** The redemption's own expiry, so the recipient's screen can say how long they have. */
     expiresAt: string;
   };
+  /**
+   * Where the code can be used — present exactly when `redemption` is.
+   * Empty when no vendor offering this gift has a pickup address yet;
+   * the screen says so rather than inventing somewhere. See
+   * VendorsService.collectionPointsForGift for who is listed.
+   */
+  collectAt?: { name: string; address: string; hours: string | null }[];
 }

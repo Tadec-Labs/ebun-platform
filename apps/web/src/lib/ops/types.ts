@@ -38,6 +38,9 @@ export interface Vendor {
   responseTimeoutMinutes: number;
   backupVendorId: string | null;
   notes: string | null;
+  /** Shown to recipients as where to collect. Null = not listed. */
+  pickupAddress: string | null;
+  pickupHours: string | null;
   /** The vendor's private counter-screen link. A credential — never log or share beyond the vendor. */
   portalToken: string;
   portalTokenRotatedAt: string | null;

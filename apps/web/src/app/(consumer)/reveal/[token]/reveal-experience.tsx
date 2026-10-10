@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { FulfillmentType } from "@ebun/types";
-import type { RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
+import type { CollectionPoint, RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
 import { claimGiftAction } from "./actions";
 import { HoldToUnwrap } from "./components/hold-to-unwrap";
 import { GiftMark, LockGlyph } from "@/components/icons";
@@ -518,7 +518,7 @@ function ClaimedScreen({
           It&rsquo;s yours.
         </h2>
         <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
-          Show this at the counter to collect {giftName ?? "it"}.
+          {collectInstruction(giftName, redemption.collectAt)}
         </p>
       </div>
 
@@ -566,6 +566,8 @@ function ClaimedScreen({
         </p>
       )}
 
+      <CollectAt places={redemption.collectAt} />
+
       {/*
         The end of the recipient's journey, and the single highest-value
         moment in the product — which until now did nothing at all.
@@ -588,16 +590,89 @@ function ClaimedScreen({
         </Link>
       </div>
 
-      {redemption.vendorHint && (
-        <div className="border px-4 py-3.5" style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}>
-          <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-            <span style={{ color: "var(--cream)" }}>Where to use it: </span>
-            {redemption.vendorHint}
-          </p>
-        </div>
-      )}
     </div>
   );
+}
+
+/**
+ * The line under "It's yours." Names the place when there is exactly
+ * one, because "show this at Burger Hub" is an instruction and "show
+ * this at the counter" is a riddle.
+ */
+function collectInstruction(giftName: string | undefined, places: CollectionPoint[]): string {
+  const gift = giftName ?? "your gift";
+  if (places.length === 1) return `Show this at ${places[0].name} to collect ${gift}.`;
+  if (places.length > 1) return `Show this at any of the places below to collect ${gift}.`;
+  return `Show this code when you collect ${gift}.`;
+}
+
+/**
+ * Where to go. Each place gets its address as written by ops (Lagos
+ * addresses lean on landmarks, so it is shown verbatim, not
+ * reformatted), its hours, and a directions link.
+ *
+ * Directions open Google Maps searching for "name, address" — no
+ * coordinates stored, no maps SDK loaded. On a phone that hands off to
+ * the Maps app, which is where someone heading out the door wants to be.
+ *
+ * With no places, it says so plainly rather than hiding the section:
+ * an absent "where" reads as an oversight, a stated one reads as a
+ * temporary state with the code still safe.
+ */
+function CollectAt({ places }: { places: CollectionPoint[] }) {
+  if (places.length === 0) {
+    return (
+      <div className="border px-4 py-3.5" style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}>
+        <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+          <span style={{ color: "var(--cream)" }}>Where to collect: </span>
+          we&rsquo;re confirming the location. Keep this code &mdash; it stays valid until the date above.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <section className="flex flex-col gap-3" aria-label="Where to collect">
+      <h3 className="text-[10px] tracking-[0.16em] uppercase" style={{ color: "var(--gold-dim)" }}>
+        {places.length === 1 ? "Where to collect" : "Where you can collect"}
+      </h3>
+      <ul className="flex flex-col gap-2.5">
+        {places.map((place) => (
+          <li
+            key={`${place.name}|${place.address}`}
+            className="flex flex-col gap-1.5 border px-4 py-3.5"
+            style={{ borderColor: "var(--border)", background: "var(--panel-raised)" }}
+          >
+            <p className="font-display text-lg leading-tight" style={{ color: "var(--cream)" }}>
+              {place.name}
+            </p>
+            <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+              {place.address}
+            </p>
+            {place.hours && (
+              <p className="text-[11px]" style={{ color: "var(--cream-faint)" }}>
+                {place.hours}
+              </p>
+            )}
+            <a
+              href={directionsUrl(place)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 self-start border-b pb-0.5 text-xs tracking-wide"
+              style={{ borderColor: "var(--gold-dim)", color: "var(--gold-light)" }}
+            >
+              Get directions &rarr;
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function directionsUrl(place: CollectionPoint): string {
+  const query = encodeURIComponent(`${place.name}, ${place.address}`);
+  return `https://www.google.com/maps/search/?api=1&query=${query}`;
 }
 
 function TerminalScreen({

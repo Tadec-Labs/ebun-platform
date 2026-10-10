@@ -159,7 +159,14 @@ export class RedemptionsRepository {
         'id, order_id, redemption_number, redemption_token, fallback_code, ' +
           'status, expires_at, completed_at, ' +
           'orders(id, order_number, recipient_name, status, gift_template_id, ' +
-          'gift_templates(name))',
+          // Named FK, not a bare gift_templates(...): orders references
+          // gift_templates twice (gift_template_id and
+          // swapped_to_template_id), and PostgREST refuses an ambiguous
+          // embed outright (PGRST201) rather than guessing — which
+          // surfaced as a 500 on every code lookup in /ops/redeem and the
+          // vendor counter. Aliased back to `gift_templates` so the row
+          // shape callers read is unchanged.
+          'gift_templates:gift_templates!gift_template_id(name))',
       )
       .eq('fallback_code', code)
       .maybeSingle()) as {

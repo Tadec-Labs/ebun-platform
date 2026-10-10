@@ -145,6 +145,8 @@ export async function saveVendorAction(formData: FormData): Promise<ActionResult
     accountNumber: optional("accountNumber"),
     accountName: optional("accountName"),
     notes: optional("notes"),
+    pickupAddress: optional("pickupAddress"),
+    pickupHours: optional("pickupHours"),
     backupVendorId: optional("backupVendorId"),
   };
 

@@ -24,6 +24,8 @@ export interface VendorRow {
   response_timeout_minutes: number;
   backup_vendor_id: string | null;
   notes: string | null;
+  pickup_address: string | null;
+  pickup_hours: string | null;
   portal_token: string;
   portal_token_rotated_at: string | null;
   created_at: string;
@@ -62,6 +64,16 @@ export interface OfferingRow {
   available: boolean;
   approved: boolean;
   gift_templates: { name: string; base_price: number } | null;
+}
+
+/** One vendor that will accept a given gift's code, as a recipient sees it. */
+export interface CollectionPointRow {
+  vendors: {
+    business_name: string;
+    pickup_address: string | null;
+    pickup_hours: string | null;
+    active: boolean;
+  } | null;
 }
 
 const SUMMARY_COLUMNS =
@@ -286,5 +298,27 @@ export class VendorsRepository {
       throw response.error;
     }
     return response.data ? token : null;
+  }
+
+  /**
+   * Every vendor holding an offering for this gift, with the fields a
+   * recipient needs to find them. Filtering (active, has an address)
+   * happens in VendorsService, where the rule is documented, rather
+   * than as embedded-resource filters here — PostgREST's filter-on-embed
+   * semantics are easy to get subtly wrong and this set is a handful of
+   * rows.
+   */
+  async listCollectionPoints(
+    giftTemplateId: string,
+  ): Promise<CollectionPointRow[]> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('vendors(business_name, pickup_address, pickup_hours, active)')
+      .eq('gift_template_id', giftTemplateId)) as {
+      data: CollectionPointRow[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? [];
   }
 }
