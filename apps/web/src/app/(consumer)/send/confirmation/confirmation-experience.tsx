@@ -8,6 +8,7 @@ import {
   getOrderConfirmation,
 } from "@/lib/orders/get-order-confirmation";
 import { giftMessage, whatsappChatUrl } from "@/lib/whatsapp-share";
+import { PolicyLinks } from "@/components/policy-links";
 
 // The webhook that actually confirms payment is asynchronous — usually a
 // couple of seconds behind the redirect, occasionally much longer. Poll
@@ -186,6 +187,8 @@ export function ConfirmationExperience({
           </>
         )}
       </div>
+      {/* The refund policy is what a worried sender looks for here. */}
+      <PolicyLinks className="pt-8" />
     </div>
   );
 }

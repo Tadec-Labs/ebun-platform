@@ -22,16 +22,52 @@ import type { GiftCatalogItem } from "./types";
  * does whoever is debugging it.
  */
 export type GiftCatalogResult =
-  | { kind: "ok"; items: GiftCatalogItem[] }
-  | { kind: "unreachable" };
+  { kind: "ok"; items: GiftCatalogItem[] } | { kind: "unreachable" };
 
 export async function getGiftCatalog(): Promise<GiftCatalogResult> {
+  const url = `${API_BASE_URL}/gifts`;
   try {
-    const res = await fetch(`${API_BASE_URL}/gifts`, { cache: "no-store" });
-    if (!res.ok) return { kind: "unreachable" };
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      logUnreachable(
+        url,
+        `the API answered ${res.status} ${res.statusText}`.trim(),
+      );
+      return { kind: "unreachable" };
+    }
     return { kind: "ok", items: (await res.json()) as GiftCatalogItem[] };
-  } catch {
-    // Network error, API not reachable, wrong NEXT_PUBLIC_API_BASE_URL.
+  } catch (error) {
+    logUnreachable(url, describeFetchError(error));
     return { kind: "unreachable" };
   }
+}
+
+/**
+ * Server-side only (this runs in the /send server component), so it
+ * lands in the terminal running the web app — never in the sender's
+ * browser. Twice now "the gift list didn't load" has turned out to be
+ * the API simply not running, and the old silent catch made that a
+ * guessing game. One line now says which address was tried and what
+ * came back.
+ */
+function logUnreachable(url: string, reason: string) {
+  console.error(
+    `[gift catalogue] Couldn't load ${url}: ${reason}. ` +
+      "Is the API running (pnpm --filter api start:dev) and is NEXT_PUBLIC_API_BASE_URL right?",
+  );
+}
+
+function describeFetchError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  // Node's fetch hides the useful part (ECONNREFUSED, ENOTFOUND,
+  // ETIMEDOUT) one level down, on `cause`.
+  const cause = (
+    error as Error & { cause?: { code?: string; message?: string } }
+  ).cause;
+  if (cause?.code === "ECONNREFUSED")
+    return "connection refused — nothing is listening there";
+  if (cause?.code === "ENOTFOUND") return "that host name doesn't resolve";
+  if (cause?.code)
+    return `${cause.code}${cause.message ? ` (${cause.message})` : ""}`;
+  return error.message;
 }
