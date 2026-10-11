@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import type { VendorRedemption } from "@/lib/vendor/api";
 import { confirmCollectionAction, lookupCodeAction } from "./actions";
+import { QrScanner } from "./qr-scanner";
 
 /**
  * The whole vendor product: read a code, see what it is, hand it over.
@@ -24,6 +25,17 @@ export function CounterScreen({ businessName }: { businessName: string }) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<VendorRedemption | null>(null);
   const [pending, startTransition] = useTransition();
+  const [canScan, setCanScan] = useState(false);
+
+  function lookup(value: string) {
+    setError(null);
+    setFound(null);
+    startTransition(async () => {
+      const result = await lookupCodeAction(value);
+      if (result.ok) setFound(result.redemption);
+      else setError(result.message);
+    });
+  }
 
   function reset() {
     setCode("");
@@ -61,21 +73,29 @@ export function CounterScreen({ businessName }: { businessName: string }) {
         <h1 className="mt-1 text-3xl font-semibold">Collect a gift</h1>
       </header>
 
+      {/* Hidden once a code is found: the next thing to do is confirm,
+          and a second scan button would only invite rescanning. */}
+      {!found && (
+        <QrScanner
+          onAvailable={setCanScan}
+          onCode={(value) => {
+            setCode(value);
+            lookup(value);
+          }}
+        />
+      )}
+
       <form
         className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-          setError(null);
-          setFound(null);
-          startTransition(async () => {
-            const result = await lookupCodeAction(code);
-            if (result.ok) setFound(result.redemption);
-            else setError(result.message);
-          });
+          lookup(code);
         }}
       >
         <label className="flex flex-col gap-2">
-          <span className="text-lg">Code on their screen</span>
+          <span className="text-lg">
+            {canScan ? "Or type the code on their screen" : "Code on their screen"}
+          </span>
           <input
             value={code}
             onChange={(event) => setCode(event.target.value)}

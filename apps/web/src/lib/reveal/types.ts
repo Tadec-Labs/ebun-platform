@@ -73,6 +73,8 @@ export interface RevealPayload {
   theme?: "gold" | "red" | "white" | "green";
   message?: RevealMessage;
   redemption?: RedemptionDetails;
+  /** digital_voucher, once collected: when and where. Either may be null. */
+  collected?: { at: string | null; placeName: string | null };
   /**
    * The redemption QR, pre-rendered to SVG on the server (see ./qr.ts)
    * so the encoder never reaches the browser bundle. Null when

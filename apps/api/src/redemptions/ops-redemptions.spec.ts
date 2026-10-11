@@ -53,6 +53,11 @@ describe('RedemptionsService — collection by fallback code', () => {
       attemptRedemption: jest.fn(),
       createPendingOrFetch: jest.fn(),
       findByOrderId: jest.fn(),
+      listVendorsOfferingGift: jest
+        .fn()
+        .mockResolvedValue([
+          { id: VENDOR_ID, business_name: 'Pizza Place', active: true },
+        ]),
     };
     ordersService = {
       transitionNormal: jest.fn().mockResolvedValue(undefined),
@@ -202,6 +207,61 @@ describe('RedemptionsService — collection by fallback code', () => {
       );
 
       expect(JSON.stringify(view)).not.toContain(TOKEN);
+    });
+  });
+
+  describe('who can be credited', () => {
+    it('offers only active vendors that sell this gift, for staff to choose from', async () => {
+      repository.findByFallbackCode.mockResolvedValue(lookupRow());
+      repository.listVendorsOfferingGift.mockResolvedValue([
+        { id: 'v-b', business_name: 'Zest Pizza', active: true },
+        { id: 'v-x', business_name: 'Closed Pizza', active: false },
+        { id: 'v-a', business_name: 'Ace Pizza', active: true },
+      ]);
+
+      const view = await sut.lookupByFallbackCode(CODE);
+
+      expect(repository.listVendorsOfferingGift).toHaveBeenCalledWith('gift-1');
+      expect(view.eligibleVendors).toEqual([
+        { id: 'v-a', name: 'Ace Pizza' },
+        { id: 'v-b', name: 'Zest Pizza' },
+      ]);
+    });
+
+    it('refuses to credit a vendor that does not sell the gift — before anything is completed', async () => {
+      repository.findByFallbackCode.mockResolvedValue(lookupRow());
+      repository.listVendorsOfferingGift.mockResolvedValue([]);
+
+      await expect(
+        sut.completeByFallbackCode({
+          code: CODE,
+          vendorId: VENDOR_ID,
+          confirmedBy: 'Theo (Ebun ops)',
+          actorId: 'staff-1',
+          ipAddress: null,
+          userAgent: null,
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(repository.attemptRedemption).not.toHaveBeenCalled();
+    });
+
+    it('refuses an inactive vendor even if it has the offering', async () => {
+      repository.findByFallbackCode.mockResolvedValue(lookupRow());
+      repository.listVendorsOfferingGift.mockResolvedValue([
+        { id: VENDOR_ID, business_name: 'Pizza Place', active: false },
+      ]);
+
+      await expect(
+        sut.completeByFallbackCode({
+          code: CODE,
+          vendorId: VENDOR_ID,
+          confirmedBy: 'Theo (Ebun ops)',
+          actorId: 'staff-1',
+          ipAddress: null,
+          userAgent: null,
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(repository.attemptRedemption).not.toHaveBeenCalled();
     });
   });
 

@@ -352,6 +352,16 @@ export class VendorsService {
   }
 
   /**
+   * The business name only — for showing a recipient where their gift
+   * was collected. Null if the vendor no longer exists. Deliberately
+   * not get(): that returns bank details and the counter-link token.
+   */
+  async publicNameOf(vendorId: string): Promise<string | null> {
+    const row = await this.repository.findById(vendorId);
+    return row?.business_name ?? null;
+  }
+
+  /**
    * Where a recipient can take this gift's code — shown on their screen
    * once they have claimed it.
    *

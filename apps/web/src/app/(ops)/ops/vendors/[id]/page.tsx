@@ -41,9 +41,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
       </p>
 
       {query.created === "1" && (
-        <p className="mb-6 rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-900">
-          Vendor created. Next: link them to the gifts they can fulfil below.
-        </p>
+        <CreatedNotice gifts={Number(query.gifts ?? 0)} failed={Number(query.failed ?? 0)} />
       )}
 
       <div className="flex flex-col gap-10">
@@ -55,6 +53,9 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
         />
         <PortalLink
           vendorId={vendor.id}
+          businessName={vendor.businessName}
+          ownerName={vendor.ownerName}
+          whatsappNumber={vendor.whatsappNumber}
           token={vendor.portalToken}
           rotatedAt={vendor.portalTokenRotatedAt}
         />
@@ -68,5 +69,27 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
         </section>
       </div>
     </>
+  );
+}
+
+function CreatedNotice({ gifts, failed }: { gifts: number; failed: number }) {
+  return (
+    <div className="mb-6 flex flex-col gap-1">
+      <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-900">
+        Vendor added
+        {gifts > 0 ? ` with ${gifts} ${gifts === 1 ? "gift" : "gifts"}` : ""}. Next: send them their counter link
+        below.
+      </p>
+      {gifts === 0 && failed === 0 && (
+        <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+          No gifts linked yet — add at least one below, or this vendor can&rsquo;t hand anything over.
+        </p>
+      )}
+      {failed > 0 && (
+        <p className="rounded border border-red-300 bg-red-50 px-3 py-2 text-red-800">
+          {failed} {failed === 1 ? "gift" : "gifts"} couldn&rsquo;t be linked. Add {failed === 1 ? "it" : "them"} below.
+        </p>
+      )}
+    </div>
   );
 }

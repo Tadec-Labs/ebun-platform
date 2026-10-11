@@ -176,11 +176,7 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
         )}
 
         {phase === "redeemed" && (
-          <TerminalScreen
-            title="Already collected"
-            body="This gift has already been redeemed at a vendor."
-            giftName={initial.giftName}
-          />
+          <CollectedScreen giftName={initial.giftName} collected={initial.collected} />
         )}
 
         {phase === "fulfilled" && (
@@ -673,6 +669,65 @@ function CollectAt({ places }: { places: CollectionPoint[] }) {
 function directionsUrl(place: CollectionPoint): string {
   const query = encodeURIComponent(`${place.name}, ${place.address}`);
   return `https://www.google.com/maps/search/?api=1&query=${query}`;
+}
+
+/**
+ * After the handover. It used to read "already been redeemed at a
+ * vendor" — accurate, and a dead end at the one moment the recipient
+ * is most likely to want to send something back: they have just been
+ * handed a gift. Says where and when (useful if anything is disputed,
+ * and simply nicer), then offers the way to return the favour.
+ */
+function CollectedScreen({
+  giftName,
+  collected,
+}: {
+  giftName?: string;
+  collected?: { at: string | null; placeName: string | null };
+}) {
+  const when = collected?.at
+    ? new Date(collected.at).toLocaleDateString("en-NG", { day: "numeric", month: "long" })
+    : null;
+  const where = collected?.placeName ?? null;
+  const detail =
+    where && when
+      ? `Collected at ${where} on ${when}.`
+      : where
+        ? `Collected at ${where}.`
+        : when
+          ? `Collected on ${when}.`
+          : "This gift has been collected.";
+
+  return (
+    <div className="flex flex-1 flex-col justify-center gap-10 text-center">
+      <div className="flex flex-col items-center gap-4">
+        <GiftMark className="h-12 w-12 text-[color:var(--gold)]" />
+        <h2 className="font-display text-4xl font-normal" style={{ color: "var(--cream)" }}>
+          Enjoy it.
+        </h2>
+        <p className="max-w-[30ch] text-sm leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+          {detail}
+        </p>
+        {giftName && (
+          <p className="text-xs tracking-wide" style={{ color: "var(--gold-dim)" }}>
+            {giftName}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-col gap-3">
+        <p className="text-xs" style={{ color: "var(--cream-faint)" }}>
+          Someone made your day. Make someone else&rsquo;s.
+        </p>
+        <Link
+          href="/send"
+          className="w-full py-3.5 text-center text-sm font-medium tracking-wide"
+          style={{ background: "var(--gold)", color: "var(--ink)" }}
+        >
+          Send one back
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 function TerminalScreen({

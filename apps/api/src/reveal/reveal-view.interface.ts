@@ -49,4 +49,10 @@ export interface RevealView {
    * VendorsService.collectionPointsForGift for who is listed.
    */
   collectAt?: { name: string; address: string; hours: string | null }[];
+  /**
+   * digital_voucher only, once collected: when, and at which business.
+   * Either can be null (older rows, a since-deleted vendor) — the screen
+   * words around what it has.
+   */
+  collected?: { at: string | null; placeName: string | null };
 }

@@ -247,14 +247,62 @@ export class RevealService {
         view.redemption = {
           status: existingRedemption.status,
           fallbackCode: existingRedemption.fallback_code,
-          qrPayload: existingRedemption.redemption_token,
+          // The QR carries the same short code printed beneath it, not
+          // the redemption_token. The only thing that reads this QR is
+          // the vendor counter's camera, which looks codes up exactly as
+          // if they were typed — vendor-scoped and rate-limited. Putting
+          // the long token on screen bought nothing (no scanner ever used
+          // it) and exposed the one value that redeems a gift without a
+          // vendor session via the public POST /redeem.
+          qrPayload: existingRedemption.fallback_code,
           expiresAt: existingRedemption.expires_at as string,
         };
         view.collectAt = await this.collectionPoints(order.gift_template_id);
       }
     }
 
+    if (
+      giftTemplate.delivery_type === FulfillmentType.DigitalVoucher &&
+      (order.status === OrderStatus.Redeemed ||
+        order.status === OrderStatus.Fulfilled)
+    ) {
+      view.collected = await this.collectedDetails(order.id);
+    }
+
     return view;
+  }
+
+  /**
+   * Where and when a collected gift was handed over, for the "enjoy it"
+   * screen. Same rule as collectionPoints: a lookup failure loses the
+   * detail, never the page.
+   */
+  private async collectedDetails(
+    orderId: string,
+  ): Promise<NonNullable<RevealView['collected']>> {
+    try {
+      const redemption = await this.redemptions.findByOrderId(orderId);
+      if (!redemption || redemption.status !== RedemptionStatus.Completed) {
+        return { at: null, placeName: null };
+      }
+      const vendorId =
+        typeof redemption.vendor_id === 'string' ? redemption.vendor_id : null;
+      const at =
+        typeof redemption.completed_at === 'string'
+          ? redemption.completed_at
+          : null;
+      return {
+        at,
+        placeName: vendorId ? await this.vendors.publicNameOf(vendorId) : null,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Collected-details lookup failed for order ${orderId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { at: null, placeName: null };
+    }
   }
 
   /**

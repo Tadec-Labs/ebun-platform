@@ -10,11 +10,10 @@ import QRCode from "qrcode";
  * the kind of thing worth hand-rolling, and a subtly wrong one produces
  * codes that scan on the phone you tested with and fail at a counter.
  *
- * What goes in is the redemption_token itself, never a URL containing
- * it — the schema is explicit that this token "is never in a URL. It is
- * the QR code payload", because a URL ends up in browser history and
- * every proxy log along the way, and possessing this token is what
- * claims the gift.
+ * What goes in is the collection code — the same EBN- code printed
+ * under the QR — never the redemption_token or a URL. The vendor
+ * counter's camera scans it and looks it up exactly as if it had been
+ * typed. See RevealService for why the token no longer goes on screen.
  */
 export async function renderQrSvg(payload: string): Promise<string | null> {
   try {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { whatsappChatUrl } from "@/lib/whatsapp-share";
 import { rotateVendorPortalTokenAction } from "../../actions";
 
 /**
@@ -13,10 +14,16 @@ import { rotateVendorPortalTokenAction } from "../../actions";
  */
 export function PortalLink({
   vendorId,
+  businessName,
+  ownerName,
+  whatsappNumber,
   token,
   rotatedAt,
 }: {
   vendorId: string;
+  businessName: string;
+  ownerName: string;
+  whatsappNumber: string;
   token: string;
   rotatedAt: string | null;
 }) {
@@ -39,6 +46,21 @@ export function PortalLink({
           them check and confirm codes for the gifts they sell — nothing else.
         </p>
       </div>
+
+      {link && (
+        <a
+          href={whatsappChatUrl(whatsappNumber, counterLinkMessage(ownerName, businessName, link))}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="self-start rounded bg-zinc-900 px-4 py-2 font-medium text-white"
+        >
+          Send to {firstName(ownerName)} on WhatsApp
+        </a>
+      )}
+      <p className="text-xs text-zinc-500">
+        Opens a chat with {whatsappNumber}, the link and how to use it already written. Send it only to
+        that number — anyone holding this link can confirm collections for {businessName}.
+      </p>
 
       <div className="flex flex-wrap items-center gap-2">
         <code className="min-w-0 flex-1 overflow-x-auto rounded border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs whitespace-nowrap">
@@ -107,4 +129,26 @@ export function PortalLink({
       )}
     </section>
   );
+}
+
+function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
+/**
+ * Written for someone reading it on the phone they'll use at the
+ * counter: what the link is, the one-time setup, the two steps per
+ * customer, and the one rule.
+ */
+function counterLinkMessage(ownerName: string, businessName: string, link: string): string {
+  return [
+    `Hi ${firstName(ownerName)}, here is the Ebun counter link for ${businessName}:`,
+    "",
+    link,
+    "",
+    "Open it once on the phone you'll use at the counter, then bookmark it.",
+    "When a customer shows an Ebun gift: tap Scan their QR (or type their code), check the gift, then tap Hand it over.",
+    "",
+    "Please keep this link to yourselves — it confirms collections for your shop.",
+  ].join("\n");
 }

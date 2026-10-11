@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import type { RedemptionLookup } from "@/lib/ops/types";
 import { completeRedemptionAction, lookupRedemptionAction } from "../actions";
@@ -15,10 +16,13 @@ const input = "w-full rounded border border-zinc-300 bg-white px-3 py-2";
  * and who it belongs to first makes the mistake visible while it is
  * still free to make.
  */
-export function RedeemConsole({ vendors }: { vendors: { id: string; name: string }[] }) {
+export function RedeemConsole() {
   const [code, setCode] = useState("");
   const [found, setFound] = useState<RedemptionLookup | null>(null);
-  const [vendorId, setVendorId] = useState(vendors.length === 1 ? vendors[0].id : "");
+  const [vendorId, setVendorId] = useState("");
+  // Only vendors that sell this particular gift — returned with the
+  // lookup, and the only ones the API will accept.
+  const vendors = found?.eligibleVendors ?? [];
   const [errors, setErrors] = useState<string[]>([]);
   const [done, setDone] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -26,7 +30,7 @@ export function RedeemConsole({ vendors }: { vendors: { id: string; name: string
   function reset() {
     setCode("");
     setFound(null);
-    setVendorId(vendors.length === 1 ? vendors[0].id : "");
+    setVendorId("");
     setErrors([]);
     setDone(null);
   }
@@ -64,8 +68,13 @@ export function RedeemConsole({ vendors }: { vendors: { id: string; name: string
           setFound(null);
           startTransition(async () => {
             const result = await lookupRedemptionAction(code);
-            if (result.ok) setFound(result.redemption);
-            else setErrors(result.errors);
+            if (result.ok) {
+              setFound(result.redemption);
+              // One seller is the common case — choose it rather than
+              // making staff pick the only option.
+              const eligible = result.redemption.eligibleVendors;
+              setVendorId(eligible.length === 1 ? eligible[0].id : "");
+            } else setErrors(result.errors);
           });
         }}
       >
@@ -155,9 +164,17 @@ export function RedeemConsole({ vendors }: { vendors: { id: string; name: string
                   ))}
                 </select>
                 <span className="text-xs text-zinc-500">
-                  {vendors.length === 0
-                    ? "No active vendors yet — add one under Vendors before collecting anything."
-                    : "Recorded against this vendor for payout and audit. This can't be undone."}
+                  {vendors.length === 0 ? (
+                    <>
+                      No active vendor sells {found.giftName ?? "this gift"} yet.{" "}
+                      <Link href="/ops/vendors" className="underline">
+                        Add it to a vendor&rsquo;s offerings
+                      </Link>{" "}
+                      first.
+                    </>
+                  ) : (
+                    "Only vendors that sell this gift are listed. Recorded for payout and audit — this can't be undone."
+                  )}
                 </span>
               </label>
               <div>

@@ -86,6 +86,11 @@ export interface RedemptionLookup {
   redeemable: boolean;
   /** Plain-language reason it can't be collected, when redeemable is false. */
   blockedReason: string | null;
+  /**
+   * Active vendors that sell this gift — the only ones the API will
+   * accept as having handed it over.
+   */
+  eligibleVendors: { id: string; name: string }[];
 }
 
 /** Mirrors apps/api/src/gifts/ops-gifts.service.ts's GiftTemplateView. */

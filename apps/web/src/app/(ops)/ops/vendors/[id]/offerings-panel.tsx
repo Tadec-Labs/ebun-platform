@@ -28,7 +28,6 @@ export function OfferingsPanel({
   const [priceNaira, setPriceNaira] = useState("");
   const [zones, setZones] = useState("");
   const [available, setAvailable] = useState(true);
-  const [approved, setApproved] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -50,7 +49,6 @@ export function OfferingsPanel({
     setPriceNaira("");
     setZones("");
     setAvailable(true);
-    setApproved(false);
   }
 
   function edit(offering: Offering) {
@@ -58,7 +56,6 @@ export function OfferingsPanel({
     setPriceNaira(String(offering.vendorPrice / 100));
     setZones(offering.availableZones.join(", "));
     setAvailable(offering.available);
-    setApproved(offering.approved);
     setErrors([]);
     setNotice(null);
   }
@@ -98,7 +95,7 @@ export function OfferingsPanel({
                     {formatNaira(o.ebunMargin)} <span className="text-zinc-500">({o.ebunMarginPct}%)</span>
                   </td>
                   <td className="px-4 py-3 text-xs text-zinc-600">
-                    {o.available ? "Available" : "Unavailable"} · {o.approved ? "Approved" : "Not approved"}
+                    {o.available ? "Available" : "Paused — still honours gifts already bought"}
                   </td>
                   <td className="space-x-3 whitespace-nowrap px-4 py-3 text-right">
                     <button type="button" onClick={() => edit(o)} className="text-zinc-700 underline">
@@ -141,7 +138,6 @@ export function OfferingsPanel({
               priceNaira,
               zones,
               available,
-              approved,
             });
             if (result.ok) {
               setNotice(result.message ?? "Saved.");
@@ -157,7 +153,21 @@ export function OfferingsPanel({
         </p>
         <label className="flex flex-col gap-1">
           <span className="font-medium">Gift</span>
-          <select value={giftTemplateId} onChange={(e) => setGiftTemplateId(e.target.value)} required className={input}>
+          <select
+            value={giftTemplateId}
+            onChange={(e) => {
+              const id = e.target.value;
+              setGiftTemplateId(id);
+              // Start from the vendor's share rather than a blank box;
+              // an existing offering (picked via Edit) keeps its price.
+              const gift = catalog.find((g) => g.id === id);
+              const existing = offerings.find((o) => o.giftTemplateId === id);
+              if (existing) setPriceNaira(String(existing.vendorPrice / 100));
+              else if (gift) setPriceNaira(String(Math.round((gift.basePrice * vendorSharePct) / 10000)));
+            }}
+            required
+            className={input}
+          >
             <option value="">Choose a gift…</option>
             {catalog.map((g) => (
               <option key={g.id} value={g.id}>
@@ -195,11 +205,7 @@ export function OfferingsPanel({
         <div className="flex flex-col gap-2">
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={available} onChange={(e) => setAvailable(e.target.checked)} />
-            <span>Available</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
-            <span>Approved — Ebun has checked this vendor delivers it to spec</span>
+            <span>Available — untick to pause new orders; gifts already bought are still honoured</span>
           </label>
         </div>
 

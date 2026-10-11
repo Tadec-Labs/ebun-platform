@@ -35,6 +35,7 @@ interface ApiRevealView {
     expiresAt: string;
   };
   collectAt?: { name: string; address: string; hours: string | null }[];
+  collected?: { at: string | null; placeName: string | null };
 }
 
 export type RevealFetchResult =
@@ -129,6 +130,7 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
     giftImageUrl: view.giftImageUrl,
     theme: toTheme(view.theme),
     message: view.message,
+    collected: view.collected,
   };
 
   if (view.redemption) {

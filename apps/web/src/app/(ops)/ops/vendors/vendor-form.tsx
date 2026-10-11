@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { formatNaira } from "@/lib/format-money";
 import { saveVendorAction } from "../actions";
 import { type Vendor, VENDOR_CATEGORIES } from "@/lib/ops/types";
+
+export interface CatalogGift {
+  id: string;
+  name: string;
+  basePrice: number; // kobo
+}
 
 const input = "rounded border border-zinc-300 bg-white px-3 py-2 w-full";
 
@@ -26,7 +33,15 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /**
- * One form for both create and edit. Deliberately NOT a <form action>:
+ * One form for both create and edit, ordered by what a vendor signing
+ * actually needs: who they are, where customers go, what they're paid,
+ * and (on create) which gifts they'll honour. That is enough to go
+ * live. Bank details, zones, backup vendor and notes sit under "More
+ * details" — still validated exactly as before, just not in the way of
+ * signing someone up at their counter. Nothing is skipped server-side:
+ * the API applies the same rules whichever fields arrive.
+ *
+ * Deliberately NOT a <form action>:
  * React 19 resets uncontrolled fields after an action completes, which
  * would wipe everything typed the moment a validation error came back.
  * Handling submit by hand keeps the inputs exactly as they were so the
@@ -35,14 +50,20 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export function VendorForm({
   vendor,
   backupOptions,
+  catalog = [],
 }: {
   vendor?: Vendor;
   backupOptions: { id: string; name: string }[];
+  /** Create only: gifts that can be ticked on the same screen. */
+  catalog?: CatalogGift[];
 }) {
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const isEdit = Boolean(vendor);
+  const [sharePct, setSharePct] = useState(
+    vendor ? Math.round(vendor.commissionRate * 100) : 70,
+  );
 
   return (
     <form
@@ -71,22 +92,7 @@ export function VendorForm({
         <Field label="Owner's name">
           <input name="ownerName" required maxLength={200} defaultValue={vendor?.ownerName} className={input} />
         </Field>
-        <Field label="Category">
-          <select name="category" defaultValue={vendor?.category ?? "food"} className={input}>
-            {VENDOR_CATEGORIES.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Subcategories" hint="Comma-separated, e.g. pizza, grills">
-          <input name="subcategories" defaultValue={vendor?.subcategories.join(", ")} className={input} />
-        </Field>
-      </Section>
-
-      <Section title="Contact">
-        <Field label="WhatsApp number" hint="With country code, e.g. +2348012345678">
+        <Field label="WhatsApp number" hint="With country code, e.g. +2348012345678. Their counter link is sent here.">
           <input
             name="whatsappNumber"
             required
@@ -96,8 +102,14 @@ export function VendorForm({
             className={input}
           />
         </Field>
-        <Field label="Email (optional)">
-          <input name="email" type="email" defaultValue={vendor?.email ?? ""} className={input} />
+        <Field label="Category">
+          <select name="category" defaultValue={vendor?.category ?? "food"} className={input}>
+            {VENDOR_CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
         </Field>
       </Section>
 
@@ -129,19 +141,10 @@ export function VendorForm({
         </Field>
       </Section>
 
-      <Section title="Coverage">
-        <Field label="Service areas" hint="Comma-separated neighbourhoods, e.g. Lekki Phase 1, Yaba">
-          <textarea name="serviceAreas" rows={2} defaultValue={vendor?.serviceAreas.join(", ")} className={input} />
-        </Field>
-        <Field label="Delivery zones" hint="Comma-separated zone codes. Not used for routing yet — captured for when assignment is built.">
-          <textarea name="deliveryZones" rows={2} defaultValue={vendor?.deliveryZones.join(", ")} className={input} />
-        </Field>
-      </Section>
-
-      <Section title="Payout & terms">
+      <Section title="Payment">
         <Field
           label="Vendor share (%)"
-          hint="What the vendor receives. 70 means vendor gets 70%, Ebun keeps 30%."
+          hint={`What the vendor receives of each gift's price. At ${sharePct}%, Ebun keeps ${100 - sharePct}% before payment fees.`}
         >
           <input
             name="vendorSharePct"
@@ -150,64 +153,100 @@ export function VendorForm({
             max={100}
             step={1}
             required
-            defaultValue={vendor ? Math.round(vendor.commissionRate * 100) : 70}
+            value={sharePct}
+            onChange={(event) => setSharePct(Number(event.target.value))}
             className={input}
           />
         </Field>
-        <Field label="Response window (minutes)" hint="How long to wait for an accept before escalating to the backup.">
-          <input
-            name="responseTimeoutMinutes"
-            type="number"
-            min={15}
-            max={1440}
-            step={1}
-            required
-            defaultValue={vendor?.responseTimeoutMinutes ?? 120}
-            className={input}
-          />
-        </Field>
-        <Field label="Bank name">
-          <input name="bankName" defaultValue={vendor?.bankName ?? ""} className={input} />
-        </Field>
-        <Field label="Account number" hint="10-digit NUBAN">
-          <input
-            name="accountNumber"
-            inputMode="numeric"
-            maxLength={10}
-            defaultValue={vendor?.accountNumber ?? ""}
-            className={input}
-          />
-        </Field>
-        <Field label="Account name">
-          <input name="accountName" defaultValue={vendor?.accountName ?? ""} className={input} />
-        </Field>
-        <Field label="Backup vendor" hint="Takes over if this vendor declines or times out.">
-          <select name="backupVendorId" defaultValue={vendor?.backupVendorId ?? ""} className={input}>
-            <option value="">None</option>
-            {backupOptions.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {isEdit && (
+          <label className="flex items-center gap-2 self-end pb-2">
+            <input type="checkbox" name="active" defaultChecked={vendor?.active ?? true} />
+            <span>Active — can hand over gifts</span>
+          </label>
+        )}
       </Section>
 
-      <Section title="Status & notes">
-        <div className="flex flex-col gap-3">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" name="active" defaultChecked={vendor?.active ?? true} />
-            <span>Active — can receive orders</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" name="verified" defaultChecked={vendor?.verified ?? false} />
-            <span>Verified — Ebun has inspected and approved this vendor</span>
-          </label>
+      {!isEdit && <GiftChooser catalog={catalog} sharePct={sharePct} />}
+
+      {/* Closed, not removed: every field still submits and is still
+          validated by the API. Open by default when editing a vendor
+          whose bank details are missing, so the gap is visible. */}
+      <details
+        className="rounded border border-zinc-200 bg-white"
+        open={isEdit && !vendor?.accountNumber}
+      >
+        <summary className="cursor-pointer px-5 py-3 font-medium select-none">
+          More details <span className="font-normal text-zinc-500">— bank, coverage, backup, notes (optional now)</span>
+        </summary>
+        <div className="grid gap-4 border-t border-zinc-100 p-5 sm:grid-cols-2">
+          <Field label="Bank name">
+            <input name="bankName" defaultValue={vendor?.bankName ?? ""} className={input} />
+          </Field>
+          <Field label="Account number" hint="10-digit NUBAN. Needed before their first payout.">
+            <input
+              name="accountNumber"
+              inputMode="numeric"
+              maxLength={10}
+              defaultValue={vendor?.accountNumber ?? ""}
+              className={input}
+            />
+          </Field>
+          <Field label="Account name">
+            <input name="accountName" defaultValue={vendor?.accountName ?? ""} className={input} />
+          </Field>
+          <Field label="Email">
+            <input name="email" type="email" defaultValue={vendor?.email ?? ""} className={input} />
+          </Field>
+          <Field label="Subcategories" hint="Comma-separated, e.g. pizza, grills">
+            <input name="subcategories" defaultValue={vendor?.subcategories.join(", ")} className={input} />
+          </Field>
+          <Field label="Service areas" hint="Comma-separated neighbourhoods, e.g. Lekki Phase 1, Yaba">
+            <input name="serviceAreas" defaultValue={vendor?.serviceAreas.join(", ")} className={input} />
+          </Field>
+          <Field label="Delivery zones" hint="Comma-separated zone codes. Not used for routing yet.">
+            <input name="deliveryZones" defaultValue={vendor?.deliveryZones.join(", ")} className={input} />
+          </Field>
+          <Field label="Response window (minutes)" hint="How long to wait for an accept before escalating to the backup.">
+            <input
+              name="responseTimeoutMinutes"
+              type="number"
+              min={15}
+              max={1440}
+              step={1}
+              required
+              defaultValue={vendor?.responseTimeoutMinutes ?? 120}
+              className={input}
+            />
+          </Field>
+          <Field label="Backup vendor" hint="Takes over if this vendor declines or times out.">
+            <select name="backupVendorId" defaultValue={vendor?.backupVendorId ?? ""} className={input}>
+              <option value="">None</option>
+              {backupOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="flex flex-col gap-3">
+            {!isEdit && (
+              <label className="flex items-center gap-2">
+                <input type="checkbox" name="active" defaultChecked />
+                <span>Active — can hand over gifts</span>
+              </label>
+            )}
+            <label className="flex items-center gap-2">
+              <input type="checkbox" name="verified" defaultChecked={vendor?.verified ?? false} />
+              <span>Verified — Ebun has inspected this vendor</span>
+            </label>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label="Internal notes">
+              <textarea name="notes" rows={3} maxLength={2000} defaultValue={vendor?.notes ?? ""} className={input} />
+            </Field>
+          </div>
         </div>
-        <Field label="Internal notes">
-          <textarea name="notes" rows={3} maxLength={2000} defaultValue={vendor?.notes ?? ""} className={input} />
-        </Field>
-      </Section>
+      </details>
 
       {errors.length > 0 && (
         <ul role="alert" className="list-disc rounded border border-red-300 bg-red-50 py-2 pl-8 pr-3 text-red-800">
@@ -228,9 +267,90 @@ export function VendorForm({
           disabled={pending}
           className="rounded bg-zinc-900 px-5 py-2 font-medium text-white disabled:opacity-50"
         >
-          {pending ? "Saving…" : isEdit ? "Save changes" : "Create vendor"}
+          {pending ? "Saving…" : isEdit ? "Save changes" : "Add vendor"}
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Which gifts the new vendor will hand over, ticked on the same screen
+ * instead of a second form after saving. Each price starts at the
+ * vendor's share of the gift's price and can be changed; once edited
+ * by hand it stops following the share.
+ *
+ * Sent as one hidden JSON field and saved as offerings right after the
+ * vendor is created — the same API calls the offerings panel makes,
+ * with the same validation.
+ */
+function GiftChooser({ catalog, sharePct }: { catalog: CatalogGift[]; sharePct: number }) {
+  const [chosen, setChosen] = useState<Record<string, { price: string; edited: boolean }>>({});
+
+  const suggested = (gift: CatalogGift) =>
+    String(Math.round((gift.basePrice * sharePct) / 100 / 100));
+
+  const value = JSON.stringify(
+    Object.entries(chosen).map(([giftTemplateId, entry]) => {
+      const gift = catalog.find((g) => g.id === giftTemplateId);
+      const priceNaira = entry.edited || !gift ? entry.price : suggested(gift);
+      return { giftTemplateId, priceNaira };
+    }),
+  );
+
+  return (
+    <fieldset className="flex flex-col gap-3 rounded border border-zinc-200 bg-white p-5">
+      <legend className="px-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+        Gifts they&rsquo;ll hand over
+      </legend>
+      <input type="hidden" name="offerings" value={value} />
+      {catalog.length === 0 ? (
+        <p className="text-zinc-600">No gifts in the catalogue yet — add some under Gifts, then link them here.</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-zinc-100">
+          {catalog.map((gift) => {
+            const entry = chosen[gift.id];
+            const price = entry ? (entry.edited ? entry.price : suggested(gift)) : "";
+            return (
+              <li key={gift.id} className="flex flex-wrap items-center gap-3 py-2.5">
+                <label className="flex min-w-0 flex-1 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(entry)}
+                    onChange={(event) =>
+                      setChosen((prev) => {
+                        const next = { ...prev };
+                        if (event.target.checked) next[gift.id] = { price: suggested(gift), edited: false };
+                        else delete next[gift.id];
+                        return next;
+                      })
+                    }
+                  />
+                  <span className="truncate">{gift.name}</span>
+                  <span className="shrink-0 text-xs text-zinc-500">sells at {formatNaira(gift.basePrice)}</span>
+                </label>
+                {entry && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <span className="text-zinc-500">They get ₦</span>
+                    <input
+                      value={price}
+                      onChange={(event) =>
+                        setChosen((prev) => ({ ...prev, [gift.id]: { price: event.target.value, edited: true } }))
+                      }
+                      inputMode="decimal"
+                      aria-label={`What ${gift.name} pays the vendor, in naira`}
+                      className="w-28 rounded border border-zinc-300 px-2 py-1"
+                    />
+                  </label>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="text-xs text-zinc-500">
+        Ticked gifts can be handed over at this vendor&rsquo;s counter and show recipients where to collect. You can change these later.
+      </p>
+    </fieldset>
   );
 }

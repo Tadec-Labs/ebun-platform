@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { OrderStatus, RedemptionStatus } from '@ebun/types';
 import { OrdersService } from '../orders/orders.service';
 import {
@@ -50,6 +55,16 @@ export interface RedemptionLookupView {
 }
 
 /**
+ * The staff view adds who may be credited with handing it over. Never
+ * returned to the vendor counter: one vendor has no business seeing
+ * which other businesses sell the same gift.
+ */
+export interface OpsRedemptionLookupView extends RedemptionLookupView {
+  /** Active vendors that offer this gift — the only valid choices. */
+  eligibleVendors: { id: string; name: string }[];
+}
+
+/**
  * Only public surface of RedemptionsModule — RedemptionsRepository
  * stays internal, same boundary as every other module here.
  */
@@ -88,13 +103,21 @@ export class RedemptionsService {
    * reason is phrased for the person at the counter rather than
    * leaking status enums into the UI.
    */
-  async lookupByFallbackCode(code: string): Promise<RedemptionLookupView> {
+  async lookupByFallbackCode(code: string): Promise<OpsRedemptionLookupView> {
     const row = await this.repository.findByFallbackCode(code);
     if (!row) {
       throw new NotFoundException('No gift found for that code.');
     }
 
-    return this.toLookupView(row);
+    const giftTemplateId = row.orders?.gift_template_id;
+    const eligibleVendors = giftTemplateId
+      ? (await this.repository.listVendorsOfferingGift(giftTemplateId))
+          .filter((vendor) => vendor.active)
+          .map((vendor) => ({ id: vendor.id, name: vendor.business_name }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      : [];
+
+    return { ...this.toLookupView(row), eligibleVendors };
   }
 
   private toLookupView(row: RedemptionLookupRow): RedemptionLookupView {
@@ -165,10 +188,15 @@ export class RedemptionsService {
     ipAddress: string | null;
     userAgent: string | null;
     /**
-     * Returns false if this vendor does not sell the gift the code is
-     * for. Optional because ops can, with the whole catalogue in front
-     * of them, knowingly confirm on behalf of a vendor whose offering
-     * has since been removed; the vendor portal always supplies it.
+     * The vendor counter's own check, which answers a mismatch with the
+     * same 404 as an unknown code so a guessed code reveals nothing.
+     *
+     * When absent (the staff path), the same rule is still enforced —
+     * see requireVendorOffersGift. It used to be skipped for staff on
+     * the theory that ops would choose knowingly; in practice the
+     * dropdown listed every active vendor, and a collection was
+     * credited to a vendor with no offering at all — a payout with no
+     * agreed price behind it.
      */
     sellsGift?: (giftTemplateId: string) => Promise<boolean>;
   }): Promise<{ redemption: RedemptionRow; orderId: string }> {
@@ -182,6 +210,8 @@ export class RedemptionsService {
       if (!giftTemplateId || !(await params.sellsGift(giftTemplateId))) {
         throw new NotFoundException('No gift found for that code.');
       }
+    } else {
+      await this.requireVendorOffersGift(row, params.vendorId);
     }
 
     const { redeemable, blockedReason } = this.assessRedeemability(row);
@@ -201,6 +231,29 @@ export class RedemptionsService {
     });
 
     return { redemption, orderId: row.order_id };
+  }
+
+  /**
+   * Staff-path enforcement of "only a vendor that sells this gift can be
+   * credited with handing it over". Unlike the counter, staff are told
+   * plainly what's wrong — they are authorised to know which vendors
+   * sell what, and a vague 404 would only send them hunting.
+   */
+  private async requireVendorOffersGift(
+    row: RedemptionLookupRow,
+    vendorId: string,
+  ): Promise<void> {
+    const giftTemplateId = row.orders?.gift_template_id;
+    const vendors = giftTemplateId
+      ? await this.repository.listVendorsOfferingGift(giftTemplateId)
+      : [];
+    const vendor = vendors.find((candidate) => candidate.id === vendorId);
+    if (!vendor || !vendor.active) {
+      const gift = row.orders?.gift_templates?.name ?? 'this gift';
+      throw new BadRequestException(
+        `That vendor isn't set up to hand over ${gift}. Add it to their offerings first, or choose the vendor who sells it.`,
+      );
+    }
   }
 
   private assessRedeemability(row: RedemptionLookupRow): {

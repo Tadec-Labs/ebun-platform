@@ -240,4 +240,37 @@ export class RedemptionsRepository {
     }
     return (response.data ?? []).map((row) => row.id);
   }
+
+  /**
+   * Vendors holding an offering for this gift, with whether they are
+   * active. The same rule the vendor counter applies (an offering row,
+   * paused or not), read here rather than through VendorsModule because
+   * VendorsModule already imports this one — going the other way would
+   * be a circular dependency.
+   */
+  async listVendorsOfferingGift(
+    giftTemplateId: string,
+  ): Promise<{ id: string; business_name: string; active: boolean }[]> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('vendors(id, business_name, active)')
+      .eq('gift_template_id', giftTemplateId)) as {
+      data:
+        | {
+            vendors: {
+              id: string;
+              business_name: string;
+              active: boolean;
+            } | null;
+          }[]
+        | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return (response.data ?? [])
+      .map((row) => row.vendors)
+      .filter(
+        (vendor): vendor is NonNullable<typeof vendor> => vendor !== null,
+      );
+  }
 }

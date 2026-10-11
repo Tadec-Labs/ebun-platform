@@ -120,6 +120,15 @@ export async function saveVendorAction(formData: FormData): Promise<ActionResult
     return fail(["Response window must be a whole number of minutes between 15 and 1440."]);
   }
 
+  // Gifts ticked on the create form. Every price is checked before the
+  // vendor is created, so a typo can't leave a half-set-up vendor.
+  let offerings: { giftTemplateId: string; vendorPrice: number }[] = [];
+  if (!isUpdate) {
+    const parsed = parseChosenOfferings(text(formData, "offerings"));
+    if (!parsed.ok) return fail(parsed.errors);
+    offerings = parsed.offerings;
+  }
+
   // Blank optional field: on create it's simply omitted; on update it
   // means "clear it" (null) — the API distinguishes the two.
   const optional = (key: string) => {
@@ -162,10 +171,59 @@ export async function saveVendorAction(formData: FormData): Promise<ActionResult
     return asFailure(error);
   }
 
+  // Offerings go through the same endpoint and validation as the
+  // offerings panel. Created by staff, so approved — the approval is
+  // this person, now. A failure here doesn't undo the vendor: it's
+  // reported on the vendor's page, where the panel can finish the job.
+  let failed = 0;
+  if (createdId) {
+    for (const offering of offerings) {
+      try {
+        await opsFetch<Offering>(`/ops/vendors/${createdId}/offerings/${offering.giftTemplateId}`, {
+          method: "PUT",
+          body: { vendorPrice: offering.vendorPrice, availableZones: [], available: true, approved: true },
+        });
+      } catch {
+        failed += 1;
+      }
+    }
+  }
+
   revalidatePath("/ops/vendors");
-  if (createdId) redirect(`/ops/vendors/${createdId}?created=1`);
+  if (createdId) {
+    redirect(`/ops/vendors/${createdId}?created=1&gifts=${offerings.length - failed}&failed=${failed}`);
+  }
   revalidatePath(`/ops/vendors/${id}`);
   return { ok: true, message: "Saved." };
+}
+
+function parseChosenOfferings(
+  raw: string,
+):
+  | { ok: true; offerings: { giftTemplateId: string; vendorPrice: number }[] }
+  | { ok: false; errors: string[] } {
+  if (raw === "") return { ok: true, offerings: [] };
+  let items: unknown;
+  try {
+    items = JSON.parse(raw);
+  } catch {
+    return { ok: false, errors: ["The gift list didn't come through. Reload the page and try again."] };
+  }
+  if (!Array.isArray(items)) {
+    return { ok: false, errors: ["The gift list didn't come through. Reload the page and try again."] };
+  }
+  const offerings: { giftTemplateId: string; vendorPrice: number }[] = [];
+  const errors: string[] = [];
+  for (const item of items as { giftTemplateId?: unknown; priceNaira?: unknown }[]) {
+    if (typeof item?.giftTemplateId !== "string" || typeof item.priceNaira !== "string") continue;
+    const vendorPrice = parseNairaToKobo(item.priceNaira);
+    if (vendorPrice === null || vendorPrice < 1) {
+      errors.push("Every ticked gift needs what the vendor gets, in naira — e.g. 5600.");
+      continue;
+    }
+    offerings.push({ giftTemplateId: item.giftTemplateId, vendorPrice });
+  }
+  return errors.length > 0 ? { ok: false, errors: [...new Set(errors)] } : { ok: true, offerings };
 }
 
 // ----------------------------------------------------------- offerings
@@ -176,7 +234,6 @@ export interface SaveOfferingInput {
   priceNaira: string;
   zones: string;
   available: boolean;
-  approved: boolean;
 }
 
 export async function saveOfferingAction(input: SaveOfferingInput): Promise<ActionResult> {
@@ -194,7 +251,10 @@ export async function saveOfferingAction(input: SaveOfferingInput): Promise<Acti
         vendorPrice,
         availableZones: list(input.zones),
         available: input.available,
-        approved: input.approved,
+        // Staff are the approval: an offering exists because someone at
+        // Ebun agreed it with the vendor. The separate checkbox was a
+        // decision on every offering that nothing ever read.
+        approved: true,
       },
     });
   } catch (error) {

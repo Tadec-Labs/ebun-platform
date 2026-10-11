@@ -44,7 +44,7 @@ describe('RevealService', () => {
     findByOrderId: jest.Mock;
   };
   let mediaResolver: { resolvePlaybackUrl: jest.Mock };
-  let vendors: { collectionPointsForGift: jest.Mock };
+  let vendors: { collectionPointsForGift: jest.Mock; publicNameOf: jest.Mock };
 
   beforeEach(async () => {
     orders = { findByRevealToken: jest.fn(), transitionNormal: jest.fn() };
@@ -56,7 +56,10 @@ describe('RevealService', () => {
       findByOrderId: jest.fn().mockResolvedValue(null),
     };
     mediaResolver = { resolvePlaybackUrl: jest.fn() };
-    vendors = { collectionPointsForGift: jest.fn().mockResolvedValue([]) };
+    vendors = {
+      collectionPointsForGift: jest.fn().mockResolvedValue([]),
+      publicNameOf: jest.fn().mockResolvedValue(null),
+    };
 
     gifts.findById.mockResolvedValue({
       id: 'template-1',
@@ -281,7 +284,49 @@ describe('RevealService', () => {
       expect(result.redemption).toEqual({
         status: RedemptionStatus.Pending,
         fallbackCode: 'EBN-7K2-9XQ',
-        qrPayload: 'redemption-token-1',
+        qrPayload: 'EBN-7K2-9XQ',
+      });
+    });
+
+    describe('after collection', () => {
+      beforeEach(() => {
+        orders.findByRevealToken.mockResolvedValue(
+          makeOrder({ status: OrderStatus.Redeemed }),
+        );
+        gifts.findById.mockResolvedValue({
+          id: 'template-1',
+          name: 'Voucher',
+          description: null,
+          image_url: null,
+          delivery_type: FulfillmentType.DigitalVoucher,
+        });
+      });
+
+      it('says where and when it was collected', async () => {
+        redemptions.findByOrderId.mockResolvedValue({
+          status: RedemptionStatus.Completed,
+          vendor_id: 'vendor-1',
+          completed_at: '2026-10-11T03:50:00.000Z',
+        });
+        vendors.publicNameOf.mockResolvedValue('Burger Hub');
+
+        const result = await sut.view('reveal-token-1');
+
+        expect(vendors.publicNameOf).toHaveBeenCalledWith('vendor-1');
+        expect(result.collected).toEqual({
+          at: '2026-10-11T03:50:00.000Z',
+          placeName: 'Burger Hub',
+        });
+        expect(result.redemption).toBeUndefined();
+      });
+
+      it('still shows the collected screen when the details lookup fails', async () => {
+        redemptions.findByOrderId.mockRejectedValue(new Error('db down'));
+
+        const result = await sut.view('reveal-token-1');
+
+        expect(result.viewState).toBe('ready');
+        expect(result.collected).toEqual({ at: null, placeName: null });
       });
     });
 
@@ -464,7 +509,7 @@ describe('RevealService', () => {
       expect(result.redemption).toEqual({
         status: RedemptionStatus.Pending,
         fallbackCode: 'EBN-7K2-9XQ',
-        qrPayload: 'redemption-token-1',
+        qrPayload: 'EBN-7K2-9XQ',
       });
     });
 
