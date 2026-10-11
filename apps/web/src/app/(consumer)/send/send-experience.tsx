@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PolicyLinks } from "@/components/policy-links";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 import type { OccasionId } from "@/lib/occasions";
 import { Compose, type MessageDraft } from "./compose";
@@ -118,6 +119,7 @@ export function SendExperience({
       </header>
 
       {phase === "gift" && (
+        <>
         <GiftPicker
           catalog={catalog}
           catalogReachable={catalogReachable}
@@ -126,6 +128,8 @@ export function SendExperience({
             setPhase("compose");
           }}
         />
+        <PolicyLinks className="pb-8" />
+        </>
       )}
 
       {phase === "compose" && draft.gift && (

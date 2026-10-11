@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { CreateOrderError, createOrder } from "@/lib/orders/create-order";
 import { formatNaira } from "@/lib/format-money";
@@ -171,6 +172,23 @@ export function ReviewAndPay({
               {error}
             </p>
           )}
+          {/* Above the button, not under it: read before paying, which
+              is what makes it agreement rather than small print. */}
+          <p className="mb-2.5 text-center text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
+            By paying you agree to our{" "}
+            <Link href="/terms" target="_blank" className="underline underline-offset-2">
+              Terms
+            </Link>{" "}
+            and{" "}
+            <Link href="/refunds" target="_blank" className="underline underline-offset-2">
+              Refund policy
+            </Link>
+            . How we use your and the recipient&rsquo;s details:{" "}
+            <Link href="/privacy" target="_blank" className="underline underline-offset-2">
+              Privacy
+            </Link>
+            .
+          </p>
           <button
             type="button"
             onClick={() => void handlePay()}
