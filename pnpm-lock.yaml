@@ -210,9 +210,6 @@ importers:
       prettier:
         specifier: ^3.0.0
         version: 3.9.6
-      turb:
-        specifier: latest
-        version: 0.1.2
     devDependencies:
       supabase:
         specifier: ^2.114.0
@@ -4384,9 +4381,6 @@ packages:
 
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
-
-  turb@0.1.2:
-    resolution: {integrity: sha512-CJct9otdtEEUJRs85pGwSwYdpP8OhD+Qov/rPSghdDmQYo0fL/7F+h27gF9TkoIh3I0/ACXZ6ymLxXF9TRv1rA==}
 
   turbo@2.10.11:
     resolution: {integrity: sha512-yQfwQVoRXwOuyX1LxiJFBFNg6VfuYh+/RyZLd82+isgyLkBXw3S5XRRzvcck1FAjSCG5sVyLd+O1eDMvYa3J7g==}
@@ -9111,8 +9105,6 @@ snapshots:
       strip-bom: 3.0.0
 
   tslib@2.8.1: {}
-
-  turb@0.1.2: {}
 
   turbo@2.10.11:
     optionalDependencies:

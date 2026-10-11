@@ -14,8 +14,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "prettier": "^3.0.0",
-    "turb": "latest"
+    "prettier": "^3.0.0"
   },
   "keywords": [],
   "author": "",
@@ -31,5 +30,6 @@
   "devDependencies": {
     "supabase": "^2.114.0",
     "turbo": "^2.10.11"
-  }
+  },
+  "packageManager": "pnpm@11.21.0"
 }

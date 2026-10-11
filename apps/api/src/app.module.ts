@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { HealthController } from './health.controller';
 import { OrdersModule } from './orders/orders.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { IdempotencyModule } from './idempotency/idempotency.module';
@@ -36,7 +37,7 @@ import { JobsModule } from './jobs/jobs.module';
     VendorsModule,
     JobsModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}
