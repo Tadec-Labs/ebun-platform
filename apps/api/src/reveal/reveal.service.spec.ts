@@ -7,6 +7,7 @@ import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { RedemptionsService } from '../redemptions/redemptions.service';
 import { VendorsService } from '../vendors/vendors.service';
+import { AuditService } from '../audit/audit.service';
 import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
 
@@ -35,7 +36,12 @@ function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
 
 describe('RevealService', () => {
   let sut: RevealService;
-  let orders: { findByRevealToken: jest.Mock; transitionNormal: jest.Mock };
+  let orders: {
+    findByRevealToken: jest.Mock;
+    transitionNormal: jest.Mock;
+    recordPickup: jest.Mock;
+  };
+  let audit: { record: jest.Mock };
   let gifts: { findById: jest.Mock };
   let users: { findById: jest.Mock };
   let redemptions: {
@@ -47,7 +53,12 @@ describe('RevealService', () => {
   let vendors: { collectionPointsForGift: jest.Mock; publicNameOf: jest.Mock };
 
   beforeEach(async () => {
-    orders = { findByRevealToken: jest.fn(), transitionNormal: jest.fn() };
+    orders = {
+      findByRevealToken: jest.fn(),
+      transitionNormal: jest.fn(),
+      recordPickup: jest.fn().mockResolvedValue(true),
+    };
+    audit = { record: jest.fn().mockResolvedValue(undefined) };
     gifts = { findById: jest.fn() };
     users = { findById: jest.fn() };
     redemptions = {
@@ -79,6 +90,7 @@ describe('RevealService', () => {
         { provide: UsersService, useValue: users },
         { provide: RedemptionsService, useValue: redemptions },
         { provide: VendorsService, useValue: vendors },
+        { provide: AuditService, useValue: audit },
         { provide: MEDIA_URL_RESOLVER, useValue: mediaResolver },
       ],
     }).compile();
@@ -541,6 +553,134 @@ describe('RevealService', () => {
 
       expect(redemptions.createPendingForOrder).not.toHaveBeenCalled();
       expect(result.viewState).toBe('ready');
+    });
+  });
+
+  describe('bookPickup', () => {
+    const IN_ONE_HOUR = () => new Date(Date.now() + 60 * 60_000).toISOString();
+    const place = {
+      vendorId: 'vendor-1',
+      name: 'Pizza Place',
+      address: '1 Oba Adesida Rd, Akure',
+      hours: null,
+      whatsapp: '+2348022222222',
+    };
+
+    beforeEach(() => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({ status: OrderStatus.RevealOpened }),
+      );
+      gifts.findById.mockResolvedValue({
+        id: 'template-1',
+        name: 'Pizza',
+        description: null,
+        image_url: null,
+        delivery_type: FulfillmentType.DigitalVoucher,
+      });
+      redemptions.findByOrderId.mockResolvedValue({
+        status: RedemptionStatus.Pending,
+        fallback_code: 'EBN-7K2Q9X',
+        redemption_token: 'redemption-token-1',
+        expires_at: '2099-01-01T00:00:00.000Z',
+      });
+      vendors.collectionPointsForGift.mockResolvedValue([place]);
+    });
+
+    it('books the time at a place that accepts the code, and audits it', async () => {
+      const at = IN_ONE_HOUR();
+
+      await sut.bookPickup('reveal-token-1', 'vendor-1', at);
+
+      expect(orders.recordPickup).toHaveBeenCalledWith(
+        'order-1',
+        'vendor-1',
+        at,
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'order.pickup_booked',
+          actorType: 'user',
+          resourceId: 'order-1',
+        }),
+      );
+    });
+
+    it('refuses a place that cannot hand over this gift', async () => {
+      await expect(
+        sut.bookPickup('reveal-token-1', 'some-other-vendor', IN_ONE_HOUR()),
+      ).rejects.toThrow("can't hand over this gift");
+      expect(orders.recordPickup).not.toHaveBeenCalled();
+    });
+
+    it('refuses a time that has passed, or is more than a week out', async () => {
+      const past = new Date(Date.now() - 60 * 60_000).toISOString();
+      const farOff = new Date(Date.now() + 8 * 24 * 60 * 60_000).toISOString();
+
+      await expect(
+        sut.bookPickup('reveal-token-1', 'vendor-1', past),
+      ).rejects.toThrow('Choose a time');
+      await expect(
+        sut.bookPickup('reveal-token-1', 'vendor-1', farOff),
+      ).rejects.toThrow('Choose a time');
+      expect(orders.recordPickup).not.toHaveBeenCalled();
+    });
+
+    it('refuses a time after the code expires', async () => {
+      redemptions.findByOrderId.mockResolvedValue({
+        status: RedemptionStatus.Pending,
+        fallback_code: 'EBN-7K2Q9X',
+        expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+      });
+
+      await expect(
+        sut.bookPickup('reveal-token-1', 'vendor-1', IN_ONE_HOUR()),
+      ).rejects.toThrow('Choose a time');
+    });
+
+    it('refuses a gift that has not been claimed yet, or is already collected', async () => {
+      redemptions.findByOrderId.mockResolvedValue(null);
+      await expect(
+        sut.bookPickup('reveal-token-1', 'vendor-1', IN_ONE_HOUR()),
+      ).rejects.toThrow("can't be booked");
+
+      redemptions.findByOrderId.mockResolvedValue({
+        status: RedemptionStatus.Completed,
+        expires_at: '2099-01-01T00:00:00.000Z',
+      });
+      await expect(
+        sut.bookPickup('reveal-token-1', 'vendor-1', IN_ONE_HOUR()),
+      ).rejects.toThrow("can't be booked");
+    });
+
+    it('409s when the order moved on between reading and booking', async () => {
+      orders.recordPickup.mockResolvedValue(false);
+
+      await expect(
+        sut.bookPickup('reveal-token-1', 'vendor-1', IN_ONE_HOUR()),
+      ).rejects.toThrow('changed since you opened it');
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('shows the booking, and whether the vendor has confirmed, on the gift page', async () => {
+      const at = IN_ONE_HOUR();
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.RevealOpened,
+          pickup_vendor_id: 'vendor-1',
+          pickup_at: at,
+          pickup_confirmed_at: '2026-10-12T10:00:00.000Z',
+        }),
+      );
+
+      const result = await sut.view('reveal-token-1');
+
+      expect(result.pickup).toEqual({
+        vendorId: 'vendor-1',
+        placeName: 'Pizza Place',
+        whatsapp: '+2348022222222',
+        at,
+        confirmed: true,
+      });
     });
   });
 });

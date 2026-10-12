@@ -48,7 +48,24 @@ export interface RevealView {
    * the screen says so rather than inventing somewhere. See
    * VendorsService.collectionPointsForGift for who is listed.
    */
-  collectAt?: { name: string; address: string; hours: string | null }[];
+  collectAt?: {
+    vendorId: string;
+    name: string;
+    address: string;
+    hours: string | null;
+    whatsapp: string;
+  }[];
+  /**
+   * digital_voucher, claimed, once the recipient has booked when they're
+   * coming. `confirmed` is the vendor's "Got it, it'll be ready".
+   */
+  pickup?: {
+    vendorId: string;
+    placeName: string | null;
+    whatsapp: string | null;
+    at: string;
+    confirmed: boolean;
+  };
   /**
    * digital_voucher only, once collected: when, and at which business.
    * Either can be null (older rows, a since-deleted vendor) — the screen

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuditModule } from '../audit/audit.module';
 import { OrdersModule } from '../orders/orders.module';
 import { GiftsModule } from '../gifts/gifts.module';
 import { UsersModule } from '../users/users.module';
@@ -16,6 +17,7 @@ import { RevealService } from './reveal.service';
     UsersModule,
     RedemptionsModule,
     VendorsModule,
+    AuditModule,
   ],
   controllers: [RevealController],
   providers: [

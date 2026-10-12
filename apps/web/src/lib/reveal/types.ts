@@ -43,9 +43,22 @@ export interface RevealMessage {
 /** Only ever populated once a digital_voucher order reaches "claimed". */
 /** A place that will accept the code. Public business details only. */
 export interface CollectionPoint {
+  vendorId: string;
   name: string;
   address: string;
   hours: string | null;
+  /** The business's WhatsApp, for "I'm coming at 12:30". */
+  whatsapp: string;
+}
+
+/** When and where the recipient said they'll collect. */
+export interface PickupBooking {
+  vendorId: string;
+  placeName: string | null;
+  whatsapp: string | null;
+  at: string; // ISO
+  /** The vendor tapped "Got it, it'll be ready". */
+  confirmed: boolean;
 }
 
 export interface RedemptionDetails {
@@ -73,6 +86,8 @@ export interface RevealPayload {
   theme?: "gold" | "red" | "white" | "green";
   message?: RevealMessage;
   redemption?: RedemptionDetails;
+  /** digital_voucher, claimed, once a collection time is booked. */
+  pickup?: PickupBooking;
   /** digital_voucher, once collected: when and where. Either may be null. */
   collected?: { at: string | null; placeName: string | null };
   /**

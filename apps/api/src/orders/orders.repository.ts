@@ -43,7 +43,21 @@ export interface OrderRow {
   reveal_theme: string;
   scheduled_send_at: string | null;
   expires_at: string;
+  // Pickup booking — only selected by findByRevealToken(). Null until the
+  // recipient books a time (see 20261012120000_order_pickup_booking.sql).
+  pickup_vendor_id?: string | null;
+  pickup_at?: string | null;
+  pickup_confirmed_at?: string | null;
   [key: string]: unknown;
+}
+
+/** One booked collection, as the vendor's "Coming in" list shows it. */
+export interface UpcomingPickupRow {
+  id: string;
+  recipient_name: string;
+  pickup_at: string;
+  pickup_confirmed_at: string | null;
+  gift_templates: { name: string } | null;
 }
 
 export interface CreateOrderParams {
@@ -127,7 +141,7 @@ export class OrdersRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at',
+        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at',
       )
       .eq('reveal_token', revealToken)
       .maybeSingle()) as {
@@ -198,6 +212,88 @@ export class OrdersRepository {
     if (error) {
       throw error;
     }
+  }
+
+  /**
+   * Books (or re-books) when and where the recipient will collect.
+   * Clears any earlier confirmation: the vendor said yes to a different
+   * time. Guarded on status so a booking can't land on an order that was
+   * collected, expired or refunded since the caller read it. False when
+   * that guard stopped it.
+   */
+  async recordPickup(
+    id: string,
+    vendorId: string,
+    pickupAt: string,
+  ): Promise<boolean> {
+    const response = (await this.supabase
+      .from('orders')
+      .update({
+        pickup_vendor_id: vendorId,
+        pickup_at: pickupAt,
+        pickup_booked_at: new Date().toISOString(),
+        pickup_confirmed_at: null,
+      })
+      .eq('id', id)
+      .eq('status', OrderStatus.RevealOpened)
+      .select('id')) as {
+      data: { id: string }[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return (response.data ?? []).length > 0;
+  }
+
+  /**
+   * A vendor's booked collections from `since` on, soonest first, still
+   * waiting to be collected. The gift embed names gift_template_id
+   * because orders links to gift_templates twice (swapped_to_template_id
+   * too) — an unqualified embed is ambiguous and PostgREST 300s.
+   */
+  async findUpcomingPickups(
+    vendorId: string,
+    since: Date,
+    limit: number,
+  ): Promise<UpcomingPickupRow[]> {
+    const response = (await this.supabase
+      .from('orders')
+      .select(
+        'id, recipient_name, pickup_at, pickup_confirmed_at, gift_templates!gift_template_id(name)',
+      )
+      .eq('pickup_vendor_id', vendorId)
+      .eq('status', OrderStatus.RevealOpened)
+      .gte('pickup_at', since.toISOString())
+      .order('pickup_at', { ascending: true })
+      .limit(limit)) as {
+      data: UpcomingPickupRow[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? [];
+  }
+
+  /**
+   * The vendor's "Got it, it'll be ready". Scoped to the booked vendor,
+   * so one vendor's link can't confirm another's pickup. Null when no
+   * such open booking exists for this vendor.
+   */
+  async confirmPickup(
+    id: string,
+    vendorId: string,
+  ): Promise<{ id: string; pickup_at: string } | null> {
+    const response = (await this.supabase
+      .from('orders')
+      .update({ pickup_confirmed_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('pickup_vendor_id', vendorId)
+      .eq('status', OrderStatus.RevealOpened)
+      .select('id, pickup_at')
+      .maybeSingle()) as {
+      data: { id: string; pickup_at: string } | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? null;
   }
 
   /** Records that the reveal link was actually sent — does NOT touch order.status (reveal delivery and order state are separate concerns; see order-state-machine.ts's reveal_opened edge, which fires on the recipient actually opening the link, not on us sending it). */

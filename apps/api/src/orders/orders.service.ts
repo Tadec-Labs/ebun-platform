@@ -129,6 +129,19 @@ export class OrdersService {
   }
 
   /** Delegates straight through — see OrdersRepository.recordPaymentVerified. */
+  /** See OrdersRepository.recordPickup. False if the order is no longer collectable. */
+  async recordPickup(orderId: string, vendorId: string, pickupAt: string) {
+    return this.ordersRepository.recordPickup(orderId, vendorId, pickupAt);
+  }
+
+  async findUpcomingPickups(vendorId: string, since: Date, limit = 50) {
+    return this.ordersRepository.findUpcomingPickups(vendorId, since, limit);
+  }
+
+  async confirmPickup(orderId: string, vendorId: string) {
+    return this.ordersRepository.confirmPickup(orderId, vendorId);
+  }
+
   async recordPaymentVerified(orderId: string) {
     return this.ordersRepository.recordPaymentVerified(orderId);
   }

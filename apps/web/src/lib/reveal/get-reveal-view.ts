@@ -34,7 +34,20 @@ interface ApiRevealView {
     qrPayload: string;
     expiresAt: string;
   };
-  collectAt?: { name: string; address: string; hours: string | null }[];
+  collectAt?: {
+    vendorId: string;
+    name: string;
+    address: string;
+    hours: string | null;
+    whatsapp: string;
+  }[];
+  pickup?: {
+    vendorId: string;
+    placeName: string | null;
+    whatsapp: string | null;
+    at: string;
+    confirmed: boolean;
+  };
   collected?: { at: string | null; placeName: string | null };
 }
 
@@ -145,6 +158,7 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
       collectAt: view.collectAt ?? [],
     };
     payload.qrSvg = await renderQrSvg(view.redemption.qrPayload);
+    if (view.pickup) payload.pickup = view.pickup;
   }
 
   return payload;

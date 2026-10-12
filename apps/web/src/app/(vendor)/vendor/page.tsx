@@ -1,4 +1,4 @@
-import { VendorApiError, vendorFetch, type VendorIdentity } from "@/lib/vendor/api";
+import { VendorApiError, vendorFetch, type VendorIdentity, type VendorPickup } from "@/lib/vendor/api";
 import { CounterScreen } from "./counter-screen";
 
 export default async function VendorPage() {
@@ -12,7 +12,11 @@ export default async function VendorPage() {
     throw error;
   }
 
-  return <CounterScreen businessName={identity.businessName} />;
+  // The list is a help, not the counter's job: if it fails to load, the
+  // screen still collects codes, and the timer retries it.
+  const pickups = await vendorFetch<VendorPickup[]>("/vendor/pickups").catch(() => []);
+
+  return <CounterScreen businessName={identity.businessName} initialPickups={pickups} />;
 }
 
 /**

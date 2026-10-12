@@ -1,5 +1,13 @@
-import { Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { BookPickupDto } from './dto/book-pickup.dto';
 import { RevealService } from './reveal.service';
 
 /**
@@ -27,5 +35,19 @@ export class RevealController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async accept(@Param('token', new ParseUUIDPipe()) token: string) {
     return this.reveal.acceptGift(token);
+  }
+
+  /**
+   * "I'm coming at 12:30" — tells the vendor so the gift is ready. Can
+   * be repeated to change the time; each change needs the vendor to
+   * confirm again.
+   */
+  @Post(':token/pickup')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async bookPickup(
+    @Param('token', new ParseUUIDPipe()) token: string,
+    @Body() body: BookPickupDto,
+  ) {
+    return this.reveal.bookPickup(token, body.vendorId, body.pickupAt);
   }
 }

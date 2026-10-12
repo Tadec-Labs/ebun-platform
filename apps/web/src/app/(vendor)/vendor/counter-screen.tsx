@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import type { VendorRedemption } from "@/lib/vendor/api";
+import type { VendorPickup, VendorRedemption } from "@/lib/vendor/api";
 import { confirmCollectionAction, lookupCodeAction } from "./actions";
+import { ComingIn } from "./coming-in";
 import { QrScanner } from "./qr-scanner";
 
 /**
@@ -19,7 +20,13 @@ import { QrScanner } from "./qr-scanner";
  * a thousand times; offering it means the till that confirmed a
  * disputed collection can usually be named.
  */
-export function CounterScreen({ businessName }: { businessName: string }) {
+export function CounterScreen({
+  businessName,
+  initialPickups,
+}: {
+  businessName: string;
+  initialPickups: VendorPickup[];
+}) {
   const [code, setCode] = useState("");
   const [found, setFound] = useState<VendorRedemption | null>(null);
   const [confirmedBy, setConfirmedBy] = useState("");
@@ -78,6 +85,9 @@ export function CounterScreen({ businessName }: { businessName: string }) {
         </div>
         <h1 className="mt-1 text-3xl font-semibold">Collect a gift</h1>
       </header>
+
+      {/* Hidden mid-collection, like the scanner: one thing at a time. */}
+      {!found && <ComingIn initial={initialPickups} />}
 
       {/* Hidden once a code is found: the next thing to do is confirm,
           and a second scan button would only invite rescanning. */}

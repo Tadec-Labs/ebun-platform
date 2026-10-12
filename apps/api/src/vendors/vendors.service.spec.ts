@@ -407,7 +407,9 @@ describe('VendorsService', () => {
   describe('collectionPointsForGift', () => {
     const vendor = (overrides: Record<string, unknown> = {}) => ({
       vendors: {
+        id: 'vendor-burger',
         business_name: 'Burger Hub',
+        whatsapp_number: '+2348011111111',
         pickup_address: '12 Admiralty Way, Lekki',
         pickup_hours: 'Daily, 10am–10pm',
         active: true,
@@ -417,7 +419,7 @@ describe('VendorsService', () => {
 
     it('lists active vendors with an address, sorted by name', async () => {
       repository.listCollectionPoints.mockResolvedValue([
-        vendor({ business_name: 'Zest Grill' }),
+        vendor({ id: 'vendor-zest', business_name: 'Zest Grill' }),
         vendor(),
       ]);
 
@@ -428,14 +430,18 @@ describe('VendorsService', () => {
       );
       expect(result).toEqual([
         {
+          vendorId: 'vendor-burger',
           name: 'Burger Hub',
           address: '12 Admiralty Way, Lekki',
           hours: 'Daily, 10am–10pm',
+          whatsapp: '+2348011111111',
         },
         {
+          vendorId: 'vendor-zest',
           name: 'Zest Grill',
           address: '12 Admiralty Way, Lekki',
           hours: 'Daily, 10am–10pm',
+          whatsapp: '+2348011111111',
         },
       ]);
     });

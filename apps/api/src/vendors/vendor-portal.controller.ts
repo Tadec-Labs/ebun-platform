@@ -154,6 +154,26 @@ export class VendorPortalController {
     return this.portal.requestItem(vendorOf(request), body, metaOf(request));
   }
 
+  /** Recipients who booked a time to collect here — so it's ready when they arrive. */
+  @Get('pickups')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  pickups(@Req() request: VendorRequest) {
+    return this.portal.listPickups(vendorOf(request).vendorId);
+  }
+
+  @Post('pickups/:orderId/confirm')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  confirmPickup(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Req() request: VendorRequest,
+  ) {
+    return this.portal.confirmPickup(
+      vendorOf(request),
+      orderId,
+      metaOf(request),
+    );
+  }
+
   /**
    * An offering that is switched off still counts.
    *

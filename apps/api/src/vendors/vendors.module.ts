@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { GiftsModule } from '../gifts/gifts.module';
+import { OrdersModule } from '../orders/orders.module';
 import { RedemptionsModule } from '../redemptions/redemptions.module';
 import { VendorPortalController } from './vendor-portal.controller';
 import { VendorPortalGuard } from './vendor-portal.guard';
@@ -11,7 +12,13 @@ import { VendorsRepository } from './vendors.repository';
 import { VendorsService } from './vendors.service';
 
 @Module({
-  imports: [AuthModule, AuditModule, GiftsModule, RedemptionsModule],
+  imports: [
+    AuthModule,
+    AuditModule,
+    GiftsModule,
+    OrdersModule,
+    RedemptionsModule,
+  ],
   controllers: [VendorsController, VendorPortalController],
   providers: [
     VendorsRepository,

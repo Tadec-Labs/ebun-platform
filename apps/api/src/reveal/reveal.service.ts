@@ -1,4 +1,12 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
 import { FulfillmentType, OrderStatus, RedemptionStatus } from '@ebun/types';
 import { OrdersService } from '../orders/orders.service';
 import { OrderRow } from '../orders/orders.repository';
@@ -30,6 +38,9 @@ const TERMINAL_NEGATIVE_STATES = new Set([
   OrderStatus.RedemptionFailed,
 ]);
 
+/** How far ahead a collection can be booked. */
+const MAX_BOOKING_AHEAD_MS = 7 * 24 * 60 * 60_000;
+
 /**
  * Only public surface of RevealModule.
  *
@@ -51,6 +62,7 @@ export class RevealService {
     private readonly usersService: UsersService,
     private readonly redemptions: RedemptionsService,
     private readonly vendors: VendorsService,
+    private readonly audit: AuditService,
     @Inject(MEDIA_URL_RESOLVER)
     private readonly mediaResolver: MediaUrlResolver,
   ) {}
@@ -180,6 +192,99 @@ export class RevealService {
     return this.view(revealToken);
   }
 
+  /**
+   * POST /reveal/:token/pickup. The recipient says where and when
+   * they'll collect, so the vendor can have it ready — the difference
+   * between a pizza waiting at the counter and a 30-minute wait in front
+   * of it.
+   *
+   * Only for a claimed collection voucher that can still be collected.
+   * Re-booking is allowed (plans change) and clears the vendor's
+   * confirmation, since they agreed to a different time.
+   */
+  async bookPickup(
+    revealToken: string,
+    vendorId: string,
+    pickupAtIso: string,
+  ): Promise<RevealView> {
+    const order = await this.ordersService.findByRevealToken(revealToken);
+    if (!order) {
+      throw new NotFoundException('No gift found for this link.');
+    }
+
+    const giftTemplate = await this.giftsService.findById(
+      order.gift_template_id,
+    );
+    const redemption =
+      giftTemplate.delivery_type === FulfillmentType.DigitalVoucher &&
+      order.status === OrderStatus.RevealOpened
+        ? await this.redemptions.findByOrderId(order.id)
+        : null;
+    if (
+      !redemption ||
+      redemption.status === RedemptionStatus.Completed ||
+      redemption.status === RedemptionStatus.Failed ||
+      redemption.status === RedemptionStatus.Expired
+    ) {
+      throw new BadRequestException(
+        "This gift can't be booked for collection right now.",
+      );
+    }
+
+    const pickupAt = new Date(pickupAtIso);
+    const now = Date.now();
+    // A few minutes' grace for a phone clock that runs slow; anything
+    // earlier is a time that has already passed.
+    const earliest = now - 5 * 60_000;
+    const latest = Math.min(
+      new Date(redemption.expires_at as string).getTime(),
+      new Date(order.expires_at).getTime(),
+      now + MAX_BOOKING_AHEAD_MS,
+    );
+    if (
+      Number.isNaN(pickupAt.getTime()) ||
+      pickupAt.getTime() < earliest ||
+      pickupAt.getTime() > latest
+    ) {
+      throw new BadRequestException(
+        'Choose a time from now until your gift expires (at most a week ahead).',
+      );
+    }
+
+    // Strict here, unlike the view: booking somewhere that can't take
+    // the code is worse than an error the recipient can retry.
+    const places = await this.vendors.collectionPointsForGift(
+      order.gift_template_id,
+    );
+    if (!places.some((place) => place.vendorId === vendorId)) {
+      throw new BadRequestException(
+        "That place can't hand over this gift. Choose one from the list.",
+      );
+    }
+
+    const booked = await this.ordersService.recordPickup(
+      order.id,
+      vendorId,
+      pickupAt.toISOString(),
+    );
+    if (!booked) {
+      throw new ConflictException(
+        'This gift has changed since you opened it. Reload the page.',
+      );
+    }
+
+    await this.audit.record({
+      eventType: 'order.pickup_booked',
+      actorId: null,
+      actorType: 'user',
+      resourceType: 'order',
+      resourceId: order.id,
+      metadata: { vendorId, pickupAt: pickupAt.toISOString() },
+    });
+
+    return this.view(revealToken);
+  }
+
   private async buildView(
     order: OrderRow,
     viewState: RevealView['viewState'],
@@ -258,6 +363,18 @@ export class RevealService {
           expiresAt: existingRedemption.expires_at as string,
         };
         view.collectAt = await this.collectionPoints(order.gift_template_id);
+        if (order.pickup_vendor_id && order.pickup_at) {
+          const place = view.collectAt.find(
+            (point) => point.vendorId === order.pickup_vendor_id,
+          );
+          view.pickup = {
+            vendorId: order.pickup_vendor_id,
+            placeName: place?.name ?? null,
+            whatsapp: place?.whatsapp ?? null,
+            at: order.pickup_at,
+            confirmed: Boolean(order.pickup_confirmed_at),
+          };
+        }
       }
     }
 

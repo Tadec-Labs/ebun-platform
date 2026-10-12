@@ -5,6 +5,7 @@ import { App } from 'supertest/types';
 import { RedemptionStatus } from '@ebun/types';
 import { AuditService } from '../audit/audit.service';
 import { GiftsService } from '../gifts/gifts.service';
+import { OrdersService } from '../orders/orders.service';
 import { RedemptionsService } from '../redemptions/redemptions.service';
 import { VendorPortalController } from './vendor-portal.controller';
 import { VendorPortalGuard } from './vendor-portal.guard';
@@ -27,6 +28,7 @@ describe('vendor portal over HTTP', () => {
   let vendors: Record<string, jest.Mock>;
   let audit: { record: jest.Mock };
   let gifts: { createRequestedByVendor: jest.Mock };
+  let orders: { findUpcomingPickups: jest.Mock; confirmPickup: jest.Mock };
 
   const asVendor = (over: Record<string, unknown> = {}) => {
     vendors.findByPortalToken.mockResolvedValue({
@@ -66,6 +68,10 @@ describe('vendor portal over HTTP', () => {
       upsertOffering: jest.fn().mockResolvedValue({}),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    orders = {
+      findUpcomingPickups: jest.fn().mockResolvedValue([]),
+      confirmPickup: jest.fn().mockResolvedValue(null),
+    };
     gifts = {
       createRequestedByVendor: jest.fn().mockResolvedValue({
         id: GIFT_ID,
@@ -82,6 +88,7 @@ describe('vendor portal over HTTP', () => {
         // Real: the rules about what a vendor may change are under test.
         VendorPortalService,
         { provide: GiftsService, useValue: gifts },
+        { provide: OrdersService, useValue: orders },
         { provide: RedemptionsService, useValue: redemptions },
         { provide: VendorsRepository, useValue: vendors },
         { provide: AuditService, useValue: audit },
@@ -582,6 +589,87 @@ describe('vendor portal over HTTP', () => {
         .send({ name: 'Jollof', inStorePrice: 450000 })
         .expect(400);
       expect(gifts.createRequestedByVendor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('who is coming to collect', () => {
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+    const ORDER_ID = '44444444-4444-4444-8444-444444444444';
+
+    it('401s the pickup routes with no token', async () => {
+      const server = app.getHttpServer();
+      await request(server).get('/vendor/pickups').expect(401);
+      await request(server)
+        .post(`/vendor/pickups/${ORDER_ID}/confirm`)
+        .expect(401);
+      expect(orders.findUpcomingPickups).not.toHaveBeenCalled();
+      expect(orders.confirmPickup).not.toHaveBeenCalled();
+    });
+
+    it("lists this vendor's bookings by first name — never the collection code", async () => {
+      asVendor();
+      orders.findUpcomingPickups.mockResolvedValue([
+        {
+          id: ORDER_ID,
+          recipient_name: 'Adaeze Okonkwo',
+          pickup_at: '2026-10-12T11:30:00.000Z',
+          pickup_confirmed_at: null,
+          gift_templates: { name: 'Large Pepperoni' },
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/vendor/pickups')
+        .set(auth)
+        .expect(200);
+
+      expect(orders.findUpcomingPickups).toHaveBeenCalledWith(
+        'vendor-1',
+        expect.any(Date),
+      );
+      expect(response.body).toEqual([
+        {
+          orderId: ORDER_ID,
+          giftName: 'Large Pepperoni',
+          recipientFirstName: 'Adaeze',
+          pickupAt: '2026-10-12T11:30:00.000Z',
+          confirmed: false,
+        },
+      ]);
+      expect(JSON.stringify(response.body)).not.toMatch(/EBN-/);
+    });
+
+    it('confirms a booking, scoped to this vendor, and audits it as the vendor', async () => {
+      asVendor();
+      orders.confirmPickup.mockResolvedValue({
+        id: ORDER_ID,
+        pickup_at: '2026-10-12T11:30:00.000Z',
+      });
+
+      await request(app.getHttpServer())
+        .post(`/vendor/pickups/${ORDER_ID}/confirm`)
+        .set(auth)
+        .expect(201);
+
+      expect(orders.confirmPickup).toHaveBeenCalledWith(ORDER_ID, 'vendor-1');
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'order.pickup_confirmed',
+          actorType: 'vendor',
+          resourceId: ORDER_ID,
+        }),
+      );
+    });
+
+    it("404s a booking that isn't for this vendor", async () => {
+      asVendor();
+      orders.confirmPickup.mockResolvedValue(null);
+
+      await request(app.getHttpServer())
+        .post(`/vendor/pickups/${ORDER_ID}/confirm`)
+        .set(auth)
+        .expect(404);
+      expect(audit.record).not.toHaveBeenCalled();
     });
   });
 });

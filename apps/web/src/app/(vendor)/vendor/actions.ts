@@ -6,6 +6,7 @@ import {
   VendorApiError,
   vendorFetch,
   type VendorOffering,
+  type VendorPickup,
   type VendorRedemption,
 } from "@/lib/vendor/api";
 
@@ -119,6 +120,32 @@ export async function requestItemAction(input: {
     });
     revalidatePath("/vendor/gifts");
     return { ok: true, offering };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+/** Re-read on a timer by the counter screen, so a new booking shows up without a reload. */
+export async function listPickupsAction(): Promise<
+  { ok: true; pickups: VendorPickup[] } | { ok: false; message: string }
+> {
+  try {
+    return { ok: true, pickups: await vendorFetch<VendorPickup[]>("/vendor/pickups") };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+/** "Got it, it'll be ready" — the recipient sees this on their gift page. */
+export async function confirmPickupAction(
+  orderId: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await vendorFetch<{ confirmed: true }>(
+      `/vendor/pickups/${encodeURIComponent(orderId)}/confirm`,
+      { method: "POST" },
+    );
+    return { ok: true };
   } catch (error) {
     return { ok: false, message: messageOf(error) };
   }

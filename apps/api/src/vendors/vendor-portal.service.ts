@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { GiftsService } from '../gifts/gifts.service';
+import { OrdersService } from '../orders/orders.service';
 import { RequestVendorItemDto } from './dto/vendor.dto';
 import type { VendorContext } from './vendor-portal.guard';
 import { PortalOfferingRow, VendorsRepository } from './vendors.repository';
@@ -32,6 +33,18 @@ export interface PortalOfferingView {
   status: PortalOfferingStatus;
 }
 
+export interface PickupView {
+  orderId: string;
+  giftName: string;
+  recipientFirstName: string;
+  pickupAt: string;
+  /** The vendor already tapped "Got it". */
+  confirmed: boolean;
+}
+
+/** A booking stays on the vendor's list this long after its time. */
+const LATE_ARRIVAL_WINDOW_MS = 2 * 60 * 60_000;
+
 /**
  * A vendor can't have more than this many requests waiting. A cap, not a
  * rate: it bounds what a lost or misused counter link can add to the ops
@@ -54,7 +67,56 @@ export class VendorPortalService {
     private readonly vendors: VendorsRepository,
     private readonly gifts: GiftsService,
     private readonly audit: AuditService,
+    private readonly orders: OrdersService,
   ) {}
+
+  /**
+   * Who is coming, for what, and when — the counter's "Coming in" list.
+   *
+   * Shows a booking up to two hours after its time (people run late),
+   * soonest first. First name only: enough to call out at the counter.
+   * Never the collection code — the code is the recipient's to show;
+   * a vendor holding it could mark a gift collected that nobody
+   * collected.
+   */
+  async listPickups(vendorId: string): Promise<PickupView[]> {
+    const rows = await this.orders.findUpcomingPickups(
+      vendorId,
+      new Date(Date.now() - LATE_ARRIVAL_WINDOW_MS),
+    );
+    return rows.map((row) => ({
+      orderId: row.id,
+      giftName: row.gift_templates?.name ?? 'Gift',
+      recipientFirstName:
+        row.recipient_name.trim().split(/\s+/)[0] || row.recipient_name,
+      pickupAt: row.pickup_at,
+      confirmed: row.pickup_confirmed_at !== null,
+    }));
+  }
+
+  /** "Got it, it'll be ready" — shown to the recipient on their gift page. */
+  async confirmPickup(
+    vendor: VendorContext,
+    orderId: string,
+    meta: RequestMeta,
+  ): Promise<{ confirmed: true }> {
+    const row = await this.orders.confirmPickup(orderId, vendor.vendorId);
+    if (!row) {
+      throw new NotFoundException('No booking like that for your shop.');
+    }
+
+    await this.audit.record({
+      eventType: 'order.pickup_confirmed',
+      actorId: null,
+      actorType: 'vendor',
+      resourceType: 'order',
+      resourceId: orderId,
+      metadata: { vendorId: vendor.vendorId, pickupAt: row.pickup_at },
+      ...meta,
+    });
+
+    return { confirmed: true };
+  }
 
   async listOfferings(vendorId: string): Promise<PortalOfferingView[]> {
     const rows = await this.vendors.listPortalOfferings(vendorId);

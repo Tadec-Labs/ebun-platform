@@ -27,6 +27,16 @@ export interface VendorOffering {
   status: "live" | "awaiting_approval" | "not_on_sale";
 }
 
+/** Someone who booked a time to collect here. Mirrors the API's PickupView. */
+export interface VendorPickup {
+  orderId: string;
+  giftName: string;
+  recipientFirstName: string;
+  pickupAt: string; // ISO
+  /** This vendor already tapped "Got it". */
+  confirmed: boolean;
+}
+
 export interface VendorRedemption {
   code: string;
   redemptionNumber: string;

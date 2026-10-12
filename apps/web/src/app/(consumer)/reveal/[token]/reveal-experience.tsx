@@ -4,11 +4,12 @@ import { BrandLogo } from "@/components/brand-logo";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { FulfillmentType } from "@ebun/types";
-import type { CollectionPoint, RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
+import type { CollectionPoint, PickupBooking, RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
 import { claimGiftAction } from "./actions";
 import { HoldToUnwrap } from "./components/hold-to-unwrap";
 import { GiftMark, LockGlyph } from "@/components/icons";
 import { MessagePlayer } from "./components/message-player";
+import { PickupBookingPanel } from "./components/pickup-booking";
 import { ScratchPanel } from "./components/scratch-panel";
 import { StatusLine } from "./components/status-line";
 
@@ -78,6 +79,7 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
       ? { redemption: initial.redemption, qrSvg: initial.qrSvg ?? null }
       : null,
   );
+  const [pickup, setPickup] = useState<PickupBooking | null>(initial.pickup ?? null);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claiming, startClaim] = useTransition();
   const isPhysical = initial.fulfillmentType === FulfillmentType.Physical;
@@ -172,6 +174,16 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
             giftName={initial.giftName}
             redemption={claimed.redemption}
             qrSvg={claimed.qrSvg}
+            pickupPanel={
+              <PickupBookingPanel
+                token={token}
+                places={claimed.redemption.collectAt}
+                giftName={initial.giftName}
+                recipientName={initial.recipientName}
+                booking={pickup}
+                onBooked={setPickup}
+              />
+            }
           />
         )}
 
@@ -502,10 +514,13 @@ function ClaimedScreen({
   giftName,
   redemption,
   qrSvg,
+  pickupPanel,
 }: {
   giftName?: string;
   redemption: RedemptionDetails;
   qrSvg: string | null;
+  /** "When are you collecting?" — sits right under the headline: it's the next thing to do. */
+  pickupPanel: React.ReactNode;
 }) {
   return (
     <div className="flex flex-1 flex-col justify-center gap-8">
@@ -517,6 +532,8 @@ function ClaimedScreen({
           {collectInstruction(giftName, redemption.collectAt)}
         </p>
       </div>
+
+      {pickupPanel}
 
       <div
         className="flex flex-col items-center gap-4 border border-dashed px-6 py-8"

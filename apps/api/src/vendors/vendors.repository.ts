@@ -87,7 +87,9 @@ export interface PortalOfferingRow {
 /** One vendor that will accept a given gift's code, as a recipient sees it. */
 export interface CollectionPointRow {
   vendors: {
+    id: string;
     business_name: string;
+    whatsapp_number: string;
     pickup_address: string | null;
     pickup_hours: string | null;
     active: boolean;
@@ -352,7 +354,9 @@ export class VendorsRepository {
   ): Promise<CollectionPointRow[]> {
     const response = (await this.supabase
       .from('vendor_gift_offerings')
-      .select('vendors(business_name, pickup_address, pickup_hours, active)')
+      .select(
+        'vendors(id, business_name, whatsapp_number, pickup_address, pickup_hours, active)',
+      )
       .eq('gift_template_id', giftTemplateId)) as {
       data: CollectionPointRow[] | null;
       error: PostgrestError | null;

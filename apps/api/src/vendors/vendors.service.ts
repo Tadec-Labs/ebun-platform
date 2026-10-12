@@ -77,9 +77,17 @@ export interface VendorView {
 
 /** Where a recipient can collect a gift — public business details only. */
 export interface CollectionPointView {
+  /** So the recipient can say which place they're collecting from. */
+  vendorId: string;
   name: string;
   address: string;
   hours: string | null;
+  /**
+   * The business's WhatsApp, so the recipient can tell them they're
+   * coming. A number the business gave SendEbun to be contacted on; it
+   * is shown only to someone holding a claimed gift for them.
+   */
+  whatsapp: string;
 }
 
 export interface OfferingView {
@@ -390,9 +398,11 @@ export class VendorsService {
       const address = vendor?.pickup_address?.trim();
       if (!vendor || !vendor.active || !address) continue;
       points.push({
+        vendorId: vendor.id,
         name: vendor.business_name,
         address,
         hours: vendor.pickup_hours?.trim() || null,
+        whatsapp: vendor.whatsapp_number,
       });
     }
     return points.sort((a, b) => a.name.localeCompare(b.name));
