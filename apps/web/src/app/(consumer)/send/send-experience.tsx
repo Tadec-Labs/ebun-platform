@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "@/components/brand-logo";
 import { useEffect, useState } from "react";
 import { PolicyLinks } from "@/components/policy-links";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
@@ -88,9 +89,7 @@ export function SendExperience({
     >
       <header className="pt-5 pb-7">
         <div className="flex items-center justify-between">
-          <p className="font-display text-base tracking-[0.2em]" style={{ color: "var(--gold)" }}>
-            EBUN
-          </p>
+          <BrandLogo size="sm" href={null} />
           <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
             Step {currentPhaseIndex + 1} of {PHASES.length}
           </p>

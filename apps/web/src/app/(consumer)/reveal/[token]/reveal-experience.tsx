@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "@/components/brand-logo";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { FulfillmentType } from "@ebun/types";
@@ -109,11 +110,10 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7 pb-10">
-      <div
-        className="font-display pt-6 pb-2 text-center text-base tracking-[0.2em]"
-        style={{ color: "var(--gold)" }}
-      >
-        EBUN
+      {/* Not a link: tapping the logo mid-gift shouldn't take the
+          recipient away from what they were sent. */}
+      <div className="flex justify-center pt-6 pb-2">
+        <BrandLogo size="sm" href={null} />
       </div>
 
       <div className="flex flex-1 flex-col">
@@ -235,7 +235,7 @@ function EntryScreen({
         type="button"
         onClick={onBegin}
         className="px-10 py-3.5 text-sm font-medium tracking-wide"
-        style={{ background: "var(--gold)", color: "var(--ink)" }}
+        style={{ background: "var(--action)", color: "var(--ink)" }}
       >
         Open it
       </button>
@@ -351,7 +351,7 @@ function RevealScreen({
             onClick={onPrimaryAction}
             disabled={claiming}
             className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-60"
-            style={{ background: "var(--gold)", color: "var(--ink)" }}
+            style={{ background: "var(--action)", color: "var(--ink)" }}
           >
             {claiming
               ? "Claiming\u2026"
@@ -401,7 +401,7 @@ function AddressScreen({
         onClick={onSubmit}
         disabled={address.trim().length < 6}
         className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
-        style={{ background: "var(--gold)", color: "var(--ink)" }}
+        style={{ background: "var(--action)", color: "var(--ink)" }}
       >
         Confirm delivery address
       </button>
@@ -490,7 +490,7 @@ function ArrivalMessageScreen({
         type="button"
         onClick={onDone}
         className="w-full py-3.5 text-sm font-medium tracking-wide"
-        style={{ background: "var(--gold)", color: "var(--ink)" }}
+        style={{ background: "var(--action)", color: "var(--ink)" }}
       >
         That&rsquo;s everything
       </button>
@@ -580,7 +580,7 @@ function ClaimedScreen({
         <Link
           href="/send"
           className="w-full py-3.5 text-center text-sm font-medium tracking-wide"
-          style={{ background: "var(--gold)", color: "var(--ink)" }}
+          style={{ background: "var(--action)", color: "var(--ink)" }}
         >
           Send one back
         </Link>
@@ -721,7 +721,7 @@ function CollectedScreen({
         <Link
           href="/send"
           className="w-full py-3.5 text-center text-sm font-medium tracking-wide"
-          style={{ background: "var(--gold)", color: "var(--ink)" }}
+          style={{ background: "var(--action)", color: "var(--ink)" }}
         >
           Send one back
         </Link>

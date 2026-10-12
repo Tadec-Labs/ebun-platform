@@ -4,7 +4,7 @@ import { getGiftCatalog } from "@/lib/gifts/get-gift-catalog";
 import { SendExperience } from "./send-experience";
 
 export const metadata: Metadata = {
-  title: "Send a gift — Ebun",
+  title: "Send a gift",
   description: "Choose a gift to send.",
 };
 

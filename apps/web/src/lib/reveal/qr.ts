@@ -26,7 +26,8 @@ export async function renderQrSvg(payload: string): Promise<string | null> {
       // Rendered as a viewBox'd SVG, so this is only the intrinsic size;
       // CSS decides what it actually occupies on screen.
       width: 320,
-      color: { dark: "#0e0d0b", light: "#f5efe0" },
+      // Brand background on brand ivory: 15.6:1, well past what scanners need.
+      color: { dark: "#091C17", light: "#F5F1E7" },
     });
   } catch {
     // A QR that won't render must not take the whole screen down with

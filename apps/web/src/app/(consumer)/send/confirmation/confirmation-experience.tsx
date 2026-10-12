@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "@/components/brand-logo";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ChatGlyph, CheckGlyph } from "@/components/icons";
@@ -90,11 +91,8 @@ export function ConfirmationExperience({
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7 pb-10">
-      <div
-        className="font-display pt-6 pb-8 text-center text-base tracking-[0.2em]"
-        style={{ color: "var(--gold)" }}
-      >
-        EBUN
+      <div className="flex justify-center pt-6 pb-8">
+        <BrandLogo size="sm" href={null} />
       </div>
 
       <div className="flex flex-1 flex-col justify-center gap-8" aria-live="polite">
@@ -170,7 +168,7 @@ export function ConfirmationExperience({
                 setRunId((n) => n + 1);
               }}
               className="w-full py-3.5 text-sm font-medium tracking-wide"
-              style={{ background: "var(--gold)", color: "var(--ink)" }}
+              style={{ background: "var(--action)", color: "var(--ink)" }}
             >
               Check again
             </button>
@@ -308,7 +306,7 @@ function SendItYourself({
         }`}
         style={
           primary
-            ? { background: "var(--gold)", color: "var(--ink)" }
+            ? { background: "var(--action)", color: "var(--ink)" }
             : { borderColor: "var(--border-strong)", color: "var(--gold-light)" }
         }
       >
@@ -416,7 +414,7 @@ function PrimaryLink({ href, children }: { href: string; children: React.ReactNo
     <Link
       href={href}
       className="block w-full py-3.5 text-center text-sm font-medium tracking-wide"
-      style={{ background: "var(--gold)", color: "var(--ink)" }}
+      style={{ background: "var(--action)", color: "var(--ink)" }}
     >
       {children}
     </Link>

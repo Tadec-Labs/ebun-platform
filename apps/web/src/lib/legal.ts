@@ -7,14 +7,14 @@
  * here and every page follows.
  */
 export const LEGAL = {
-  brand: "Ebun",
+  brand: "SendEbun",
   /** Exactly as on the CAC business name certificate. */
   entity: "TADECLABS INNOVATIONS",
   entityDescription:
     "a business name registered with the Corporate Affairs Commission of Nigeria",
   address:
     "Afro-Stuff Estate, Alagbaka Estate, Akure, Ondo State 340223, Nigeria",
-  email: "theo@ebun.com.ng",
+  email: "hello@ebun.com.ng",
   phone: "+234 906 704 2371",
   website: "www.ebun.com.ng",
   /** Shown as "Last updated". Change it whenever a page's substance changes. */

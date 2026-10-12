@@ -142,12 +142,12 @@ function firstName(name: string): string {
  */
 function counterLinkMessage(ownerName: string, businessName: string, link: string): string {
   return [
-    `Hi ${firstName(ownerName)}, here is the Ebun counter link for ${businessName}:`,
+    `Hi ${firstName(ownerName)}, here is the SendEbun counter link for ${businessName}:`,
     "",
     link,
     "",
     "Open it once on the phone you'll use at the counter, then bookmark it.",
-    "When a customer shows an Ebun gift: tap Scan their QR (or type their code), check the gift, then tap Hand it over.",
+    "When a customer shows a SendEbun gift: tap Scan their QR (or type their code), check the gift, then tap Hand it over.",
     "",
     "Please keep this link to yourselves — it confirms collections for your shop.",
   ].join("\n");

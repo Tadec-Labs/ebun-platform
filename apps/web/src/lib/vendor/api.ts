@@ -56,7 +56,7 @@ export async function vendorFetch<T>(
     });
   } catch {
     throw new VendorApiError(
-      ["Couldn't reach Ebun. Check the connection and try again."],
+      ["Couldn't reach SendEbun. Check the connection and try again."],
       0,
     );
   }

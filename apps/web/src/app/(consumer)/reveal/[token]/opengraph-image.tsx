@@ -1,28 +1,35 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { ImageResponse } from "next/og";
 
 /**
- * The image in the WhatsApp preview card for every reveal link.
+ * The image in the WhatsApp preview card for every reveal link — the
+ * first thing a recipient ever sees of SendEbun, before they tap.
  *
  * Same for every gift, and built without reading the token or calling
  * the API — see the comment on this route's metadata for why nothing
  * per-order belongs in a preview, and lib/link-preview-bot.ts for why
  * fetching this must never touch the order.
  *
- * Drawn in code rather than shipped as a PNG so it stays in the brand
- * palette when that changes. Uses ImageResponse's built-in sans rather
- * than Cormorant: a custom font would have to be fetched at render
- * time, and a preview that fails because a font download failed is
- * worse than a plainer one.
+ * Brand colours are literal hex (ImageResponse can't read CSS
+ * variables) mirroring styles/brand/colors.json. The symbol is the same
+ * crop the app uses, on its light tile, per the brand kit.
  */
-export const alt = "You’ve been sent a gift on Ebun";
+export const alt = "You’ve been sent a gift on SendEbun";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#0e0d0b";
-const GOLD = "#c9a84c";
-const CREAM = "#f5efe0";
+const BACKGROUND = "#091C17";
+const TEXT = "#F5F1E7";
+const AMBER = "#FFAE00";
+const GOLD_RGB = "228,180,84";
 
-export default function RevealPreviewImage() {
+export default async function RevealPreviewImage() {
+  const symbol = await readFile(
+    join(process.cwd(), "public/brand/sendebun-symbol.png"),
+  );
+  const symbolSrc = `data:image/png;base64,${symbol.toString("base64")}`;
+
   return new ImageResponse(
     <div
       style={{
@@ -32,30 +39,30 @@ export default function RevealPreviewImage() {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        background: `radial-gradient(circle at 50% 42%, rgba(201,168,76,0.22), ${INK} 62%)`,
-        color: CREAM,
+        background: `radial-gradient(circle at 50% 40%, rgba(${GOLD_RGB},0.09), ${BACKGROUND} 62%)`,
+        color: TEXT,
       }}
     >
-      <svg
-        width="132"
-        height="132"
-        viewBox="0 0 48 48"
-        fill="none"
-        stroke={GOLD}
-        strokeWidth="1.2"
-      >
-        <rect x="8" y="18" width="32" height="22" />
-        <path d="M8 26h32" />
-        <path d="M24 18v22" />
-        <path d="M24 18c-3.5 0-7-2-7-6a4 4 0 0 1 7-2.5A4 4 0 0 1 31 12c0 4-3.5 6-7 6Z" />
-      </svg>
-      <div style={{ marginTop: 40, fontSize: 68, letterSpacing: -1 }}>
+      <img
+        src={symbolSrc}
+        width={150}
+        height={150}
+        alt=""
+        style={{ borderRadius: 33 }}
+      />
+      <div style={{ marginTop: 44, fontSize: 68, letterSpacing: -1 }}>
         You’ve been sent a gift
       </div>
       <div
-        style={{ marginTop: 28, fontSize: 26, letterSpacing: 10, color: GOLD }}
+        style={{
+          marginTop: 26,
+          display: "flex",
+          fontSize: 34,
+          fontWeight: 700,
+        }}
       >
-        EBUN
+        <span style={{ color: TEXT }}>Send</span>
+        <span style={{ color: AMBER }}>Ebun</span>
       </div>
     </div>,
     size,

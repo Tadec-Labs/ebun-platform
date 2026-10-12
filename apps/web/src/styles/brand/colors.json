@@ -1,0 +1,19 @@
+{
+  "background": "#091C17",
+  "surface": "#10271F",
+  "surfaceRaised": "#17382C",
+  "deep": "#071711",
+  "gold": "#E4B454",
+  "goldLight": "#F0CB7C",
+  "goldDark": "#BE9649",
+  "goldBronze": "#68542E",
+  "goldChampagne": "#F3E2BC",
+  "amber": "#FFAE00",
+  "amberHover": "#FFBF38",
+  "text": "#F5F1E7",
+  "textSecondary": "#C1CDC3",
+  "textMuted": "#ABBEB1",
+  "error": "#F0A295",
+  "success": "#91C9A7",
+  "logoGreen": "#004B35"
+}

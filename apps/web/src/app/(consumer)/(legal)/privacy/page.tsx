@@ -3,9 +3,9 @@ import { LEGAL } from "@/lib/legal";
 import { LegalPage, List, Section } from "../legal-page";
 
 export const metadata: Metadata = {
-  title: "Privacy notice — Ebun",
+  title: "Privacy notice",
   description:
-    "What Ebun collects about senders and recipients, why, and your rights.",
+    "What SendEbun collects about senders and recipients, why, and your rights.",
 };
 
 /**
@@ -22,7 +22,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy notice"
-      summary="We collect only what it takes to deliver a gift and keep the money safe. We don't sell personal data, we don't use it for advertising, and we don't share it beyond the services needed to run Ebun."
+      summary="We collect only what it takes to deliver a gift and keep the money safe. We don't sell personal data, we don't use it for advertising, and we don't share it beyond the services needed to run SendEbun."
     >
       <Section heading="Who is responsible for your data">
         <p>
@@ -79,7 +79,7 @@ export default function PrivacyPage() {
       </Section>
 
       <Section heading="Who else receives data">
-        <p>We use these services to run Ebun, each only for its purpose:</p>
+        <p>We use these services to run SendEbun, each only for its purpose:</p>
         <List
           items={[
             "Paystack — payments and refunds.",
@@ -145,7 +145,7 @@ export default function PrivacyPage() {
 
       <Section heading="Age">
         <p>
-          Ebun is for people aged 18 and over to buy gifts. We don&rsquo;t
+          SendEbun is for people aged 18 and over to buy gifts. We don&rsquo;t
           knowingly collect data from children who buy gifts.
         </p>
       </Section>

@@ -346,7 +346,7 @@ function GiftArt({
       aria-hidden="true"
       className={`relative flex items-center justify-center overflow-hidden ${className}`}
       style={{
-        background: `radial-gradient(circle at ${GLOW_POSITION[item.category]}, rgba(201,168,76,0.16), transparent 65%), var(--panel-raised)`,
+        background: `radial-gradient(circle at ${GLOW_POSITION[item.category]}, rgba(var(--sendebun-gold-rgb), 0.16), transparent 65%), var(--panel-raised)`,
       }}
     >
       <GiftMark

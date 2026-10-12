@@ -33,7 +33,7 @@ export async function claimGiftAction(token: string): Promise<ClaimResult> {
   } catch {
     return {
       ok: false,
-      message: "Couldn't reach Ebun just then. Check your connection and try again.",
+      message: "Couldn't reach SendEbun just then. Check your connection and try again.",
     };
   }
 

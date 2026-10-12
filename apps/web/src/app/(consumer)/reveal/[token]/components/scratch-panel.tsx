@@ -47,9 +47,11 @@ export function ScratchPanel({
     ctx.clearRect(0, 0, width, height);
 
     const gradient = ctx.createLinearGradient(0, 0, width, height);
-    gradient.addColorStop(0, "#8a6f32");
-    gradient.addColorStop(0.5, "#c9a84c");
-    gradient.addColorStop(1, "#8a6f32");
+    // SendEbun gold (goldDark → gold → goldDark). Canvas can't read
+    // CSS variables, so these mirror styles/brand/colors.json.
+    gradient.addColorStop(0, "#BE9649");
+    gradient.addColorStop(0.5, "#E4B454");
+    gradient.addColorStop(1, "#BE9649");
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
@@ -58,7 +60,7 @@ export function ScratchPanel({
     // own sake.
     ctx.save();
     ctx.globalAlpha = 0.08;
-    ctx.fillStyle = "#0e0d0b";
+    ctx.fillStyle = "#091C17";
     ctx.font = `${Math.max(14, width * 0.045)}px ui-sans-serif, system-ui, sans-serif`;
     ctx.textBaseline = "middle";
     const step = Math.max(70, width * 0.22);
@@ -67,7 +69,7 @@ export function ScratchPanel({
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(-0.35);
-        ctx.fillText("EBUN", 0, 0);
+        ctx.fillText("SendEbun", 0, 0);
         ctx.restore();
       }
     }
@@ -75,7 +77,7 @@ export function ScratchPanel({
 
     ctx.save();
     ctx.globalAlpha = 0.85;
-    ctx.fillStyle = "#0e0d0b";
+    ctx.fillStyle = "#091C17";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.font = `500 ${Math.max(11, width * 0.03)}px ui-sans-serif, system-ui, sans-serif`;

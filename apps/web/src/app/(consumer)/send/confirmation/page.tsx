@@ -3,7 +3,7 @@ import { whatsappAutoDeliveryEnabled } from "@/lib/feature-flags";
 import { ConfirmationExperience } from "./confirmation-experience";
 
 export const metadata: Metadata = {
-  title: "Payment — Ebun",
+  title: "Payment",
   // A per-order, transient page reached from Paystack's redirect —
   // nothing here belongs in a search index.
   robots: { index: false, follow: false },

@@ -17,14 +17,14 @@ const PREVIEW_DESCRIPTION = "Tap to open it — someone who knows you sent this.
  * named the gift would give the surprise away in the chat list.
  */
 export const metadata: Metadata = {
-  title: "A gift for you — Ebun",
+  title: "A gift for you",
   description: PREVIEW_DESCRIPTION,
   // A private, single-recipient link. Nothing here belongs in an index.
   robots: { index: false, follow: false },
   openGraph: {
     title: PREVIEW_TITLE,
     description: PREVIEW_DESCRIPTION,
-    siteName: "Ebun",
+    siteName: "SendEbun",
     type: "website",
   },
   twitter: { card: "summary_large_image", title: PREVIEW_TITLE, description: PREVIEW_DESCRIPTION },

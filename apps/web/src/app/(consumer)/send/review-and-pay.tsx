@@ -162,13 +162,13 @@ export function ReviewAndPay({
         className="fixed inset-x-0 bottom-0 border-t px-7 pt-4"
         style={{
           borderColor: "var(--border)",
-          background: "rgba(14, 13, 11, 0.95)",
+          background: "rgba(var(--sendebun-background-rgb), 0.95)",
           paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.25rem)",
         }}
       >
         <div className="mx-auto max-w-[440px]">
           {error && (
-            <p className="mb-2 text-center text-xs" style={{ color: "#e08a8a" }}>
+            <p className="mb-2 text-center text-xs" style={{ color: "var(--error)" }}>
               {error}
             </p>
           )}
@@ -194,7 +194,7 @@ export function ReviewAndPay({
             onClick={() => void handlePay()}
             disabled={!canSubmit || submitting}
             className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
-            style={{ background: "var(--gold)", color: "var(--ink)" }}
+            style={{ background: "var(--action)", color: "var(--ink)" }}
           >
             {submitting ? "Redirecting to Paystack…" : `Pay ${formatNaira(gift.basePrice)}`}
           </button>

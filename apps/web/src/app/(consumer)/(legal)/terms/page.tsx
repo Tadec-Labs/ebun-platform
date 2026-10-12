@@ -4,9 +4,9 @@ import { LEGAL } from "@/lib/legal";
 import { LegalPage, List, Section } from "../legal-page";
 
 export const metadata: Metadata = {
-  title: "Terms of service — Ebun",
+  title: "Terms of service",
   description:
-    "The agreement between you and Ebun when you send or receive a gift.",
+    "The agreement between you and SendEbun when you send or receive a gift.",
 };
 
 export default function TermsPage() {
@@ -77,7 +77,7 @@ export default function TermsPage() {
       <Section heading="Vendors">
         <p>
           Gifts are handed over by independent businesses
-          (&ldquo;vendors&rdquo;) that have agreed to honour Ebun gifts. The
+          (&ldquo;vendors&rdquo;) that have agreed to honour SendEbun gifts. The
           vendor is responsible for what they hand over. If something
           isn&rsquo;t right, tell us and we&rsquo;ll resolve it with the vendor
           under our Refund policy.
@@ -86,7 +86,7 @@ export default function TermsPage() {
 
       <Section heading="Fair use">
         <p>
-          Don&rsquo;t use Ebun for fraud, with a payment method you aren&rsquo;t
+          Don&rsquo;t use SendEbun for fraud, with a payment method you aren&rsquo;t
           authorised to use, or to harass anyone. We may refuse, cancel or
           refund an order we reasonably believe is fraudulent or abusive, and we
           may report it to the authorities.

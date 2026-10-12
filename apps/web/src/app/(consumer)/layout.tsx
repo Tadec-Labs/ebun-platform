@@ -25,7 +25,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#0e0d0b",
+  themeColor: "#091C17",
 };
 
 export default function ConsumerLayout({ children }: LayoutProps<"/">) {

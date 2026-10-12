@@ -4,8 +4,8 @@ import { LEGAL } from "@/lib/legal";
 import { LegalPage, List, Section } from "../legal-page";
 
 export const metadata: Metadata = {
-  title: "Refund policy — Ebun",
-  description: "When Ebun refunds a gift, how long it takes, and how to ask.",
+  title: "Refund policy",
+  description: "When SendEbun refunds a gift, how long it takes, and how to ask.",
 };
 
 export default function RefundsPage() {

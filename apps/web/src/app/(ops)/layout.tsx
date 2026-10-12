@@ -4,7 +4,7 @@ import { getOpsToken } from "@/lib/ops/session";
 import { logoutAction } from "./ops/actions";
 
 export const metadata: Metadata = {
-  title: "Ebun Ops",
+  title: "SendEbun Ops",
   // Internal tool — keep it out of every index.
   robots: { index: false, follow: false },
 };
@@ -24,7 +24,7 @@ export default async function OpsLayout({ children }: LayoutProps<"/">) {
       <header className="border-b border-zinc-200 bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3">
           <div className="flex items-center gap-6">
-            <span className="font-semibold tracking-tight">Ebun Ops</span>
+            <span className="font-semibold tracking-tight">SendEbun Ops</span>
             {signedIn && (
               <nav className="flex gap-4 text-zinc-600">
                 <Link href="/ops/orders" className="hover:text-zinc-900">

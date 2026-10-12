@@ -341,7 +341,7 @@ export function Compose({
         className="fixed inset-x-0 bottom-0 border-t px-7 pt-4"
         style={{
           borderColor: "var(--border)",
-          background: "rgba(14, 13, 11, 0.95)",
+          background: "rgba(var(--sendebun-background-rgb), 0.95)",
           backdropFilter: "blur(16px)",
           paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.25rem)",
         }}
@@ -352,7 +352,7 @@ export function Compose({
             onClick={onContinue}
             disabled={!readyForPayment}
             className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
-            style={{ background: "var(--gold)", color: "var(--ink)" }}
+            style={{ background: "var(--action)", color: "var(--ink)" }}
           >
             Continue to payment
           </button>

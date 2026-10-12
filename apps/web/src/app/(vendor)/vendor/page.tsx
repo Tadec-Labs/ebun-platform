@@ -30,7 +30,7 @@ function LinkProblem({ offline }: { offline: boolean }) {
       <p className="text-lg leading-relaxed text-zinc-600">
         {offline
           ? "Check the phone's internet and reload this page."
-          : "It may have been replaced. Ask Ebun for a new link, then open it on this phone."}
+          : "It may have been replaced. Ask SendEbun for a new link, then open it on this phone."}
       </p>
     </div>
   );

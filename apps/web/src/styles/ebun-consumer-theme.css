@@ -1,3 +1,5 @@
+@import './brand/tokens.css';
+
 /*
  * Shared by every consumer-facing route (reveal, send) — NOT /ops,
  * which is an internal admin dashboard that almost certainly wants a
@@ -9,20 +11,38 @@
  * to :root instead — not before.
  */
 .ebun-consumer-theme {
-  --ink: #0e0d0b;
-  --panel: #161410;
-  --panel-raised: #1a1814;
-  --border: rgba(201, 168, 76, 0.14);
-  --border-strong: rgba(201, 168, 76, 0.32);
-  --gold: #c9a84c;
-  --gold-light: #e2c07a;
-  --gold-dim: #8a6f32;
-  --gold-glow: rgba(201, 168, 76, 0.1);
-  --cream: #f5efe0;
-  --cream-dim: rgba(245, 239, 224, 0.55);
-  --cream-faint: rgba(245, 239, 224, 0.3);
-  --focus-ring: #f2d99a;
-  --error: #f0a3a3;
+  /*
+   * SendEbun brand (forest, amber, ivory) — values come from
+   * ./brand/tokens.css, copied unchanged from the landing page's brand
+   * kit; edit colors.json there and re-copy, never these by hand.
+   *
+   * The names below are the app's own semantic roles, kept so the
+   * components didn't need rewriting — only what each role points at
+   * changed. Two roles split where the brand separates them:
+   *   --action  amber, primary buttons only, always with dark text
+   *   --gold    editorial gold: headings, icons, prices, accents
+   * Body text roles are opaque (the brand's rule 4): --cream-dim and
+   * --cream-faint used to be cream at 55% / 30% opacity, which read as
+   * disabled on the new green.
+   */
+  --ink: var(--sendebun-background);
+  --deep: var(--sendebun-deep);
+  --panel: var(--sendebun-surface);
+  --panel-raised: var(--sendebun-surfaceRaised);
+  --border: rgba(var(--sendebun-gold-rgb), 0.16);
+  --border-strong: rgba(var(--sendebun-gold-rgb), 0.36);
+  --gold: var(--sendebun-gold);
+  --gold-light: var(--sendebun-goldLight);
+  --gold-dim: var(--sendebun-goldDark);
+  --gold-glow: rgba(var(--sendebun-gold-rgb), 0.1);
+  --action: var(--sendebun-amber);
+  --action-hover: var(--sendebun-amberHover);
+  --cream: var(--sendebun-text);
+  --cream-dim: var(--sendebun-textSecondary);
+  --cream-faint: var(--sendebun-textMuted);
+  --focus-ring: var(--sendebun-goldLight);
+  --error: var(--sendebun-error);
+  --success: var(--sendebun-success);
 
   background: var(--ink);
   color: var(--cream);
@@ -68,4 +88,14 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/*
+ * Primary-button hover. Buttons set their colours inline (style=), so
+ * this matches on that value instead of a class, and needs !important
+ * to win over the inline background. Kept here so all ~13 buttons get
+ * the brand's amberHover without each one being rewritten.
+ */
+.ebun-consumer-theme [style*="var(--action)"]:hover:not(:disabled) {
+  background: var(--action-hover) !important;
 }

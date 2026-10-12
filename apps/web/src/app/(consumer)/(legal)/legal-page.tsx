@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandLogo } from "@/components/brand-logo";
 import { LEGAL } from "@/lib/legal";
 
 /**
@@ -22,13 +23,7 @@ export function LegalPage({
   return (
     <div className="mx-auto w-full max-w-[680px] px-7 pt-6 pb-16">
       <header className="flex items-center justify-between pb-10">
-        <Link
-          href="/send"
-          className="font-display text-base tracking-[0.2em]"
-          style={{ color: "var(--gold)" }}
-        >
-          EBUN
-        </Link>
+        <BrandLogo size="sm" />
         <LegalNav />
       </header>
 

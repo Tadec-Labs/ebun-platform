@@ -118,7 +118,7 @@ export function QrScanner({
             const value = hit.rawValue.trim();
             if (!CODE_SHAPE.test(value)) {
               setMessage(
-                "That QR isn't an Ebun code. Ask them to open their gift link.",
+                "That QR isn't a SendEbun code. Ask them to open their gift link.",
               );
               return;
             }

@@ -84,7 +84,7 @@ export function MediaRecorderPanel({
           disabled={status === "requesting-permission"}
           aria-label={`Record a ${noun}`}
           className="flex h-14 w-14 items-center justify-center rounded-full"
-          style={{ background: "var(--gold)", color: "var(--ink)" }}
+          style={{ background: "var(--action)", color: "var(--ink)" }}
         >
           <span className="h-4 w-4 rounded-full" style={{ background: "var(--ink)" }} />
         </button>
@@ -119,7 +119,7 @@ export function MediaRecorderPanel({
             type="button"
             onClick={stop}
             className="px-4 py-2 text-xs tracking-wide"
-            style={{ background: "var(--gold)", color: "var(--ink)" }}
+            style={{ background: "var(--action)", color: "var(--ink)" }}
           >
             Stop
           </button>

@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Send-Ebun",
+    default: "SendEbun",
     template: "%s | SendEbun",
   },
   description: "A more thoughtful way to send a gift in Nigeria.",

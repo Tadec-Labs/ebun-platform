@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
-  title: "Ebun — collect a gift",
+  title: "Collect a gift",
   // A private per-vendor tool. Nothing here belongs in an index.
   robots: { index: false, follow: false },
 };
