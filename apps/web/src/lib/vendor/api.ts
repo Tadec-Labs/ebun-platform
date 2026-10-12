@@ -37,6 +37,17 @@ export interface VendorPickup {
   confirmed: boolean;
 }
 
+/** The vendor's own details. Mirrors the API's VendorProfileView. */
+export interface VendorProfile {
+  businessName: string;
+  ownerName: string;
+  pickupAddress: string | null;
+  pickupHours: string | null;
+  bank: { bankName: string | null; accountName: string | null; accountLast4: string } | null;
+  /** What still stops recipients being sent here. Empty = ready. */
+  missing: string[];
+}
+
 export interface VendorRedemption {
   code: string;
   redemptionNumber: string;
@@ -71,9 +82,17 @@ export async function vendorFetch<T>(
       method: init.method ?? "GET",
       headers: {
         Authorization: `Bearer ${token}`,
-        ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+        // FormData sets its own multipart boundary header; anything else is JSON.
+        ...(init.body !== undefined && !(init.body instanceof FormData)
+          ? { "Content-Type": "application/json" }
+          : {}),
       },
-      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      body:
+        init.body === undefined
+          ? undefined
+          : init.body instanceof FormData
+            ? init.body
+            : JSON.stringify(init.body),
       cache: "no-store",
     });
   } catch {

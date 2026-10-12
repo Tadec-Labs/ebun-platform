@@ -29,6 +29,12 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  experimental: {
+    // Gift photos pass through a server action on their way to the API.
+    // They're shrunk on the phone to ~200 KB first; the default 1 MB cap
+    // is close enough to the API's own limit to fail confusingly.
+    serverActions: { bodySizeLimit: "2mb" },
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

@@ -1,6 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { VendorApiError, vendorFetch, type VendorIdentity, type VendorOffering } from "@/lib/vendor/api";
+import {
+  VendorApiError,
+  vendorFetch,
+  type VendorIdentity,
+  type VendorOffering,
+  type VendorProfile,
+} from "@/lib/vendor/api";
 import { ItemsManager } from "./items-manager";
 
 export const metadata: Metadata = {
@@ -18,10 +24,13 @@ export const metadata: Metadata = {
 export default async function VendorItemsPage() {
   let identity: VendorIdentity;
   let offerings: VendorOffering[];
+  let profile: VendorProfile | null;
   try {
-    [identity, offerings] = await Promise.all([
+    [identity, offerings, profile] = await Promise.all([
       vendorFetch<VendorIdentity>("/vendor/me"),
       vendorFetch<VendorOffering[]>("/vendor/offerings"),
+      // Only drives a reminder; the page works without it.
+      vendorFetch<VendorProfile>("/vendor/profile").catch(() => null),
     ]);
   } catch (error) {
     if (error instanceof VendorApiError) {
@@ -46,12 +55,22 @@ export default async function VendorItemsPage() {
       <header>
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-zinc-500">{identity.businessName}</p>
-          <Link href="/vendor" className="text-base font-medium text-zinc-900 underline underline-offset-4">
-            Collect a gift
-          </Link>
+          <nav className="flex gap-4">
+            <Link href="/vendor" className="text-base font-medium text-zinc-900 underline underline-offset-4">
+              Collect
+            </Link>
+            <Link href="/vendor/shop" className="text-base font-medium text-zinc-900 underline underline-offset-4">
+              Shop
+            </Link>
+          </nav>
         </div>
         <h1 className="mt-1 text-3xl font-semibold">Your items</h1>
       </header>
+      {profile && profile.missing.length > 0 && (
+        <Link href="/vendor/shop" className="block rounded-lg bg-amber-50 px-4 py-3 text-base text-amber-900">
+          Add your {profile.missing.join(" and ")} so SendEbun can send customers to you →
+        </Link>
+      )}
       <ItemsManager initial={offerings} />
     </div>
   );

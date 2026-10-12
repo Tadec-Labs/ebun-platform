@@ -280,6 +280,28 @@ export async function removeOfferingAction(vendorId: string, giftTemplateId: str
   return { ok: true };
 }
 
+/**
+ * Replaces a gift's photo with one uploaded from this device. The file
+ * arrives already shrunk by the browser; the API checks its real type
+ * and size, stores it in R2, and deletes the photo it replaces.
+ */
+export async function uploadGiftPhotoAction(giftId: string, form: FormData): Promise<ActionResult> {
+  const photo = form.get("photo");
+  if (!(photo instanceof Blob) || photo.size === 0) return fail(["Choose a photo."]);
+
+  const body = new FormData();
+  body.set("photo", photo, "photo");
+  try {
+    await opsFetch(`/ops/gifts/${giftId}/photo`, { method: "POST", body });
+  } catch (error) {
+    return asFailure(error);
+  }
+
+  revalidatePath(`/ops/gifts/${giftId}`);
+  revalidatePath("/ops/gifts");
+  return { ok: true, message: "Photo saved." };
+}
+
 // ---------------------------------------------------------- redemption
 
 export type LookupResult =

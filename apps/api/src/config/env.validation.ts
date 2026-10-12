@@ -74,6 +74,28 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SERVICE_FEE_MAX_KOBO?: string;
+
+  // Cloudflare R2, public bucket for gift photos — optional; all five or
+  // none (storage/r2.config.ts fails the boot on a partial set).
+  @IsOptional()
+  @IsString()
+  R2_ACCOUNT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  R2_ACCESS_KEY_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  R2_SECRET_ACCESS_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  R2_PUBLIC_BUCKET?: string;
+
+  @IsOptional()
+  @IsString()
+  R2_PUBLIC_BASE_URL?: string;
 }
 
 export function validateEnv(

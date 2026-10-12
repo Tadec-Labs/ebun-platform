@@ -1,3 +1,5 @@
+import { PublicPhotosService } from '../storage/public-photos.service';
+import type { UploadedPhoto } from '../storage/public-photos.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { FulfillmentType } from '@ebun/types';
 import { AuditService } from '../audit/audit.service';
@@ -101,6 +103,7 @@ export class OpsGiftsService {
   constructor(
     private readonly repository: GiftTemplatesRepository,
     private readonly audit: AuditService,
+    private readonly photos: PublicPhotosService,
   ) {}
 
   async list(): Promise<GiftTemplateView[]> {
@@ -190,6 +193,46 @@ export class OpsGiftsService {
           ? { basePriceFrom: existing.base_price, basePriceTo: row.base_price }
           : {}),
       },
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+    });
+
+    return toView(row);
+  }
+
+  /**
+   * Replaces a gift's photo with an uploaded one. The old photo is
+   * deleted only after the new one is saved and the row points at it —
+   * a failure in between leaves the gift with a working picture.
+   */
+  async uploadPhoto(
+    id: string,
+    photo: UploadedPhoto,
+    staff: StaffContext,
+    meta: RequestMeta,
+  ): Promise<GiftTemplateView> {
+    const existing = await this.repository.findById(id);
+    if (!existing) {
+      throw new NotFoundException('Gift not found.');
+    }
+
+    const imageUrl = await this.photos.upload(photo, 'gifts');
+    const row = await this.repository.update(id, { image_url: imageUrl });
+    if (!row) {
+      await this.photos.deleteIfOurs(imageUrl);
+      throw new NotFoundException('Gift not found.');
+    }
+    await this.photos.deleteIfOurs(existing.image_url);
+
+    await this.audit.record({
+      eventType: 'GIFT_TEMPLATE_UPDATED',
+      actorId: staff.userId,
+      actorType: 'admin',
+      resourceType: 'gift_template',
+      resourceId: row.id,
+      previousState: existing.available ? 'available' : 'withheld',
+      newState: row.available ? 'available' : 'withheld',
+      metadata: { changedFields: ['image_url'], via: 'photo_upload' },
       ipAddress: meta.ipAddress,
       userAgent: meta.userAgent,
     });

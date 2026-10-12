@@ -147,6 +147,8 @@ function counterLinkMessage(ownerName: string, businessName: string, link: strin
     link,
     "",
     "Open it once on the phone you'll use at the counter, then bookmark it.",
+    "First time: tap Shop to add your address, opening hours and bank details, then Items to add what you sell, with a photo of each.",
+    "When a customer books a pickup, it shows under Coming in — tap Got it so they know it'll be ready.",
     "When a customer shows a SendEbun gift: tap Scan their QR (or type their code), check the gift, then tap Hand it over.",
     "",
     "Please keep this link to yourselves — it confirms collections for your shop.",

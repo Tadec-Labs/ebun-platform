@@ -138,10 +138,12 @@ export class GiftsService {
     description: string | null;
     inStorePrice: number;
     category: GiftTemplateRow['category'];
+    imageUrl?: string | null;
   }): Promise<GiftTemplateRow> {
     return this.repository.create({
       name: input.name,
       description: input.description,
+      image_url: input.imageUrl ?? null,
       base_price: input.inStorePrice,
       category: input.category,
       delivery_type: FulfillmentType.DigitalVoucher,
@@ -149,6 +151,17 @@ export class GiftsService {
       available: false,
       featured: false,
     });
+  }
+
+  /**
+   * Sets a gift's photo — used when a vendor adds one to an item still
+   * waiting for approval. Ops replace photos through OpsGiftsService.
+   * Returns the previous URL so the caller can delete the old file.
+   */
+  async setImageUrl(id: string, imageUrl: string): Promise<string | null> {
+    const existing = await this.findById(id);
+    await this.repository.update(id, { image_url: imageUrl });
+    return existing.image_url;
   }
 
   /**

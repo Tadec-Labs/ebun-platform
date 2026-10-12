@@ -1,3 +1,4 @@
+import { PublicPhotosService } from '../storage/public-photos.service';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -38,6 +39,7 @@ describe('OpsGiftsService', () => {
   let sut: OpsGiftsService;
   let repository: Record<string, jest.Mock>;
   let audit: { record: jest.Mock };
+  let photos: { upload: jest.Mock; deleteIfOurs: jest.Mock };
 
   beforeEach(async () => {
     repository = {
@@ -51,16 +53,48 @@ describe('OpsGiftsService', () => {
       update: jest.fn().mockResolvedValue(row()),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    photos = {
+      upload: jest
+        .fn()
+        .mockResolvedValue('https://pub-abc.r2.dev/gifts/new.jpg'),
+      deleteIfOurs: jest.fn().mockResolvedValue(undefined),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         OpsGiftsService,
         { provide: GiftTemplatesRepository, useValue: repository },
         { provide: AuditService, useValue: audit },
+        { provide: PublicPhotosService, useValue: photos },
       ],
     }).compile();
 
     sut = moduleRef.get(OpsGiftsService);
+  });
+
+  it('replaces a photo: saves the new one, points the gift at it, then deletes the old one', async () => {
+    repository.findById.mockResolvedValue(
+      row({ image_url: 'https://pub-abc.r2.dev/gifts/old.jpg' }),
+    );
+    repository.update.mockResolvedValue(
+      row({ image_url: 'https://pub-abc.r2.dev/gifts/new.jpg' }),
+    );
+    const staff = { userId: 'staff-1', role: 'ebun_ops' } as never;
+
+    const result = await sut.uploadPhoto(
+      'tmpl-1',
+      { buffer: Buffer.from([0xff, 0xd8, 0xff]), size: 3 },
+      staff,
+      { ipAddress: null, userAgent: null },
+    );
+
+    expect(repository.update).toHaveBeenCalledWith('tmpl-1', {
+      image_url: 'https://pub-abc.r2.dev/gifts/new.jpg',
+    });
+    expect(photos.deleteIfOurs).toHaveBeenCalledWith(
+      'https://pub-abc.r2.dev/gifts/old.jpg',
+    );
+    expect(result.imageUrl).toBe('https://pub-abc.r2.dev/gifts/new.jpg');
   });
 
   it('lists withheld gifts too — ops needs to see what it is hiding', async () => {

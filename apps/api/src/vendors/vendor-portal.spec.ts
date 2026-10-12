@@ -6,6 +6,7 @@ import { RedemptionStatus } from '@ebun/types';
 import { AuditService } from '../audit/audit.service';
 import { GiftsService } from '../gifts/gifts.service';
 import { OrdersService } from '../orders/orders.service';
+import { PublicPhotosService } from '../storage/public-photos.service';
 import { RedemptionsService } from '../redemptions/redemptions.service';
 import { VendorPortalController } from './vendor-portal.controller';
 import { VendorPortalGuard } from './vendor-portal.guard';
@@ -27,8 +28,9 @@ describe('vendor portal over HTTP', () => {
   let redemptions: Record<string, jest.Mock>;
   let vendors: Record<string, jest.Mock>;
   let audit: { record: jest.Mock };
-  let gifts: { createRequestedByVendor: jest.Mock };
+  let gifts: { createRequestedByVendor: jest.Mock; setImageUrl: jest.Mock };
   let orders: { findUpcomingPickups: jest.Mock; confirmPickup: jest.Mock };
+  let photos: { upload: jest.Mock; deleteIfOurs: jest.Mock };
 
   const asVendor = (over: Record<string, unknown> = {}) => {
     vendors.findByPortalToken.mockResolvedValue({
@@ -66,13 +68,21 @@ describe('vendor portal over HTTP', () => {
         commission_rate: 0.9,
       }),
       upsertOffering: jest.fn().mockResolvedValue({}),
+      update: jest.fn(),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    photos = {
+      upload: jest
+        .fn()
+        .mockResolvedValue('https://pub-abc.r2.dev/gifts/photo.webp'),
+      deleteIfOurs: jest.fn().mockResolvedValue(undefined),
+    };
     orders = {
       findUpcomingPickups: jest.fn().mockResolvedValue([]),
       confirmPickup: jest.fn().mockResolvedValue(null),
     };
     gifts = {
+      setImageUrl: jest.fn().mockResolvedValue(null),
       createRequestedByVendor: jest.fn().mockResolvedValue({
         id: GIFT_ID,
         name: 'Jollof & Chicken',
@@ -89,6 +99,7 @@ describe('vendor portal over HTTP', () => {
         VendorPortalService,
         { provide: GiftsService, useValue: gifts },
         { provide: OrdersService, useValue: orders },
+        { provide: PublicPhotosService, useValue: photos },
         { provide: RedemptionsService, useValue: redemptions },
         { provide: VendorsRepository, useValue: vendors },
         { provide: AuditService, useValue: audit },
@@ -541,6 +552,7 @@ describe('vendor portal over HTTP', () => {
         description: 'Party jollof, one drumstick',
         inStorePrice: 450000,
         category: 'food',
+        imageUrl: null,
       });
       expect(vendors.upsertOffering).toHaveBeenCalledWith({
         vendor_id: 'vendor-1',
@@ -670,6 +682,225 @@ describe('vendor portal over HTTP', () => {
         .set(auth)
         .expect(404);
       expect(audit.record).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('photos and profile', () => {
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+
+    it('takes a photo with a new item as one multipart request', async () => {
+      asVendor();
+
+      await request(app.getHttpServer())
+        .post('/vendor/offerings')
+        .set(auth)
+        .field('name', 'Jollof & Chicken')
+        .field('inStorePrice', '450000')
+        .attach('photo', JPEG, { filename: 'p.jpg', contentType: 'image/jpeg' })
+        .expect(201);
+
+      expect(photos.upload).toHaveBeenCalledWith(
+        expect.objectContaining({ size: JPEG.length }),
+        'gifts',
+      );
+      expect(gifts.createRequestedByVendor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inStorePrice: 450000,
+          imageUrl: 'https://pub-abc.r2.dev/gifts/photo.webp',
+        }),
+      );
+    });
+
+    it("deletes the uploaded photo if the item can't be created", async () => {
+      asVendor();
+      gifts.createRequestedByVendor.mockRejectedValue(new Error('db down'));
+
+      await request(app.getHttpServer())
+        .post('/vendor/offerings')
+        .set(auth)
+        .field('name', 'Jollof')
+        .field('inStorePrice', '450000')
+        .attach('photo', JPEG, { filename: 'p.jpg', contentType: 'image/jpeg' })
+        .expect(500);
+
+      expect(photos.deleteIfOurs).toHaveBeenCalledWith(
+        'https://pub-abc.r2.dev/gifts/photo.webp',
+      );
+    });
+
+    it('rejects an oversized upload before it reaches the service', async () => {
+      asVendor();
+      await request(app.getHttpServer())
+        .post(`/vendor/offerings/${GIFT_ID}/photo`)
+        .set(auth)
+        .attach('photo', Buffer.alloc(1_000_001, 1), {
+          filename: 'big.jpg',
+          contentType: 'image/jpeg',
+        })
+        .expect(413);
+      expect(photos.upload).not.toHaveBeenCalled();
+    });
+
+    it('adds a photo to an item waiting for approval, replacing the old file', async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([
+        {
+          gift_template_id: GIFT_ID,
+          vendor_price: 405000,
+          available: true,
+          approved: false,
+          gift_templates: {
+            name: 'Jollof',
+            base_price: 450000,
+            image_url: null,
+            available: false,
+          },
+        },
+      ]);
+      gifts.setImageUrl.mockResolvedValue(
+        'https://pub-abc.r2.dev/gifts/old.jpg',
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/vendor/offerings/${GIFT_ID}/photo`)
+        .set(auth)
+        .attach('photo', JPEG, { filename: 'p.jpg', contentType: 'image/jpeg' })
+        .expect(201);
+
+      expect(gifts.setImageUrl).toHaveBeenCalledWith(
+        GIFT_ID,
+        'https://pub-abc.r2.dev/gifts/photo.webp',
+      );
+      expect(photos.deleteIfOurs).toHaveBeenCalledWith(
+        'https://pub-abc.r2.dev/gifts/old.jpg',
+      );
+      expect(response.body).toMatchObject({
+        imageUrl: 'https://pub-abc.r2.dev/gifts/photo.webp',
+      });
+    });
+
+    it("won't let a vendor swap the photo of a live item senders have already seen", async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([
+        {
+          gift_template_id: GIFT_ID,
+          vendor_price: 405000,
+          available: true,
+          approved: true,
+          gift_templates: {
+            name: 'Jollof',
+            base_price: 450000,
+            image_url: 'https://pub-abc.r2.dev/gifts/live.jpg',
+            available: true,
+          },
+        },
+      ]);
+
+      await request(app.getHttpServer())
+        .post(`/vendor/offerings/${GIFT_ID}/photo`)
+        .set(auth)
+        .attach('photo', JPEG, { filename: 'p.jpg', contentType: 'image/jpeg' })
+        .expect(400);
+      expect(photos.upload).not.toHaveBeenCalled();
+    });
+
+    const vendorRow = (over: Record<string, unknown> = {}) => ({
+      id: 'vendor-1',
+      business_name: 'Mama Cass Kitchen',
+      owner_name: 'Cass',
+      category: 'food',
+      commission_rate: 0.9,
+      pickup_address: null,
+      pickup_hours: null,
+      bank_name: null,
+      account_number: null,
+      account_name: null,
+      ...over,
+    });
+
+    it('shows the profile with bank details masked, and what is still missing', async () => {
+      asVendor();
+      vendors.findById.mockResolvedValue(
+        vendorRow({
+          bank_name: 'GTBank',
+          account_number: '0123456789',
+          account_name: 'Mama Cass Kitchen',
+        }),
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/vendor/profile')
+        .set(auth)
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        bank: {
+          bankName: 'GTBank',
+          accountName: 'Mama Cass Kitchen',
+          accountLast4: '6789',
+        },
+      });
+      expect(JSON.stringify(response.body)).not.toContain('0123456789');
+      expect(response.body).toMatchObject({ missing: ['pickup address'] });
+    });
+
+    it('accepts bank details once, together, and never puts them in the audit log', async () => {
+      asVendor();
+      vendors.findById.mockResolvedValue(vendorRow());
+      vendors.update.mockImplementation(
+        (_id: string, values: Record<string, unknown>) =>
+          Promise.resolve(vendorRow(values)),
+      );
+
+      await request(app.getHttpServer())
+        .patch('/vendor/profile')
+        .set(auth)
+        .send({
+          pickupAddress: '12 Oba Adesida Rd, Akure',
+          bankName: 'GTBank',
+          accountNumber: '0123456789',
+          accountName: 'Mama Cass Kitchen',
+        })
+        .expect(200);
+
+      expect(vendors.update).toHaveBeenCalledWith(
+        'vendor-1',
+        expect.objectContaining({ account_number: '0123456789' }),
+      );
+      expect(JSON.stringify(audit.record.mock.calls)).not.toContain(
+        '0123456789',
+      );
+    });
+
+    it('refuses to change bank details from the counter link once they are set', async () => {
+      asVendor();
+      vendors.findById.mockResolvedValue(
+        vendorRow({ account_number: '0123456789' }),
+      );
+
+      await request(app.getHttpServer())
+        .patch('/vendor/profile')
+        .set(auth)
+        .send({
+          bankName: 'Other Bank',
+          accountNumber: '9999999999',
+          accountName: 'Someone Else',
+        })
+        .expect(400);
+      expect(vendors.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses half a set of bank details', async () => {
+      asVendor();
+      vendors.findById.mockResolvedValue(vendorRow());
+
+      await request(app.getHttpServer())
+        .patch('/vendor/profile')
+        .set(auth)
+        .send({ accountNumber: '0123456789' })
+        .expect(400);
+      expect(vendors.update).not.toHaveBeenCalled();
     });
   });
 });

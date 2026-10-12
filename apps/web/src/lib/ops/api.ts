@@ -35,9 +35,17 @@ export async function opsFetch<T>(
       method: init.method ?? "GET",
       headers: {
         Authorization: `Bearer ${token}`,
-        ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+        // FormData sets its own multipart boundary header; anything else is JSON.
+        ...(init.body !== undefined && !(init.body instanceof FormData)
+          ? { "Content-Type": "application/json" }
+          : {}),
       },
-      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      body:
+        init.body === undefined
+          ? undefined
+          : init.body instanceof FormData
+            ? init.body
+            : JSON.stringify(init.body),
       cache: "no-store",
     });
   } catch {

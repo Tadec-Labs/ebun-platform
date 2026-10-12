@@ -7,6 +7,7 @@ import {
   vendorFetch,
   type VendorOffering,
   type VendorPickup,
+  type VendorProfile,
   type VendorRedemption,
 } from "@/lib/vendor/api";
 
@@ -94,32 +95,94 @@ export async function setItemAvailabilityAction(
   }
 }
 
-/** Ask SendEbun to sell something new. It waits for a check before going on sale. */
-export async function requestItemAction(input: {
-  name: string;
-  description: string;
-  priceNaira: string;
-}): Promise<VendorItemResult> {
-  const name = input.name.trim();
+/**
+ * Ask SendEbun to sell something new, optionally with a photo. The
+ * photo was already shrunk on the phone; it is forwarded to the API as
+ * a file, where its real type and size are checked before it is stored.
+ */
+export async function requestItemAction(form: FormData): Promise<VendorItemResult> {
+  const name = String(form.get("name") ?? "").trim();
   if (name.length < 2) {
     return { ok: false, message: "Give the item a name." };
   }
-  const inStorePrice = parseNairaToKobo(input.priceNaira);
+  const inStorePrice = parseNairaToKobo(String(form.get("priceNaira") ?? ""));
   if (inStorePrice === null || inStorePrice < 1) {
     return { ok: false, message: "Enter the price you charge in your shop, in naira." };
   }
 
+  const body = new FormData();
+  body.set("name", name);
+  const description = String(form.get("description") ?? "").trim();
+  if (description) body.set("description", description);
+  body.set("inStorePrice", String(inStorePrice));
+  const photo = form.get("photo");
+  if (photo instanceof Blob && photo.size > 0) body.set("photo", photo, "photo");
+
   try {
     const offering = await vendorFetch<VendorOffering>("/vendor/offerings", {
       method: "POST",
-      body: {
-        name,
-        description: input.description.trim() || undefined,
-        inStorePrice,
-      },
+      body,
     });
     revalidatePath("/vendor/gifts");
     return { ok: true, offering };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+/** A photo for an item still waiting for approval, or one without a photo yet. */
+export async function addItemPhotoAction(
+  giftTemplateId: string,
+  form: FormData,
+): Promise<VendorItemResult> {
+  const photo = form.get("photo");
+  if (!(photo instanceof Blob) || photo.size === 0) {
+    return { ok: false, message: "Choose a photo." };
+  }
+  const body = new FormData();
+  body.set("photo", photo, "photo");
+  try {
+    const offering = await vendorFetch<VendorOffering>(
+      `/vendor/offerings/${encodeURIComponent(giftTemplateId)}/photo`,
+      { method: "POST", body },
+    );
+    revalidatePath("/vendor/gifts");
+    return { ok: true, offering };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+export type VendorProfileInput = {
+  ownerName: string;
+  pickupAddress: string;
+  pickupHours: string;
+  bankName?: string;
+  accountNumber?: string;
+  accountName?: string;
+};
+
+/** The vendor's own details. Bank details are only sent when they're being set for the first time. */
+export async function saveProfileAction(
+  input: VendorProfileInput,
+): Promise<{ ok: true; profile: VendorProfile } | { ok: false; message: string }> {
+  const body: Record<string, string> = {
+    ownerName: input.ownerName.trim(),
+    pickupAddress: input.pickupAddress.trim(),
+    pickupHours: input.pickupHours.trim(),
+  };
+  if (input.accountNumber !== undefined) {
+    body.bankName = (input.bankName ?? "").trim();
+    body.accountNumber = input.accountNumber.replace(/\s/g, "");
+    body.accountName = (input.accountName ?? "").trim();
+  }
+  try {
+    const profile = await vendorFetch<VendorProfile>("/vendor/profile", {
+      method: "PATCH",
+      body,
+    });
+    revalidatePath("/vendor/shop");
+    return { ok: true, profile };
   } catch (error) {
     return { ok: false, message: messageOf(error) };
   }

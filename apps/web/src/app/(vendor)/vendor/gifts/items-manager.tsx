@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { formatNaira } from "@/lib/format-money";
 import type { VendorOffering } from "@/lib/vendor/api";
-import { requestItemAction, setItemAvailabilityAction } from "../actions";
+import { shrinkPhoto } from "@/lib/images/shrink-photo";
+import { addItemPhotoAction, requestItemAction, setItemAvailabilityAction } from "../actions";
 
 const STATUS_NOTE: Record<VendorOffering["status"], string> = {
   live: "",
@@ -39,6 +40,27 @@ export function ItemsManager({ initial }: { initial: VendorOffering[] }) {
     });
   }
 
+  function addPhoto(item: VendorOffering, file: File) {
+    setError(null);
+    startTransition(async () => {
+      let photo: Blob;
+      try {
+        photo = await shrinkPhoto(file);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't read that photo.");
+        return;
+      }
+      const form = new FormData();
+      form.set("photo", photo, "photo");
+      const result = await addItemPhotoAction(item.giftTemplateId, form);
+      if (result.ok) {
+        setItems((all) => all.map((i) => (i.giftTemplateId === item.giftTemplateId ? result.offering : i)));
+      } else {
+        setError(result.message);
+      }
+    });
+  }
+
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3">
@@ -62,13 +84,25 @@ export function ItemsManager({ initial }: { initial: VendorOffering[] }) {
             {items.map((item) => (
               <li key={item.giftTemplateId} className="rounded-lg border-2 border-zinc-200 p-4">
                 <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
+                  {item.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- public R2 photos; next/image would need the bucket host in config
+                    <img src={item.imageUrl} alt="" className="h-16 w-16 shrink-0 rounded-md object-cover" />
+                  ) : null}
+                  <div className="min-w-0 flex-1">
                     <p className="text-lg font-semibold">{item.name}</p>
                     <p className="mt-1 text-base text-zinc-600">
                       {formatNaira(item.inStorePrice)} · you receive {formatNaira(item.youReceive)}
                     </p>
                     {item.status !== "live" && (
                       <p className="mt-1 text-sm font-medium text-amber-800">{STATUS_NOTE[item.status]}</p>
+                    )}
+                    {/* The API decides finally; this only hides a button that would be refused. */}
+                    {(item.status === "awaiting_approval" || !item.imageUrl) && (
+                      <PhotoButton
+                        hasPhoto={Boolean(item.imageUrl)}
+                        onPick={(file) => addPhoto(item, file)}
+                        disabled={pending}
+                      />
                     )}
                   </div>
                   <button
@@ -101,10 +135,38 @@ export function ItemsManager({ initial }: { initial: VendorOffering[] }) {
   );
 }
 
+function PhotoButton({
+  hasPhoto,
+  onPick,
+  disabled,
+}: {
+  hasPhoto: boolean;
+  onPick: (file: File) => void;
+  disabled: boolean;
+}) {
+  return (
+    <label className={`mt-2 inline-block text-base font-medium text-zinc-900 underline underline-offset-4 ${disabled ? "opacity-50" : ""}`}>
+      {hasPhoto ? "Change photo" : "Add photo"}
+      <input
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        disabled={disabled}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) onPick(file);
+        }}
+      />
+    </label>
+  );
+}
+
 function RequestItemForm({ onAdded }: { onAdded: (offering: VendorOffering) => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [priceNaira, setPriceNaira] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -115,12 +177,25 @@ function RequestItemForm({ onAdded }: { onAdded: (offering: VendorOffering) => v
         event.preventDefault();
         setMessage(null);
         startTransition(async () => {
-          const result = await requestItemAction({ name, description, priceNaira });
+          const form = new FormData();
+          form.set("name", name);
+          form.set("description", description);
+          form.set("priceNaira", priceNaira);
+          if (photo) {
+            try {
+              form.set("photo", await shrinkPhoto(photo), "photo");
+            } catch (e) {
+              setMessage({ ok: false, text: e instanceof Error ? e.message : "Couldn't read that photo." });
+              return;
+            }
+          }
+          const result = await requestItemAction(form);
           if (result.ok) {
             onAdded(result.offering);
             setName("");
             setDescription("");
             setPriceNaira("");
+            setPhoto(null);
             setMessage({
               ok: true,
               text: "Sent. SendEbun will check it and put it on sale — you'll see it marked here.",
@@ -165,6 +240,18 @@ function RequestItemForm({ onAdded }: { onAdded: (offering: VendorOffering) => v
         />
         <span className="text-sm text-zinc-500">
           The same price you charge at the counter. Senders pay this; SendEbun&rsquo;s fee is charged to them separately.
+        </span>
+      </label>
+      <label className="flex flex-col gap-2">
+        <span className="text-base">Photo</span>
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+          className="w-full rounded-lg border-2 border-dashed border-zinc-300 bg-white px-4 py-4 text-base"
+        />
+        <span className="text-sm text-zinc-500">
+          The real item, in your packaging, in daylight. Senders choose with their eyes.
         </span>
       </label>
       {message && (

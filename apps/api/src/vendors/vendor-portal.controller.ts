@@ -8,9 +8,13 @@ import {
   Patch,
   Post,
   Req,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { MAX_PHOTO_BYTES } from '../storage/public-photos.service';
+import type { UploadedPhoto } from '../storage/public-photos.service';
 import { Throttle } from '@nestjs/throttler';
 import { AuditService } from '../audit/audit.service';
 import { NoStoreInterceptor } from '../common/no-store.interceptor';
@@ -23,6 +27,7 @@ import { VendorsRepository } from './vendors.repository';
 import {
   RequestVendorItemDto,
   SetOfferingAvailabilityDto,
+  UpdateVendorProfileDto,
 } from './dto/vendor.dto';
 import { VendorPortalService } from './vendor-portal.service';
 
@@ -38,6 +43,11 @@ import { VendorPortalService } from './vendor-portal.service';
  * handful of collections an hour, and this is the one authenticated
  * surface whose credential lives on a phone that gets handed around.
  */
+/** One photo, size-capped by multer before any of it reaches a handler. */
+const PHOTO_UPLOAD = FileInterceptor('photo', {
+  limits: { fileSize: MAX_PHOTO_BYTES, files: 1 },
+});
+
 @Controller('vendor')
 @UseGuards(VendorPortalGuard)
 @UseInterceptors(NoStoreInterceptor)
@@ -144,14 +154,60 @@ export class VendorPortalController {
     );
   }
 
-  /** Ask to sell something new. Created off sale; ops checks and approves it. */
+  /**
+   * Ask to sell something new. Created off sale; ops checks and approves
+   * it. JSON, or multipart with an optional `photo` file.
+   */
   @Post('offerings')
   @Throttle({ default: { limit: 10, ttl: 60 * 60_000 } })
+  @UseInterceptors(PHOTO_UPLOAD)
   requestItem(
     @Body() body: RequestVendorItemDto,
+    @UploadedFile() photo: UploadedPhoto | undefined,
     @Req() request: VendorRequest,
   ) {
-    return this.portal.requestItem(vendorOf(request), body, metaOf(request));
+    return this.portal.requestItem(
+      vendorOf(request),
+      body,
+      metaOf(request),
+      photo,
+    );
+  }
+
+  /** A photo for an item still waiting for approval, or one that has none. */
+  @Post('offerings/:giftTemplateId/photo')
+  @Throttle({ default: { limit: 20, ttl: 60 * 60_000 } })
+  @UseInterceptors(PHOTO_UPLOAD)
+  addPhoto(
+    @Param('giftTemplateId', ParseUUIDPipe) giftTemplateId: string,
+    @UploadedFile() photo: UploadedPhoto | undefined,
+    @Req() request: VendorRequest,
+  ) {
+    if (!photo) {
+      throw new BadRequestException('Choose a photo to upload.');
+    }
+    return this.portal.addPhoto(
+      vendorOf(request),
+      giftTemplateId,
+      photo,
+      metaOf(request),
+    );
+  }
+
+  /** The vendor's own details. Bank details come back masked. */
+  @Get('profile')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  profile(@Req() request: VendorRequest) {
+    return this.portal.getProfile(vendorOf(request).vendorId);
+  }
+
+  @Patch('profile')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  updateProfile(
+    @Body() body: UpdateVendorProfileDto,
+    @Req() request: VendorRequest,
+  ) {
+    return this.portal.updateProfile(vendorOf(request), body, metaOf(request));
   }
 
   /** Recipients who booked a time to collect here — so it's ready when they arrive. */

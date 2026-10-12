@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { StorageModule } from '../storage/storage.module';
 import { GiftTemplatesRepository } from './gift-templates.repository';
 import { GiftsController } from './gifts.controller';
 import { GiftsService } from './gifts.service';
@@ -9,7 +10,7 @@ import { OpsGiftsController } from './ops-gifts.controller';
 import { OpsGiftsService } from './ops-gifts.service';
 
 @Module({
-  imports: [AuthModule, AuditModule, PricingModule],
+  imports: [AuthModule, AuditModule, PricingModule, StorageModule],
   controllers: [GiftsController, OpsGiftsController],
   providers: [GiftTemplatesRepository, GiftsService, OpsGiftsService],
   exports: [GiftsService],

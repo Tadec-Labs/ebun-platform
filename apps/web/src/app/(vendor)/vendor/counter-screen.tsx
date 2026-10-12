@@ -79,9 +79,14 @@ export function CounterScreen({
       <header>
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-zinc-500">{businessName}</p>
-          <Link href="/vendor/gifts" className="text-base font-medium text-zinc-900 underline underline-offset-4">
-            Your items
-          </Link>
+          <nav className="flex gap-4">
+            <Link href="/vendor/gifts" className="text-base font-medium text-zinc-900 underline underline-offset-4">
+              Items
+            </Link>
+            <Link href="/vendor/shop" className="text-base font-medium text-zinc-900 underline underline-offset-4">
+              Shop
+            </Link>
+          </nav>
         </div>
         <h1 className="mt-1 text-3xl font-semibold">Collect a gift</h1>
       </header>

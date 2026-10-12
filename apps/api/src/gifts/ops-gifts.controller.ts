@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -8,9 +9,13 @@ import {
   Patch,
   Post,
   Req,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { MAX_PHOTO_BYTES } from '../storage/public-photos.service';
+import type { UploadedPhoto } from '../storage/public-photos.service';
 import { StaffGuard } from '../auth/staff.guard';
 import type { StaffContext, StaffRequest } from '../auth/staff.guard';
 import { StaffRoles } from '../auth/staff-roles.decorator';
@@ -62,6 +67,33 @@ export class OpsGiftsController {
   ) {
     return this.gifts.update(id, dto, staffOf(request), metaOf(request));
   }
+
+  /** Multipart, field `photo`. Stored in R2; replaces (and deletes) the old one. */
+  @Post(':id/photo')
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      limits: { fileSize: MAX_PHOTO_BYTES, files: 1 },
+    }),
+  )
+  uploadPhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() photo: UploadedPhoto | undefined,
+    @Req() request: StaffRequest,
+  ) {
+    return this.gifts.uploadPhoto(
+      id,
+      requirePhoto(photo),
+      staffOf(request),
+      metaOf(request),
+    );
+  }
+}
+
+function requirePhoto(photo: UploadedPhoto | undefined): UploadedPhoto {
+  if (!photo) {
+    throw new BadRequestException('Choose a photo to upload.');
+  }
+  return photo;
 }
 
 function staffOf(request: StaffRequest): StaffContext {

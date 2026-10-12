@@ -59,6 +59,17 @@ orders sit next to real ones, and anything run locally acts on real customers' o
    | `SERVICE_FEE_MIN_KOBO` | `20000` | Floor (₦200) |
    | `SERVICE_FEE_MAX_KOBO` | `150000` | Ceiling (₦1,500) |
 
+   Optional — gift photo uploads (Cloudflare R2). All five or none; until they're set,
+   uploads answer "not switched on yet":
+
+   | Name | Value |
+   | --- | --- |
+   | `R2_ACCOUNT_ID` | From the bucket's S3 API address (`<this>.r2.cloudflarestorage.com`) |
+   | `R2_ACCESS_KEY_ID` | R2 API token, Object Read & Write, this bucket only |
+   | `R2_SECRET_ACCESS_KEY` | Same token (shown once) |
+   | `R2_PUBLIC_BUCKET` | `sendebun-public` |
+   | `R2_PUBLIC_BASE_URL` | The bucket's public address, e.g. `https://pub-….r2.dev` |
+
    Don't set `PORT` (Railway does). Don't set `TRUST_PROXY_HOPS` (Railway is detected).
    Leave the `TERMII_*` variables unset until WhatsApp automation is live.
 4. **Networking → Custom domain:** `api.ebun.com.ng`, then add the CNAME record Railway shows

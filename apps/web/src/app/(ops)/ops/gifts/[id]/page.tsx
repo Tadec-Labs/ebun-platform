@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
 import type { GiftTemplate } from "@/lib/ops/types";
 import { GiftForm } from "../gift-form";
+import { GiftPhotoUpload } from "./gift-photo-upload";
 
 export default async function GiftDetailPage({
   params,
@@ -39,6 +40,7 @@ export default async function GiftDetailPage({
         </p>
       )}
 
+      <GiftPhotoUpload giftId={gift.id} imageUrl={gift.imageUrl} />
       <GiftForm gift={gift} />
     </>
   );

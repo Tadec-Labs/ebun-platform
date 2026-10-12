@@ -35,6 +35,15 @@ export type VendorCategory = (typeof VENDOR_CATEGORIES)[number];
 const trim = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 
+/**
+ * Multipart form fields arrive as text. "450000" -> 450000; anything that
+ * isn't a plain integer string is passed through for @IsInt to reject.
+ */
+const numericText = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' && /^\d+$/.test(value.trim())
+    ? Number(value.trim())
+    : value;
+
 /** '' -> undefined, so an untouched optional form field means "not provided" rather than failing format validation. */
 const blankToUndefined = ({ value }: { value: unknown }): unknown => {
   if (typeof value !== 'string') return value;
@@ -366,9 +375,57 @@ export class RequestVendorItemDto {
   @MaxLength(300)
   description?: string;
 
-  /** KOBO. ₦100 – ₦500,000: outside that is a typo, not a gift. */
+  /** KOBO. ₦100 – ₦500,000: outside that is a typo, not a gift. Arrives as text in a multipart form, hence the conversion. */
+  @Transform(numericText)
   @IsInt()
   @Min(10_000)
   @Max(50_000_000)
   inStorePrice!: number;
+}
+
+/**
+ * A vendor completing their own profile from their counter link.
+ *
+ * Bank details are accepted only ONCE — when none are on file. After
+ * that, changing where SendEbun sends a vendor's money goes through
+ * SendEbun: a counter phone gets handed around, and "change the payout
+ * account" is exactly what someone holding a lost one would try.
+ */
+export class UpdateVendorProfileDto {
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  ownerName?: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  pickupAddress?: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  pickupHours?: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bankName?: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @Matches(NUBAN_PATTERN, {
+    message: 'Account number must be 10 digits',
+  })
+  accountNumber?: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  accountName?: string;
 }
