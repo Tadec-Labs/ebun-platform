@@ -35,6 +35,8 @@ export interface VendorSummaryView {
   verified: boolean;
   totalOrders: number;
   offeringsCount: number;
+  /** Items this vendor asked to sell from their counter link, waiting on ops. */
+  awaitingApprovalCount: number;
   createdAt: string;
 }
 
@@ -137,6 +139,7 @@ function sameValue(a: unknown, b: unknown): boolean {
 function toSummaryView(
   row: VendorSummaryRow,
   offeringsCount: number,
+  awaitingApprovalCount: number,
 ): VendorSummaryView {
   return {
     id: row.id,
@@ -150,6 +153,7 @@ function toSummaryView(
     verified: row.verified,
     totalOrders: row.total_orders,
     offeringsCount,
+    awaitingApprovalCount,
     createdAt: row.created_at,
   };
 }
@@ -223,11 +227,14 @@ export class VendorsService {
   ) {}
 
   async list(): Promise<VendorSummaryView[]> {
-    const [vendors, counts] = await Promise.all([
+    const [vendors, counts, awaiting] = await Promise.all([
       this.repository.list(),
       this.repository.countOfferingsByVendor(),
+      this.repository.countAwaitingApprovalByVendor(),
     ]);
-    return vendors.map((v) => toSummaryView(v, counts[v.id] ?? 0));
+    return vendors.map((v) =>
+      toSummaryView(v, counts[v.id] ?? 0, awaiting[v.id] ?? 0),
+    );
   }
 
   async get(id: string): Promise<VendorView> {

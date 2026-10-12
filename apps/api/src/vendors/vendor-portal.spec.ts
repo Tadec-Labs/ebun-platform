@@ -4,9 +4,11 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { RedemptionStatus } from '@ebun/types';
 import { AuditService } from '../audit/audit.service';
+import { GiftsService } from '../gifts/gifts.service';
 import { RedemptionsService } from '../redemptions/redemptions.service';
 import { VendorPortalController } from './vendor-portal.controller';
 import { VendorPortalGuard } from './vendor-portal.guard';
+import { VendorPortalService } from './vendor-portal.service';
 import { VendorsRepository } from './vendors.repository';
 
 const TOKEN = '11111111-1111-4111-8111-111111111111';
@@ -24,6 +26,7 @@ describe('vendor portal over HTTP', () => {
   let redemptions: Record<string, jest.Mock>;
   let vendors: Record<string, jest.Mock>;
   let audit: { record: jest.Mock };
+  let gifts: { createRequestedByVendor: jest.Mock };
 
   const asVendor = (over: Record<string, unknown> = {}) => {
     vendors.findByPortalToken.mockResolvedValue({
@@ -52,13 +55,33 @@ describe('vendor portal over HTTP', () => {
     vendors = {
       findByPortalToken: jest.fn().mockResolvedValue(null),
       findOffering: jest.fn().mockResolvedValue({ vendor_id: 'vendor-1' }),
+      listPortalOfferings: jest.fn().mockResolvedValue([]),
+      setOfferingAvailability: jest.fn().mockResolvedValue(null),
+      countAwaitingApproval: jest.fn().mockResolvedValue(0),
+      findById: jest.fn().mockResolvedValue({
+        id: 'vendor-1',
+        category: 'food',
+        commission_rate: 0.9,
+      }),
+      upsertOffering: jest.fn().mockResolvedValue({}),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    gifts = {
+      createRequestedByVendor: jest.fn().mockResolvedValue({
+        id: GIFT_ID,
+        name: 'Jollof & Chicken',
+        image_url: null,
+        base_price: 450000,
+      }),
+    };
 
     const moduleRef = await Test.createTestingModule({
       controllers: [VendorPortalController],
       providers: [
         VendorPortalGuard,
+        // Real: the rules about what a vendor may change are under test.
+        VendorPortalService,
+        { provide: GiftsService, useValue: gifts },
         { provide: RedemptionsService, useValue: redemptions },
         { provide: VendorsRepository, useValue: vendors },
         { provide: AuditService, useValue: audit },
@@ -347,6 +370,218 @@ describe('vendor portal over HTTP', () => {
         .expect(200);
 
       expect(response.headers['cache-control']).toBe('no-store');
+    });
+  });
+
+  describe('their own items', () => {
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+
+    it('401s every item route with no token', async () => {
+      const server = app.getHttpServer();
+      await request(server).get('/vendor/offerings').expect(401);
+      await request(server)
+        .patch(`/vendor/offerings/${GIFT_ID}`)
+        .send({ available: false })
+        .expect(401);
+      await request(server)
+        .post('/vendor/offerings')
+        .send({ name: 'Jollof', inStorePrice: 450000 })
+        .expect(401);
+      expect(vendors.setOfferingAvailability).not.toHaveBeenCalled();
+      expect(gifts.createRequestedByVendor).not.toHaveBeenCalled();
+    });
+
+    it('lists items with where each one stands, live first', async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([
+        {
+          gift_template_id: 'b',
+          vendor_price: 405000,
+          available: true,
+          approved: false,
+          gift_templates: {
+            name: 'Asked for',
+            base_price: 450000,
+            image_url: null,
+            available: false,
+          },
+        },
+        {
+          gift_template_id: 'a',
+          vendor_price: 720000,
+          available: false,
+          approved: true,
+          gift_templates: {
+            name: 'Pizza',
+            base_price: 800000,
+            image_url: null,
+            available: true,
+          },
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/vendor/offerings')
+        .set(auth)
+        .expect(200);
+
+      expect(vendors.listPortalOfferings).toHaveBeenCalledWith('vendor-1');
+      expect(response.body).toEqual([
+        {
+          giftTemplateId: 'a',
+          name: 'Pizza',
+          imageUrl: null,
+          inStorePrice: 800000,
+          youReceive: 720000,
+          available: false,
+          status: 'live',
+        },
+        {
+          giftTemplateId: 'b',
+          name: 'Asked for',
+          imageUrl: null,
+          inStorePrice: 450000,
+          youReceive: 405000,
+          available: true,
+          status: 'awaiting_approval',
+        },
+      ]);
+    });
+
+    it('marks an item sold out, scoped to this vendor, and audits it as the vendor', async () => {
+      asVendor();
+      vendors.setOfferingAvailability.mockResolvedValue({
+        gift_template_id: GIFT_ID,
+        vendor_price: 720000,
+        available: false,
+        approved: true,
+        gift_templates: {
+          name: 'Pizza',
+          base_price: 800000,
+          image_url: null,
+          available: true,
+        },
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/vendor/offerings/${GIFT_ID}`)
+        .set(auth)
+        .send({ available: false })
+        .expect(200);
+
+      expect(vendors.setOfferingAvailability).toHaveBeenCalledWith(
+        'vendor-1',
+        GIFT_ID,
+        false,
+      );
+      expect(response.body).toMatchObject({ available: false, status: 'live' });
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'vendor_offering.availability_changed',
+          actorType: 'vendor',
+          resourceId: 'vendor-1',
+          newState: 'sold_out',
+        }),
+      );
+    });
+
+    it("404s an item this vendor doesn't sell", async () => {
+      asVendor();
+      vendors.setOfferingAvailability.mockResolvedValue(null);
+
+      await request(app.getHttpServer())
+        .patch(`/vendor/offerings/${GIFT_ID}`)
+        .set(auth)
+        .send({ available: true })
+        .expect(404);
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('400s a malformed availability change before touching data', async () => {
+      asVendor();
+      const server = app.getHttpServer();
+      await request(server)
+        .patch(`/vendor/offerings/${GIFT_ID}`)
+        .set(auth)
+        .send({ available: 'no' })
+        .expect(400);
+      await request(server)
+        .patch('/vendor/offerings/not-a-uuid')
+        .set(auth)
+        .send({ available: false })
+        .expect(400);
+      expect(vendors.setOfferingAvailability).not.toHaveBeenCalled();
+    });
+
+    it('turns a new item request into an off-sale gift and an unapproved offering at their 90% share', async () => {
+      asVendor();
+
+      const response = await request(app.getHttpServer())
+        .post('/vendor/offerings')
+        .set(auth)
+        .send({
+          name: '  Jollof & Chicken ',
+          description: 'Party jollof, one drumstick',
+          inStorePrice: 450000,
+          // Not the vendor's to set — dropped by the whitelist.
+          approved: true,
+          vendorPrice: 449900,
+        })
+        .expect(201);
+
+      expect(gifts.createRequestedByVendor).toHaveBeenCalledWith({
+        name: 'Jollof & Chicken',
+        description: 'Party jollof, one drumstick',
+        inStorePrice: 450000,
+        category: 'food',
+      });
+      expect(vendors.upsertOffering).toHaveBeenCalledWith({
+        vendor_id: 'vendor-1',
+        gift_template_id: GIFT_ID,
+        vendor_price: 405000,
+        available_zones: null,
+        available: true,
+        approved: false,
+      });
+      expect(response.body).toMatchObject({
+        status: 'awaiting_approval',
+        youReceive: 405000,
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'vendor_offering.requested',
+          actorType: 'vendor',
+        }),
+      );
+    });
+
+    it('400s a price that is clearly a typo', async () => {
+      asVendor();
+      const server = app.getHttpServer();
+      // ₦45 — naira typed into a kobo field the other way round
+      await request(server)
+        .post('/vendor/offerings')
+        .set(auth)
+        .send({ name: 'Jollof', inStorePrice: 4500 })
+        .expect(400);
+      await request(server)
+        .post('/vendor/offerings')
+        .set(auth)
+        .send({ name: 'Jollof', inStorePrice: 4500.5 })
+        .expect(400);
+      expect(gifts.createRequestedByVendor).not.toHaveBeenCalled();
+    });
+
+    it('stops at ten requests waiting for ops', async () => {
+      asVendor();
+      vendors.countAwaitingApproval.mockResolvedValue(10);
+
+      await request(app.getHttpServer())
+        .post('/vendor/offerings')
+        .set(auth)
+        .send({ name: 'Jollof', inStorePrice: 450000 })
+        .expect(400);
+      expect(gifts.createRequestedByVendor).not.toHaveBeenCalled();
     });
   });
 });

@@ -29,10 +29,21 @@ function makeTemplate(
 
 describe('GiftsService', () => {
   let sut: GiftsService;
-  let repository: { findById: jest.Mock; findAllAvailable: jest.Mock };
+  let repository: {
+    findById: jest.Mock;
+    findAllAvailable: jest.Mock;
+    findTemplateIdsWithAvailableVendor: jest.Mock;
+  };
 
   beforeEach(async () => {
-    repository = { findById: jest.fn(), findAllAvailable: jest.fn() };
+    repository = {
+      findById: jest.fn(),
+      findAllAvailable: jest.fn(),
+      // By default template-1 has a vendor who can hand it over today.
+      findTemplateIdsWithAvailableVendor: jest
+        .fn()
+        .mockResolvedValue(new Set(['template-1'])),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -74,6 +85,33 @@ describe('GiftsService', () => {
       ]);
     });
 
+    it('leaves out a voucher gift no vendor can hand over today', async () => {
+      repository.findAllAvailable.mockResolvedValue([
+        makeTemplate({ id: 'template-1' }),
+        makeTemplate({ id: 'template-2', name: 'Sold out everywhere' }),
+      ]);
+
+      const result = await sut.listAvailable();
+
+      expect(result.map((item) => item.id)).toEqual(['template-1']);
+    });
+
+    it('keeps airtime/data/power gifts, which need no vendor', async () => {
+      repository.findAllAvailable.mockResolvedValue([
+        makeTemplate({
+          id: 'airtime',
+          delivery_type: FulfillmentType.Vtu,
+        }),
+      ]);
+      repository.findTemplateIdsWithAvailableVendor.mockResolvedValue(
+        new Set(),
+      );
+
+      const result = await sut.listAvailable();
+
+      expect(result.map((item) => item.id)).toEqual(['airtime']);
+    });
+
     it('returns an empty array when nothing is available, rather than throwing', async () => {
       repository.findAllAvailable.mockResolvedValue([]);
 
@@ -97,6 +135,17 @@ describe('GiftsService', () => {
       repository.findById.mockResolvedValue(null);
 
       await expect(sut.findAvailableById('missing')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException when every vendor has marked it sold out since the sender opened the page', async () => {
+      repository.findById.mockResolvedValue(makeTemplate());
+      repository.findTemplateIdsWithAvailableVendor.mockResolvedValue(
+        new Set(),
+      );
+
+      await expect(sut.findAvailableById('template-1')).rejects.toThrow(
         NotFoundException,
       );
     });

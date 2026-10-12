@@ -339,3 +339,36 @@ export class UpsertOfferingDto {
   @IsBoolean()
   approved?: boolean;
 }
+
+/** Sent from the vendor's own counter link: sold out today, or back on. */
+export class SetOfferingAvailabilityDto {
+  @IsBoolean()
+  available!: boolean;
+}
+
+/**
+ * A vendor asking to sell something new. Lands off sale, awaiting ops.
+ *
+ * The vendor states their in-store price; SendEbun sells at exactly that
+ * price, so it is the one number they are trusted to give — and it is
+ * still checked by ops against the counter before anything goes on sale.
+ */
+export class RequestVendorItemDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  name!: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  description?: string;
+
+  /** KOBO. ₦100 – ₦500,000: outside that is a typo, not a gift. */
+  @IsInt()
+  @Min(10_000)
+  @Max(50_000_000)
+  inStorePrice!: number;
+}

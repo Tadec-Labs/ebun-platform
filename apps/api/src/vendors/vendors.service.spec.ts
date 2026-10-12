@@ -64,6 +64,7 @@ describe('VendorsService', () => {
     repository = {
       list: jest.fn(),
       countOfferingsByVendor: jest.fn(),
+      countAwaitingApprovalByVendor: jest.fn().mockResolvedValue({}),
       findByPortalToken: jest.fn(),
       findOffering: jest.fn(),
       rotatePortalToken: jest.fn(),
@@ -74,6 +75,9 @@ describe('VendorsService', () => {
       upsertOffering: jest.fn(),
       deleteOffering: jest.fn(),
       listCollectionPoints: jest.fn(),
+      listPortalOfferings: jest.fn(),
+      setOfferingAvailability: jest.fn(),
+      countAwaitingApproval: jest.fn(),
     };
     gifts = { findById: jest.fn() };
     audit = { record: jest.fn().mockResolvedValue(undefined) };

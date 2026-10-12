@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { formatNaira, parseNairaToKobo } from "@/lib/format-money";
 import type { Offering } from "@/lib/ops/types";
 import { removeOfferingAction, saveOfferingAction } from "../../actions";
@@ -95,9 +96,52 @@ export function OfferingsPanel({
                     {formatNaira(o.ebunMargin)} <span className="text-zinc-500">({o.ebunMarginPct}%)</span>
                   </td>
                   <td className="px-4 py-3 text-xs text-zinc-600">
-                    {o.available ? "Available" : "Paused — still honours gifts already bought"}
+                    {!o.approved ? (
+                      // Asked for from the vendor's counter link. Check the
+                      // in-store price against the counter before approving:
+                      // senders are promised that price.
+                      <span className="font-medium text-amber-800">
+                        Asked for by the vendor — check the price, then approve
+                      </span>
+                    ) : o.available ? (
+                      "Available"
+                    ) : (
+                      "Sold out / paused — still honours gifts already bought"
+                    )}
                   </td>
                   <td className="space-x-3 whitespace-nowrap px-4 py-3 text-right">
+                    {!o.approved && (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => {
+                          setErrors([]);
+                          setNotice(null);
+                          startTransition(async () => {
+                            // Same endpoint and validation as Edit → Save,
+                            // which always approves; this just skips the form.
+                            const result = await saveOfferingAction({
+                              vendorId,
+                              giftTemplateId: o.giftTemplateId,
+                              priceNaira: String(o.vendorPrice / 100),
+                              zones: o.availableZones.join(", "),
+                              available: o.available,
+                            });
+                            if (result.ok) {
+                              setNotice(`Approved. Put "${o.giftName}" on sale in Gifts when it has a photo.`);
+                            } else {
+                              setErrors(result.errors);
+                            }
+                          });
+                        }}
+                        className="font-medium text-emerald-700 underline disabled:opacity-50"
+                      >
+                        Approve
+                      </button>
+                    )}
+                    <Link href={`/ops/gifts/${o.giftTemplateId}`} className="text-zinc-700 underline">
+                      Gift
+                    </Link>
                     <button type="button" onClick={() => edit(o)} className="text-zinc-700 underline">
                       Edit
                     </button>

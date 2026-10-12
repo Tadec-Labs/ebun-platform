@@ -14,6 +14,8 @@ export interface VendorSummary {
   verified: boolean;
   totalOrders: number;
   offeringsCount: number;
+  /** Items the vendor asked to sell from their counter link, waiting on ops. */
+  awaitingApprovalCount: number;
   createdAt: string;
 }
 

@@ -77,6 +77,11 @@ export default async function VendorsPage() {
                     ) : (
                       vendor.offeringsCount
                     )}
+                    {vendor.awaitingApprovalCount > 0 && (
+                      <span className="ml-2">
+                        <Badge tone="amber">{vendor.awaitingApprovalCount} to approve</Badge>
+                      </span>
+                    )}
                   </td>
                   <td className="space-x-1.5 px-4 py-3">
                     <Badge tone={vendor.active ? "green" : "grey"}>{vendor.active ? "Active" : "Inactive"}</Badge>

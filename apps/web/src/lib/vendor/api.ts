@@ -15,6 +15,18 @@ export interface VendorIdentity {
   businessName: string;
 }
 
+/** One of the vendor's own items, as their counter link shows it. Mirrors the API's PortalOfferingView. */
+export interface VendorOffering {
+  giftTemplateId: string;
+  name: string;
+  imageUrl: string | null;
+  inStorePrice: number; // kobo
+  youReceive: number; // kobo
+  /** The vendor's own switch: false = sold out today. */
+  available: boolean;
+  status: "live" | "awaiting_approval" | "not_on_sale";
+}
+
 export interface VendorRedemption {
   code: string;
   redemptionNumber: string;
@@ -36,7 +48,7 @@ export interface VendorRedemption {
  */
 export async function vendorFetch<T>(
   path: string,
-  init: { method?: "GET" | "POST"; body?: unknown } = {},
+  init: { method?: "GET" | "POST" | "PATCH"; body?: unknown } = {},
 ): Promise<T> {
   const token = await getVendorToken();
   if (!token) {

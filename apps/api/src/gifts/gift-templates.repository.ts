@@ -130,4 +130,36 @@ export class GiftTemplatesRepository {
     }
     return response.data ?? null;
   }
+
+  /**
+   * Gifts that at least one vendor can hand over right now: an offering
+   * that ops has approved, that the vendor hasn't marked sold out, at a
+   * vendor that is still active.
+   *
+   * Existence only — no prices are read. The active filter is applied
+   * in code rather than as a PostgREST filter on the embedded vendor,
+   * for the same reason as VendorsRepository.listCollectionPoints: the
+   * set is small and embed-filter semantics are easy to get wrong.
+   */
+  async findTemplateIdsWithAvailableVendor(): Promise<Set<string>> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('gift_template_id, vendors(active)')
+      .eq('approved', true)
+      .eq('available', true)) as {
+      data:
+        | { gift_template_id: string; vendors: { active: boolean } | null }[]
+        | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return new Set(
+      (response.data ?? [])
+        .filter((row) => row.vendors?.active === true)
+        .map((row) => row.gift_template_id),
+    );
+  }
 }

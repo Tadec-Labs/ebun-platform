@@ -4,6 +4,8 @@ import {
   Get,
   InternalServerErrorException,
   Param,
+  ParseUUIDPipe,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -18,6 +20,11 @@ import { BadRequestException } from '@nestjs/common';
 import { VendorPortalGuard } from './vendor-portal.guard';
 import type { VendorContext, VendorRequest } from './vendor-portal.guard';
 import { VendorsRepository } from './vendors.repository';
+import {
+  RequestVendorItemDto,
+  SetOfferingAvailabilityDto,
+} from './dto/vendor.dto';
+import { VendorPortalService } from './vendor-portal.service';
 
 /**
  * The counter screen's API. One vendor, their own gifts, nothing else.
@@ -39,6 +46,7 @@ export class VendorPortalController {
     private readonly redemptions: RedemptionsService,
     private readonly vendors: VendorsRepository,
     private readonly audit: AuditService,
+    private readonly portal: VendorPortalService,
   ) {}
 
   /** Confirms the link works and names the business, so staff can see whose till they are on. */
@@ -113,6 +121,39 @@ export class VendorPortalController {
     };
   }
 
+  /** The vendor's own items: what's live, what's waiting on SendEbun, what they have today. */
+  @Get('offerings')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  offerings(@Req() request: VendorRequest) {
+    return this.portal.listOfferings(vendorOf(request).vendorId);
+  }
+
+  /** Sold out today / back on. New sales only; gifts already bought are still honoured. */
+  @Patch('offerings/:giftTemplateId')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  setAvailability(
+    @Param('giftTemplateId', ParseUUIDPipe) giftTemplateId: string,
+    @Body() body: SetOfferingAvailabilityDto,
+    @Req() request: VendorRequest,
+  ) {
+    return this.portal.setAvailability(
+      vendorOf(request),
+      giftTemplateId,
+      body.available,
+      metaOf(request),
+    );
+  }
+
+  /** Ask to sell something new. Created off sale; ops checks and approves it. */
+  @Post('offerings')
+  @Throttle({ default: { limit: 10, ttl: 60 * 60_000 } })
+  requestItem(
+    @Body() body: RequestVendorItemDto,
+    @Req() request: VendorRequest,
+  ) {
+    return this.portal.requestItem(vendorOf(request), body, metaOf(request));
+  }
+
   /**
    * An offering that is switched off still counts.
    *
@@ -149,4 +190,11 @@ function vendorOf(request: VendorRequest): VendorContext {
     throw new InternalServerErrorException();
   }
   return request.vendor;
+}
+
+function metaOf(request: VendorRequest) {
+  return {
+    ipAddress: request.ip ?? null,
+    userAgent: request.headers['user-agent'] ?? null,
+  };
 }

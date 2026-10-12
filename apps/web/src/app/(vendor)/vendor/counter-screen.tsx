@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import type { VendorRedemption } from "@/lib/vendor/api";
 import { confirmCollectionAction, lookupCodeAction } from "./actions";
@@ -69,7 +70,12 @@ export function CounterScreen({ businessName }: { businessName: string }) {
   return (
     <div className="flex flex-col gap-6 py-8">
       <header>
-        <p className="text-sm text-zinc-500">{businessName}</p>
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm text-zinc-500">{businessName}</p>
+          <Link href="/vendor/gifts" className="text-base font-medium text-zinc-900 underline underline-offset-4">
+            Your items
+          </Link>
+        </div>
         <h1 className="mt-1 text-3xl font-semibold">Collect a gift</h1>
       </header>
 

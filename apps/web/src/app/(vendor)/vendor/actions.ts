@@ -1,8 +1,11 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+import { parseNairaToKobo } from "@/lib/format-money";
 import {
   VendorApiError,
   vendorFetch,
+  type VendorOffering,
   type VendorRedemption,
 } from "@/lib/vendor/api";
 
@@ -64,4 +67,59 @@ export async function confirmCollectionAction(input: {
   }
 
   return { ok: true, message: "Collected." };
+}
+
+export type VendorItemResult =
+  | { ok: true; offering: VendorOffering }
+  | { ok: false; message: string };
+
+/**
+ * Sold out today, or back on. Only stops NEW sales — anyone who already
+ * bought this can still collect it here.
+ */
+export async function setItemAvailabilityAction(
+  giftTemplateId: string,
+  available: boolean,
+): Promise<VendorItemResult> {
+  try {
+    const offering = await vendorFetch<VendorOffering>(
+      `/vendor/offerings/${encodeURIComponent(giftTemplateId)}`,
+      { method: "PATCH", body: { available } },
+    );
+    revalidatePath("/vendor/gifts");
+    return { ok: true, offering };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+/** Ask SendEbun to sell something new. It waits for a check before going on sale. */
+export async function requestItemAction(input: {
+  name: string;
+  description: string;
+  priceNaira: string;
+}): Promise<VendorItemResult> {
+  const name = input.name.trim();
+  if (name.length < 2) {
+    return { ok: false, message: "Give the item a name." };
+  }
+  const inStorePrice = parseNairaToKobo(input.priceNaira);
+  if (inStorePrice === null || inStorePrice < 1) {
+    return { ok: false, message: "Enter the price you charge in your shop, in naira." };
+  }
+
+  try {
+    const offering = await vendorFetch<VendorOffering>("/vendor/offerings", {
+      method: "POST",
+      body: {
+        name,
+        description: input.description.trim() || undefined,
+        inStorePrice,
+      },
+    });
+    revalidatePath("/vendor/gifts");
+    return { ok: true, offering };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
 }

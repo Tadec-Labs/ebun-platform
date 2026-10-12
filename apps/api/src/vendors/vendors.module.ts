@@ -5,6 +5,7 @@ import { GiftsModule } from '../gifts/gifts.module';
 import { RedemptionsModule } from '../redemptions/redemptions.module';
 import { VendorPortalController } from './vendor-portal.controller';
 import { VendorPortalGuard } from './vendor-portal.guard';
+import { VendorPortalService } from './vendor-portal.service';
 import { VendorsController } from './vendors.controller';
 import { VendorsRepository } from './vendors.repository';
 import { VendorsService } from './vendors.service';
@@ -12,7 +13,12 @@ import { VendorsService } from './vendors.service';
 @Module({
   imports: [AuthModule, AuditModule, GiftsModule, RedemptionsModule],
   controllers: [VendorsController, VendorPortalController],
-  providers: [VendorsRepository, VendorsService, VendorPortalGuard],
+  providers: [
+    VendorsRepository,
+    VendorsService,
+    VendorPortalService,
+    VendorPortalGuard,
+  ],
   exports: [VendorsService],
 })
 export class VendorsModule {}

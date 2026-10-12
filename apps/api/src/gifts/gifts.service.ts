@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { FulfillmentType } from '@ebun/types';
 import { PricingService } from '../pricing/pricing.service';
 import {
   GiftTemplateRow,
@@ -9,7 +10,8 @@ import {
  * What GET /gifts actually returns — deliberately not the raw
  * GiftTemplateRow. Every current column happens to be safe to expose
  * (base_price IS the sender-facing price; vendor economics live in
- * vendor_gift_offerings, a different table this never touches), but
+ * vendor_gift_offerings, which this only checks for existence, never
+ * prices), but
  * shaping the response explicitly means a column added to the table
  * later doesn't leak to the public catalog without a deliberate choice
  * to add it here too.
@@ -52,6 +54,22 @@ function toCatalogItem(
   };
 }
 
+/**
+ * Airtime, data and power go straight from the VTU provider to the
+ * recipient — no counter, no vendor. Everything else is handed over by
+ * a vendor and needs one.
+ */
+function needsVendor(template: GiftTemplateRow): boolean {
+  return template.delivery_type !== FulfillmentType.Vtu;
+}
+
+function isSellable(
+  template: GiftTemplateRow,
+  templateIdsWithVendor: Set<string>,
+): boolean {
+  return !needsVendor(template) || templateIdsWithVendor.has(template.id);
+}
+
 @Injectable()
 export class GiftsService {
   constructor(
@@ -59,23 +77,78 @@ export class GiftsService {
     private readonly pricing: PricingService,
   ) {}
 
-  /** Backs GET /gifts. */
+  /**
+   * Backs GET /gifts: on sale in the catalogue AND, for anything a
+   * vendor hands over, at least one vendor able to do so today.
+   *
+   * The second condition is what stops SendEbun taking money for a gift
+   * nobody can fulfil — no vendor signed yet, every vendor marked it sold
+   * out, or the only vendor deactivated. The gift reappears by itself
+   * the moment a vendor switches it back on.
+   */
   async listAvailable(): Promise<GiftCatalogItem[]> {
-    const templates = await this.repository.findAllAvailable();
-    return templates.map((template) => toCatalogItem(template, this.pricing));
+    const [templates, withVendor] = await Promise.all([
+      this.repository.findAllAvailable(),
+      this.repository.findTemplateIdsWithAvailableVendor(),
+    ]);
+    return templates
+      .filter((template) => isSellable(template, withVendor))
+      .map((template) => toCatalogItem(template, this.pricing));
   }
 
-  /** Throws if the template doesn't exist OR exists but isn't currently available — CreateOrderService should never have to check `.available` itself. */
+  /**
+   * Throws unless the gift can be bought right now — the same rule as
+   * the catalogue, re-checked at order creation because a vendor can
+   * mark it sold out between a sender opening /send and paying.
+   * CreateOrderService should never have to check this itself.
+   */
   async findAvailableById(id: string): Promise<GiftTemplateRow> {
     const template = await this.repository.findById(id);
 
-    if (!template || !template.available) {
+    const sellable =
+      template?.available === true &&
+      (!needsVendor(template) ||
+        (await this.repository.findTemplateIdsWithAvailableVendor()).has(
+          template.id,
+        ));
+
+    if (!template || !sellable) {
+      // One message for all three causes (unknown, pulled from sale, no
+      // vendor today): to a sender they are the same thing.
       throw new NotFoundException(
-        `Gift template ${id} not found or not currently available`,
+        "This gift isn't available right now. Please choose another.",
       );
     }
 
     return template;
+  }
+
+  /**
+   * A gift a vendor has asked to sell, created OFF sale.
+   *
+   * The one write on this otherwise read-only service, kept narrow on
+   * purpose: always a collection voucher (the only vendor type that is
+   * fulfilled today), never on sale, never featured. Ops reviews it —
+   * name, photo, price against the counter — and puts it on sale from
+   * /ops/gifts. The caller (VendorsService) records the audit event,
+   * because it knows which vendor asked.
+   */
+  async createRequestedByVendor(input: {
+    name: string;
+    description: string | null;
+    inStorePrice: number;
+    category: GiftTemplateRow['category'];
+  }): Promise<GiftTemplateRow> {
+    return this.repository.create({
+      name: input.name,
+      description: input.description,
+      base_price: input.inStorePrice,
+      category: input.category,
+      delivery_type: FulfillmentType.DigitalVoucher,
+      requires_address: false,
+      available: false,
+      featured: false,
+    });
   }
 
   /**

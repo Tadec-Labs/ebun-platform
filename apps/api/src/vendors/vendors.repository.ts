@@ -66,6 +66,24 @@ export interface OfferingRow {
   gift_templates: { name: string; base_price: number } | null;
 }
 
+/**
+ * An offering as the vendor themselves sees it on their counter link:
+ * the gift, whether ops has approved it, whether it is on sale in the
+ * catalogue, and whether they have it today.
+ */
+export interface PortalOfferingRow {
+  gift_template_id: string;
+  vendor_price: number; // kobo
+  available: boolean;
+  approved: boolean;
+  gift_templates: {
+    name: string;
+    base_price: number;
+    image_url: string | null;
+    available: boolean;
+  } | null;
+}
+
 /** One vendor that will accept a given gift's code, as a recipient sees it. */
 export interface CollectionPointRow {
   vendors: {
@@ -81,6 +99,9 @@ const SUMMARY_COLUMNS =
 
 const OFFERING_COLUMNS =
   'vendor_id, gift_template_id, vendor_price, available_zones, available, approved, gift_templates(name, base_price)';
+
+const PORTAL_OFFERING_COLUMNS =
+  'gift_template_id, vendor_price, available, approved, gift_templates(name, base_price, image_url, available)';
 
 @Injectable()
 export class VendorsRepository {
@@ -105,6 +126,24 @@ export class VendorsRepository {
     const response = (await this.supabase
       .from('vendor_gift_offerings')
       .select('vendor_id')) as {
+      data: { vendor_id: string }[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+
+    const counts: Record<string, number> = {};
+    for (const row of response.data ?? []) {
+      counts[row.vendor_id] = (counts[row.vendor_id] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /** vendor_id -> items the vendor asked to sell that ops hasn't approved yet. */
+  async countAwaitingApprovalByVendor(): Promise<Record<string, number>> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('vendor_id')
+      .eq('approved', false)) as {
       data: { vendor_id: string }[] | null;
       error: PostgrestError | null;
     };
@@ -320,5 +359,55 @@ export class VendorsRepository {
     };
     if (response.error) throw response.error;
     return response.data ?? [];
+  }
+
+  async listPortalOfferings(vendorId: string): Promise<PortalOfferingRow[]> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select(PORTAL_OFFERING_COLUMNS)
+      .eq('vendor_id', vendorId)) as {
+      data: PortalOfferingRow[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? [];
+  }
+
+  /**
+   * Flips only `available`. Scoped by vendor_id as well as the gift, so a
+   * vendor's link can never touch another vendor's row. Null when this
+   * vendor has no such offering.
+   */
+  async setOfferingAvailability(
+    vendorId: string,
+    giftTemplateId: string,
+    available: boolean,
+  ): Promise<PortalOfferingRow | null> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .update({ available })
+      .eq('vendor_id', vendorId)
+      .eq('gift_template_id', giftTemplateId)
+      .select(PORTAL_OFFERING_COLUMNS)
+      .maybeSingle()) as {
+      data: PortalOfferingRow | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? null;
+  }
+
+  /** Requests still waiting on ops, for the per-vendor cap. */
+  async countAwaitingApproval(vendorId: string): Promise<number> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('gift_template_id', { count: 'exact', head: true })
+      .eq('vendor_id', vendorId)
+      .eq('approved', false)) as {
+      count: number | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.count ?? 0;
   }
 }
