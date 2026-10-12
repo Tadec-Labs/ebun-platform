@@ -1,3 +1,4 @@
+import { PricingModule } from '../pricing/pricing.module';
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
@@ -29,7 +30,14 @@ import { OpsOrdersService } from './ops-orders.service';
  * side.
  */
 @Module({
-  imports: [GiftsModule, UsersModule, PaystackModule, AuthModule, AuditModule],
+  imports: [
+    GiftsModule,
+    UsersModule,
+    PaystackModule,
+    AuthModule,
+    AuditModule,
+    PricingModule,
+  ],
   controllers: [OrdersController, OpsOrdersController],
   providers: [
     OrderStateMachineService,

@@ -62,7 +62,9 @@ export function VendorForm({
   const [pending, startTransition] = useTransition();
   const isEdit = Boolean(vendor);
   const [sharePct, setSharePct] = useState(
-    vendor ? Math.round(vendor.commissionRate * 100) : 70,
+    // 90% is the standard share (a 10% commission); 88–92% is the
+    // negotiating range. The sender's service fee is separate.
+    vendor ? Math.round(vendor.commissionRate * 100) : 90,
   );
 
   return (
@@ -144,7 +146,7 @@ export function VendorForm({
       <Section title="Payment">
         <Field
           label="Vendor share (%)"
-          hint={`What the vendor receives of each gift's price. At ${sharePct}%, Ebun keeps ${100 - sharePct}% before payment fees.`}
+          hint={`What the vendor receives of each gift's in-store price. Standard is 90%. At ${sharePct}%, SendEbun's commission is ${100 - sharePct}%, before Paystack fees; the sender's service fee is on top.`}
         >
           <input
             name="vendorSharePct"

@@ -1,10 +1,16 @@
+import { PricingService } from '../pricing/pricing.service';
 import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { FulfillmentType } from '@ebun/types';
-import { GiftTemplateRow, GiftTemplatesRepository } from './gift-templates.repository';
+import {
+  GiftTemplateRow,
+  GiftTemplatesRepository,
+} from './gift-templates.repository';
 import { GiftsService } from './gifts.service';
 
-function makeTemplate(overrides: Partial<GiftTemplateRow> = {}): GiftTemplateRow {
+function makeTemplate(
+  overrides: Partial<GiftTemplateRow> = {},
+): GiftTemplateRow {
   return {
     id: 'template-1',
     name: 'A Pizza, On Him',
@@ -32,6 +38,7 @@ describe('GiftsService', () => {
       providers: [
         GiftsService,
         { provide: GiftTemplatesRepository, useValue: repository },
+        PricingService,
       ],
     }).compile();
 
@@ -57,6 +64,8 @@ describe('GiftsService', () => {
           category: 'food',
           imageUrl: null,
           basePrice: 800000,
+          serviceFee: 40000,
+          totalPrice: 840000,
           deliveryType: FulfillmentType.DigitalVoucher,
           deliveryWindow: '2-4hrs',
           requiresAddress: false,
@@ -92,7 +101,7 @@ describe('GiftsService', () => {
       );
     });
 
-    it('throws NotFoundException when the template exists but is not available — same as not existing, from a sender\'s perspective', async () => {
+    it("throws NotFoundException when the template exists but is not available — same as not existing, from a sender's perspective", async () => {
       repository.findById.mockResolvedValue(makeTemplate({ available: false }));
 
       await expect(sut.findAvailableById('template-1')).rejects.toThrow(

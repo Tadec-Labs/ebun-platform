@@ -11,6 +11,8 @@ describe('RedemptionsService', () => {
     createPendingOrFetch: jest.Mock;
     attemptRedemption: jest.Mock;
     findByOrderId: jest.Mock;
+    vendorPayoutFor: jest.Mock;
+    recordVendorCredit: jest.Mock;
   };
   let ordersService: { transitionNormal: jest.Mock };
 
@@ -19,6 +21,9 @@ describe('RedemptionsService', () => {
       createPendingOrFetch: jest.fn(),
       attemptRedemption: jest.fn(),
       findByOrderId: jest.fn(),
+      // ₦7,200: the vendor's agreed price on a ₦8,000 gift at a 90% share
+      vendorPayoutFor: jest.fn().mockResolvedValue(720000),
+      recordVendorCredit: jest.fn().mockResolvedValue(undefined),
     };
     ordersService = {
       transitionNormal: jest.fn().mockResolvedValue(undefined),
@@ -105,6 +110,7 @@ describe('RedemptionsService', () => {
         OrderStatus.RevealOpened,
         OrderStatus.Redeemed,
         { type: 'vendor' },
+        { vendorId: 'vendor-1', vendorPayoutAmount: 720000 },
       );
       expect(result).toEqual({
         id: 'redemption-1',
@@ -130,6 +136,60 @@ describe('RedemptionsService', () => {
       });
     });
 
+    it('credits the collecting vendor with their agreed price on the order', async () => {
+      repository.attemptRedemption.mockResolvedValue({
+        id: 'redemption-1',
+        order_id: 'order-1',
+        status: 'completed',
+      });
+
+      await sut.complete(params);
+
+      expect(repository.vendorPayoutFor).toHaveBeenCalledWith(
+        'order-1',
+        'vendor-1',
+      );
+      expect(repository.recordVendorCredit).toHaveBeenCalledWith(
+        'order-1',
+        'vendor-1',
+        720000,
+      );
+    });
+
+    it('records no credit, and still completes, when the vendor has no price for the gift', async () => {
+      repository.attemptRedemption.mockResolvedValue({
+        id: 'redemption-1',
+        order_id: 'order-1',
+        status: 'completed',
+      });
+      repository.vendorPayoutFor.mockResolvedValue(null);
+
+      await expect(sut.complete(params)).resolves.toMatchObject({
+        id: 'redemption-1',
+      });
+      expect(repository.recordVendorCredit).not.toHaveBeenCalled();
+      expect(ordersService.transitionNormal).toHaveBeenCalledWith(
+        'order-1',
+        OrderStatus.RevealOpened,
+        OrderStatus.Redeemed,
+        { type: 'vendor' },
+        undefined,
+      );
+    });
+
+    it('still completes when writing the credit fails — the amount is on the audit event', async () => {
+      repository.attemptRedemption.mockResolvedValue({
+        id: 'redemption-1',
+        order_id: 'order-1',
+        status: 'completed',
+      });
+      repository.recordVendorCredit.mockRejectedValue(new Error('db down'));
+
+      await expect(sut.complete(params)).resolves.toMatchObject({
+        id: 'redemption-1',
+      });
+    });
+
     it('uses actorType "system" for a vendorless (VTU) completion', async () => {
       repository.attemptRedemption.mockResolvedValue({
         id: 'redemption-1',
@@ -151,7 +211,10 @@ describe('RedemptionsService', () => {
         OrderStatus.RevealOpened,
         OrderStatus.Redeemed,
         { type: 'system' },
+        undefined,
       );
+      expect(repository.vendorPayoutFor).not.toHaveBeenCalled();
+      expect(repository.recordVendorCredit).not.toHaveBeenCalled();
     });
   });
 });

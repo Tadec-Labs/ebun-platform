@@ -12,7 +12,11 @@ export interface GiftCatalogItem {
   description: string | null;
   category: "food" | "experience" | "keepsake" | "utility";
   imageUrl: string | null;
-  basePrice: number; // kobo
+  basePrice: number; // kobo — the vendor's in-store price
+  /** kobo — SendEbun's fee, shown as its own line before paying. */
+  serviceFee: number;
+  /** kobo — exactly what Paystack charges. Computed by the API, never here. */
+  totalPrice: number;
   deliveryType: FulfillmentType;
   deliveryWindow: string | null;
   requiresAddress: boolean;

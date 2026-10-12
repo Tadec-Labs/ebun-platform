@@ -67,9 +67,10 @@ const cleanList = ({ value }: { value: unknown }): unknown => {
 
 /**
  * commission_rate is the VENDOR'S SHARE of gift value, not Ebun's cut —
- * the column default of 0.70 means "vendor receives 70%, Ebun retains
- * 30%" (Product Brief, business model). The column name says otherwise;
- * every label that surfaces it should say "vendor share".
+ * the column default of 0.90 means "vendor receives 90%, SendEbun's
+ * commission is 10%" (revenue model locked 12 Oct 2026; the Brief's
+ * 0.70 / 30% take is retired). The column name says otherwise; every
+ * label that surfaces it should say "vendor share".
  */
 export class CreateVendorDto {
   @Transform(trim)

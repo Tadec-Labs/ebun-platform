@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PricingService } from '../pricing/pricing.service';
 import {
   GiftTemplateRow,
   GiftTemplatesRepository,
@@ -19,14 +20,22 @@ export interface GiftCatalogItem {
   description: string | null;
   category: GiftTemplateRow['category'];
   imageUrl: string | null;
-  basePrice: number; // kobo
+  basePrice: number; // kobo — the vendor's in-store price
+  /** kobo — SendEbun's fee on top, shown as its own line at checkout. */
+  serviceFee: number;
+  /** kobo — exactly what Paystack will charge. */
+  totalPrice: number;
   deliveryType: GiftTemplateRow['delivery_type'];
   deliveryWindow: string | null;
   requiresAddress: boolean;
   featured: boolean;
 }
 
-function toCatalogItem(template: GiftTemplateRow): GiftCatalogItem {
+function toCatalogItem(
+  template: GiftTemplateRow,
+  pricing: PricingService,
+): GiftCatalogItem {
+  const price = pricing.priceGift(template.base_price);
   return {
     id: template.id,
     name: template.name,
@@ -34,6 +43,8 @@ function toCatalogItem(template: GiftTemplateRow): GiftCatalogItem {
     category: template.category,
     imageUrl: template.image_url,
     basePrice: template.base_price,
+    serviceFee: price.serviceFee,
+    totalPrice: price.total,
     deliveryType: template.delivery_type,
     deliveryWindow: template.delivery_window,
     requiresAddress: template.requires_address,
@@ -43,12 +54,15 @@ function toCatalogItem(template: GiftTemplateRow): GiftCatalogItem {
 
 @Injectable()
 export class GiftsService {
-  constructor(private readonly repository: GiftTemplatesRepository) {}
+  constructor(
+    private readonly repository: GiftTemplatesRepository,
+    private readonly pricing: PricingService,
+  ) {}
 
   /** Backs GET /gifts. */
   async listAvailable(): Promise<GiftCatalogItem[]> {
     const templates = await this.repository.findAllAvailable();
-    return templates.map(toCatalogItem);
+    return templates.map((template) => toCatalogItem(template, this.pricing));
   }
 
   /** Throws if the template doesn't exist OR exists but isn't currently available — CreateOrderService should never have to check `.available` itself. */

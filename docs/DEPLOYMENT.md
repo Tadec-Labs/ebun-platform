@@ -50,6 +50,15 @@ orders sit next to real ones, and anything run locally acts on real customers' o
    | `PAYSTACK_SECRET_KEY` | `sk_test_…` first; swap to `sk_live_…` after activation |
    | `WEB_APP_BASE_URL` | The web app's address, e.g. `https://app.ebun.com.ng` (step 3) |
 
+   Optional — the service fee. Leave unset for the default (5%, min ₦200, max ₦1,500).
+   All in kobo or basis points; a malformed value stops the API booting:
+
+   | Name | Default | Means |
+   | --- | --- | --- |
+   | `SERVICE_FEE_BPS` | `500` | Fee rate in basis points (500 = 5%). `0` turns the fee off |
+   | `SERVICE_FEE_MIN_KOBO` | `20000` | Floor (₦200) |
+   | `SERVICE_FEE_MAX_KOBO` | `150000` | Ceiling (₦1,500) |
+
    Don't set `PORT` (Railway does). Don't set `TRUST_PROXY_HOPS` (Railway is detected).
    Leave the `TERMII_*` variables unset until WhatsApp automation is live.
 4. **Networking → Custom domain:** `api.ebun.com.ng`, then add the CNAME record Railway shows

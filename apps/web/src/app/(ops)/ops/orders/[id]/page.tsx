@@ -119,8 +119,9 @@ export default async function OrderDetailPage({
     push("Delivery fee", formatNaira(order.deliveryFee));
   if (order.vendorPayoutAmount !== null) {
     push("Vendor payout", formatNaira(order.vendorPayoutAmount));
+    // Gross: Paystack's fee still comes out of this.
     push(
-      "Ebun margin",
+      "Ebun margin (before Paystack)",
       formatNaira(order.totalAmount - order.vendorPayoutAmount),
     );
   }

@@ -59,6 +59,21 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   ENABLE_BACKGROUND_JOBS?: string;
+
+  // Service fee — optional, defaults in pricing/service-fee.ts. Listed
+  // here so every variable the API reads is in one place; the numeric
+  // checks live in resolveServiceFeePolicy(), which also fails the boot.
+  @IsOptional()
+  @IsString()
+  SERVICE_FEE_BPS?: string;
+
+  @IsOptional()
+  @IsString()
+  SERVICE_FEE_MIN_KOBO?: string;
+
+  @IsOptional()
+  @IsString()
+  SERVICE_FEE_MAX_KOBO?: string;
 }
 
 export function validateEnv(

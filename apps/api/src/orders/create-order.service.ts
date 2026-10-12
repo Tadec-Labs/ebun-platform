@@ -4,6 +4,7 @@ import { OrderStatus } from '@ebun/types';
 import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { PaystackClientService } from '../paystack/paystack-client.service';
+import { PricingService } from '../pricing/pricing.service';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 
@@ -20,6 +21,7 @@ export class CreateOrderService {
     private readonly usersService: UsersService,
     private readonly ordersService: OrdersService,
     private readonly paystackClient: PaystackClientService,
+    private readonly pricing: PricingService,
   ) {}
 
   async execute(
@@ -43,12 +45,13 @@ export class CreateOrderService {
       name: dto.senderName,
     });
 
-    // Server-computed, never client-supplied — same principle as "backend never trusts frontend payment status" extended to price.
-    const giftValue = giftTemplate.base_price;
-    // PLACEHOLDER — no delivery/service fee schedule has been specified anywhere in the Brief excerpts seen so far. Both are 0 until there's a real pricing rule to implement; flagged here rather than silently invented.
-    const deliveryFee = 0;
-    const serviceFee = 0;
-    const totalAmount = giftValue + deliveryFee + serviceFee;
+    // Server-computed, never client-supplied — same principle as "backend never trusts frontend payment status" extended to price. PricingService is also what GET /gifts uses, so this is the exact total the sender read before paying.
+    const {
+      giftValue,
+      deliveryFee,
+      serviceFee,
+      total: totalAmount,
+    } = this.pricing.priceGift(giftTemplate.base_price);
 
     const paystackReference = `ebun_${randomUUID()}`;
 

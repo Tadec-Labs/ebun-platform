@@ -58,6 +58,8 @@ describe('RedemptionsService — collection by fallback code', () => {
         .mockResolvedValue([
           { id: VENDOR_ID, business_name: 'Pizza Place', active: true },
         ]),
+      vendorPayoutFor: jest.fn().mockResolvedValue(720000),
+      recordVendorCredit: jest.fn().mockResolvedValue(undefined),
     };
     ordersService = {
       transitionNormal: jest.fn().mockResolvedValue(undefined),
@@ -312,6 +314,7 @@ describe('RedemptionsService — collection by fallback code', () => {
         OrderStatus.RevealOpened,
         OrderStatus.Redeemed,
         { type: 'admin' },
+        { vendorId: VENDOR_ID, vendorPayoutAmount: 720000 },
       );
     });
 
@@ -373,6 +376,7 @@ describe('RedemptionsService — collection by fallback code', () => {
         OrderStatus.RevealOpened,
         OrderStatus.Redeemed,
         { type: 'vendor' },
+        { vendorId: VENDOR_ID, vendorPayoutAmount: 720000 },
       );
     });
   });

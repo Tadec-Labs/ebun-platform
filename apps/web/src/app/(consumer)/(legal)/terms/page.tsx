@@ -39,7 +39,7 @@ export default function TermsPage() {
         <List
           items={[
             "You must be 18 or older to buy a gift.",
-            "Prices are in Nigerian naira and are shown before you pay. You pay the full price up front.",
+            "Prices are in Nigerian naira and are shown before you pay. A gift costs what the vendor charges for it in store; our service fee is shown as a separate line, and you pay the total up front.",
             "Payments are processed by Paystack. We never see or store your card details.",
             "An order is confirmed only when Paystack confirms the payment to us — not when your browser returns from the payment page.",
             "You're responsible for the recipient's name and WhatsApp number being correct. Please check them before paying.",

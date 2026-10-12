@@ -5,6 +5,7 @@ import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { OrdersService } from './orders.service';
 import { PaystackClientService } from '../paystack/paystack-client.service';
+import { PricingService } from '../pricing/pricing.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 
 function makeDto(overrides: Partial<CreateOrderDto> = {}): CreateOrderDto {
@@ -38,6 +39,8 @@ describe('CreateOrderService', () => {
         { provide: UsersService, useValue: users },
         { provide: OrdersService, useValue: orders },
         { provide: PaystackClientService, useValue: paystack },
+        // Real, not mocked: the fee arithmetic is the thing under test.
+        PricingService,
       ],
     }).compile();
 
@@ -68,19 +71,21 @@ describe('CreateOrderService', () => {
       phone: undefined,
       name: 'Sender Name',
     });
-    // price computed server-side from the template, not from the DTO
+    // price computed server-side from the template, not from the DTO:
+    // ₦5,000 gift + 5% service fee (₦250) = ₦5,250, and Paystack is
+    // asked for exactly that total
     expect(orders.create).toHaveBeenCalledWith(
       expect.objectContaining({
         giftValue: 500000,
         deliveryFee: 0,
-        serviceFee: 0,
-        totalAmount: 500000,
+        serviceFee: 25000,
+        totalAmount: 525000,
       }),
     );
     expect(paystack.initializeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         email: 'sender@example.com',
-        amountKobo: 500000,
+        amountKobo: 525000,
       }),
     );
     expect(orders.transitionNormal).toHaveBeenCalledWith(

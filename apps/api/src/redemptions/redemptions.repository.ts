@@ -242,6 +242,69 @@ export class RedemptionsRepository {
   }
 
   /**
+   * What Ebun owes `vendorId` for handing over this order's gift: their
+   * agreed vendor_price on the offering, read at the moment of
+   * collection. Null when there is no offering — which the redemption
+   * paths already refuse before getting here, so null means a row
+   * changed underneath us, not a normal case.
+   *
+   * Read at collection rather than at purchase because the recipient
+   * chooses where to collect: until then nobody knows which vendor is
+   * owed.
+   */
+  async vendorPayoutFor(
+    orderId: string,
+    vendorId: string,
+  ): Promise<number | null> {
+    const order = (await this.supabase
+      .from('orders')
+      .select('gift_template_id')
+      .eq('id', orderId)
+      .maybeSingle()) as {
+      data: { gift_template_id: string } | null;
+      error: PostgrestError | null;
+    };
+    if (order.error) throw order.error;
+    if (!order.data) return null;
+
+    const offering = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('vendor_price')
+      .eq('vendor_id', vendorId)
+      .eq('gift_template_id', order.data.gift_template_id)
+      .maybeSingle()) as {
+      data: { vendor_price: number } | null;
+      error: PostgrestError | null;
+    };
+    if (offering.error) throw offering.error;
+    return offering.data?.vendor_price ?? null;
+  }
+
+  /**
+   * Stamps who handed the gift over and what they are owed onto the
+   * order — the figures /ops shows as vendor payout and Ebun margin, and
+   * what a payout run will sum.
+   *
+   * Write-once: guarded on vendor_payout_amount still being null, so a
+   * retried call can never re-price an order already credited.
+   */
+  async recordVendorCredit(
+    orderId: string,
+    vendorId: string,
+    vendorPayoutAmount: number,
+  ): Promise<void> {
+    const response = (await this.supabase
+      .from('orders')
+      .update({
+        vendor_id: vendorId,
+        vendor_payout_amount: vendorPayoutAmount,
+      })
+      .eq('id', orderId)
+      .is('vendor_payout_amount', null)) as { error: PostgrestError | null };
+    if (response.error) throw response.error;
+  }
+
+  /**
    * Vendors holding an offering for this gift, with whether they are
    * active. The same rule the vendor counter applies (an offering row,
    * paused or not), read here rather than through VendorsModule because

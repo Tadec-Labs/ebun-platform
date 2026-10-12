@@ -48,7 +48,7 @@ export interface VendorView {
   subcategories: string[];
   serviceAreas: string[];
   deliveryZones: string[];
-  /** The vendor's SHARE of gift value (0.70 = vendor gets 70%, Ebun keeps 30%) — despite the column name. */
+  /** The vendor's SHARE of gift value (0.90 = vendor gets 90%, SendEbun's commission is 10%) — despite the column name. */
   commissionRate: number;
   bankName: string | null;
   accountNumber: string | null;

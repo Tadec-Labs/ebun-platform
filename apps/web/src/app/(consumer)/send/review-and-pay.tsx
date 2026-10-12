@@ -110,15 +110,26 @@ export function ReviewAndPay({
               })}
             />
           )}
+          {/* The fee is its own line on purpose: the gift costs what it
+              costs at the counter, and the sender can see that. */}
           <div
-            className="mt-1 flex items-baseline justify-between border-t pt-3"
+            className="mt-1 flex flex-col gap-2 border-t pt-3"
+            style={{ borderColor: "var(--border)" }}
+          >
+            <SummaryRow label="Gift" value={formatNaira(gift.basePrice)} />
+            {gift.serviceFee > 0 && (
+              <SummaryRow label="Service fee" value={formatNaira(gift.serviceFee)} />
+            )}
+          </div>
+          <div
+            className="flex items-baseline justify-between border-t pt-3"
             style={{ borderColor: "var(--border)" }}
           >
             <span className="text-xs uppercase tracking-wide" style={{ color: "var(--gold-dim)" }}>
               Total
             </span>
             <span className="font-display text-2xl" style={{ color: "var(--gold-light)" }}>
-              {formatNaira(gift.basePrice)}
+              {formatNaira(gift.totalPrice)}
             </span>
           </div>
         </section>
@@ -196,7 +207,7 @@ export function ReviewAndPay({
             className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
             style={{ background: "var(--action)", color: "var(--ink)" }}
           >
-            {submitting ? "Redirecting to Paystack…" : `Pay ${formatNaira(gift.basePrice)}`}
+            {submitting ? "Redirecting to Paystack…" : `Pay ${formatNaira(gift.totalPrice)}`}
           </button>
         </div>
       </div>

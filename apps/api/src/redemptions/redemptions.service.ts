@@ -322,12 +322,24 @@ export class RedemptionsService {
       throw new RedemptionConflictException();
     }
 
+    const vendorPayoutAmount = params.vendorId
+      ? await this.lookUpVendorPayout(redemption.order_id, params.vendorId)
+      : null;
+
     try {
+      // The vendor and what they are owed ride on the transition's audit
+      // event, so the money trail is in audit_events even if the
+      // columns below fail to write.
+      const credit =
+        params.vendorId && vendorPayoutAmount !== null
+          ? { vendorId: params.vendorId, vendorPayoutAmount }
+          : null;
       await this.ordersService.transitionNormal(
         redemption.order_id,
         OrderStatus.RevealOpened,
         OrderStatus.Redeemed,
         { type: params.actorType },
+        credit ?? undefined,
       );
     } catch (err) {
       this.logger.error(
@@ -338,6 +350,50 @@ export class RedemptionsService {
       );
     }
 
+    if (params.vendorId && vendorPayoutAmount !== null) {
+      try {
+        await this.repository.recordVendorCredit(
+          redemption.order_id,
+          params.vendorId,
+          vendorPayoutAmount,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Redemption ${redemption.id} completed, but crediting vendor ${params.vendorId} ` +
+            `with ${vendorPayoutAmount} kobo on order ${redemption.order_id} failed. ` +
+            `The amount is on the order's 'redeemed' audit event; reconcile from there.`,
+          err instanceof Error ? err.stack : err,
+        );
+      }
+    }
+
     return redemption;
+  }
+
+  /**
+   * Best-effort, like the order transition: the redemption has already
+   * completed and must not be reported as failed because a price lookup
+   * hiccupped. A miss is logged loudly, since it means a vendor handed
+   * something over with no recorded amount owed.
+   */
+  private async lookUpVendorPayout(
+    orderId: string,
+    vendorId: string,
+  ): Promise<number | null> {
+    try {
+      const amount = await this.repository.vendorPayoutFor(orderId, vendorId);
+      if (amount === null) {
+        this.logger.error(
+          `Order ${orderId} was collected by vendor ${vendorId}, who has no offering for its gift — no payout amount recorded.`,
+        );
+      }
+      return amount;
+    } catch (err) {
+      this.logger.error(
+        `Couldn't read vendor ${vendorId}'s price for order ${orderId}; payout not recorded.`,
+        err instanceof Error ? err.stack : err,
+      );
+      return null;
+    }
   }
 }
