@@ -3,7 +3,8 @@
 import { BrandLogo } from "@/components/brand-logo";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ChatGlyph, CheckGlyph } from "@/components/icons";
+import { ChatGlyph, CheckGlyph, LockGlyph } from "@/components/icons";
+import { LEGAL } from "@/lib/legal";
 import {
   type OrderConfirmation,
   getOrderConfirmation,
@@ -316,7 +317,8 @@ function SendItYourself({
 
       {opened && primary && (
         <p className="text-center text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }} role="status">
-          Once you&rsquo;ve pressed send in WhatsApp, you&rsquo;re done. {name} opens it from there.
+          Sent it? That&rsquo;s everything. {name} opens the link, sees your message, then claims the
+          gift.
         </p>
       )}
 
@@ -343,10 +345,29 @@ function SendItYourself({
         </button>
       </div>
 
+      {/*
+        The same facts the old line stated — the link is the gift, so it
+        should only go to the recipient — said as the protections they
+        are. "Anyone with this link can open the gift" was accurate, but
+        read as a weakness to someone who had just paid. Every line here
+        is literally true of how it works: payment is Paystack-verified,
+        redemption is single-use (attempt_redemption), and an uncollected
+        gift is refunded per the Refund policy.
+      */}
       {primary && (
-        <p className="text-center text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
-          Anyone with this link can open the gift, so send it only to {name}.
-        </p>
+        <div
+          className="flex flex-col items-center gap-2 border-t pt-4 text-center"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <p className="flex items-center gap-1.5 text-xs" style={{ color: "var(--cream-dim)" }}>
+            <LockGlyph className="h-3.5 w-3.5 text-[color:var(--gold)]" />
+            This link is {name}&rsquo;s gift. Share it only with {name}.
+          </p>
+          <p className="text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
+            Paid through Paystack · Can be collected only once · Refunded to you if it isn&rsquo;t
+            collected within {LEGAL.giftValidityDays} days
+          </p>
+        </div>
       )}
     </div>
   );
