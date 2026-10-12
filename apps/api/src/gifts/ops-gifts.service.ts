@@ -159,6 +159,9 @@ export class OpsGiftsService {
     }
 
     const requested = toRowValues(dto);
+    // Belt and braces with the DTO's @IsEmpty: an empty string passes
+    // that check, and must never reach the delivery_type enum column.
+    delete requested.delivery_type;
     const changed: Record<string, unknown> = {};
     for (const [column, value] of Object.entries(requested)) {
       if (!sameValue(existing[column], value)) {

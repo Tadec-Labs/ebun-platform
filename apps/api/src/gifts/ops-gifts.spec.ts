@@ -97,6 +97,25 @@ describe('OpsGiftsService', () => {
     expect(result.imageUrl).toBe('https://pub-abc.r2.dev/gifts/new.jpg');
   });
 
+  it('never writes delivery_type on update, even when an empty one is sent', async () => {
+    repository.findById.mockResolvedValue(row({ available: false }));
+    const staff = { userId: 'staff-1', role: 'ebun_ops' } as never;
+
+    await sut.update(
+      'tmpl-1',
+      { deliveryType: '' as never, available: true },
+      staff,
+      { ipAddress: null, userAgent: null },
+    );
+
+    const [, written] = repository.update.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(written).not.toHaveProperty('delivery_type');
+    expect(written).toMatchObject({ available: true });
+  });
+
   it('lists withheld gifts too — ops needs to see what it is hiding', async () => {
     repository.findAllForOps.mockResolvedValue([
       row({ available: true }),

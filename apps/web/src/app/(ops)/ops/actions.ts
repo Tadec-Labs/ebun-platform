@@ -388,7 +388,10 @@ export async function saveGiftAction(formData: FormData): Promise<ActionResult> 
   const body = {
     name: text(formData, "name"),
     category: text(formData, "category"),
-    deliveryType: text(formData, "deliveryType"),
+    // Create only. On update the form has no delivery-type field (it is
+    // immutable), and sending "" made the API write an empty string into
+    // an enum column — a 500 on every save of an existing gift.
+    deliveryType: isUpdate ? undefined : text(formData, "deliveryType"),
     basePrice,
     sortOrder,
     requiresAddress: false,
