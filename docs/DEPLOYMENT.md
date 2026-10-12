@@ -3,8 +3,15 @@
 The API runs on **Railway**, the web app on **Vercel**, the database on **Supabase**.
 Order matters: database → API → web → connect them → Paystack.
 
-Both platforms build with **pnpm 11.21.0**, pinned in the config files. Don't change their
-install commands: pnpm 10 can't read this lockfile and the build fails at install.
+Both platforms must build with **pnpm 11** — pnpm 10 can't read this lockfile.
+
+- **Vercel** handles this itself: it reads `devEngines` in the root `package.json`, picks pnpm 11,
+  and detects Turborepo, which builds `@ebun/types` before the web app. Leave its default install
+  and build commands alone; there is deliberately no `vercel.json`.
+- **Railway** uses `apps/api/railway.json`. Its commands start pnpm from inside `apps/api` and point
+  it at the repo root with `--dir ../..`. That's deliberate: npm 11 (which runs `npx`) refuses to
+  run anything from a folder whose `package.json` declares a different package manager
+  (`EBADDEVENGINES`), and only the root declares one.
 
 ---
 
@@ -52,8 +59,8 @@ orders sit next to real ones, and anything run locally acts on real customers' o
 ## 2. Web app on Vercel
 
 1. Vercel → **Add New → Project** → import `Tadec-Labs/ebun-platform`.
-2. **Root directory:** `apps/web`. Framework: Next.js. Install and build commands come from
-   `apps/web/vercel.json`; leave the overrides off.
+2. **Root directory:** `apps/web`. Framework: Next.js. Leave install and build commands on their
+   defaults (see the note at the top).
 3. **Environment variables:**
 
    | Name | Value |
