@@ -138,6 +138,10 @@ export class NotificationsRepository {
     const response = (await this.supabase
       .from('notifications')
       .select()
+      // WhatsApp only: this retries through Termii. Email alerts live in
+      // the same table (alerts/) and are deliberately not retried —
+      // escalation re-alerts if nobody acts.
+      .eq('channel', NotificationChannel.Whatsapp)
       .in('status', [
         NotificationStatus.Failed,
         NotificationStatus.Retrying,

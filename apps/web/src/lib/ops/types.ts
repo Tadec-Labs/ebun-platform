@@ -36,6 +36,8 @@ export interface Vendor {
   ownerName: string;
   whatsappNumber: string;
   email: string | null;
+  /** Second contact for when the WhatsApp number goes quiet. */
+  backupPhone: string | null;
   category: VendorCategory;
   subcategories: string[];
   serviceAreas: string[];

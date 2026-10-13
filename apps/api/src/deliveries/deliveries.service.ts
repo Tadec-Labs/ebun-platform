@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { FulfillmentType, OrderStatus } from '@ebun/types';
 import { AuditService } from '../audit/audit.service';
+import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 import { OrdersService } from '../orders/orders.service';
 import type { TransitionActor } from '../orders/orders.service';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
@@ -116,6 +117,7 @@ export class DeliveriesService {
     private readonly repository: DeliveriesRepository,
     private readonly orders: OrdersService,
     private readonly audit: AuditService,
+    private readonly alerts: VendorAlertsService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -410,6 +412,7 @@ export class DeliveriesService {
       resourceId: orderId,
       metadata: { vendorId },
     });
+    await this.alerts.newDelivery(orderId, vendorId);
   }
 
   // ---------------------------------------------------------------------
@@ -429,6 +432,7 @@ export class DeliveriesService {
       return null;
     }
     await this.repository.assignVendor(order.id, chosen);
+    await this.alerts.newDelivery(order.id, chosen);
     return chosen;
   }
 

@@ -10,6 +10,7 @@ export interface VendorRow {
   owner_name: string;
   whatsapp_number: string;
   email: string | null;
+  backup_phone?: string | null;
   category: GiftCategory;
   subcategories: string[] | null;
   service_areas: string[] | null;

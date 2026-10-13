@@ -75,6 +75,38 @@ class EnvironmentVariables {
   @IsString()
   SERVICE_FEE_MAX_KOBO?: string;
 
+  // Doorstep delivery fee in kobo — optional, default ₦1,500
+  // (pricing/service-fee.ts resolveDeliveryFeeKobo, which fails the boot
+  // on a bad value).
+  @IsOptional()
+  @IsString()
+  DELIVERY_FEE_KOBO?: string;
+
+  // Vendor alert emails — optional. Without the key and sender, alerts
+  // are skipped (alerts/email-sender.service.ts) and /ops still shows
+  // everything. ALERTS_FROM_EMAIL must be on a domain verified in Resend,
+  // e.g. "SendEbun <alerts@ebun.com.ng>". OPS_ALERT_EMAIL receives
+  // escalations when a vendor hasn't responded.
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  RESEND_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  ALERTS_FROM_EMAIL?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  OPS_ALERT_EMAIL?: string;
+
+  /** Minutes before an unacknowledged delivery or booking is escalated. Default 30. */
+  @IsOptional()
+  @IsString()
+  VENDOR_ACK_MINUTES?: string;
+
   // Cloudflare R2, public bucket for gift photos — optional; all five or
   // none (storage/r2.config.ts fails the boot on a partial set).
   @IsOptional()

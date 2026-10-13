@@ -7,6 +7,8 @@ import { ExpiryJob } from './expiry.job';
 import { NotificationRetryJob } from './notification-retry.job';
 import { ScheduledSendJob } from './scheduled-send.job';
 import { StuckOrderJob } from './stuck-order.job';
+import { VendorEscalationJob } from './vendor-escalation.job';
+import { AlertsModule } from '../alerts/alerts.module';
 
 /**
  * Every recurring job in one module, rather than a @Cron scattered
@@ -28,7 +30,14 @@ import { StuckOrderJob } from './stuck-order.job';
     OrdersModule,
     NotificationsModule,
     RedemptionsModule,
+    AlertsModule,
   ],
-  providers: [ScheduledSendJob, ExpiryJob, StuckOrderJob, NotificationRetryJob],
+  providers: [
+    ScheduledSendJob,
+    ExpiryJob,
+    StuckOrderJob,
+    NotificationRetryJob,
+    VendorEscalationJob,
+  ],
 })
 export class JobsModule {}

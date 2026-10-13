@@ -196,8 +196,11 @@ export function VendorForm({
           <Field label="Account name">
             <input name="accountName" defaultValue={vendor?.accountName ?? ""} className={input} />
           </Field>
-          <Field label="Email">
+          <Field label="Email" hint="New orders are emailed here too — the fail-safe if WhatsApp is missed.">
             <input name="email" type="email" defaultValue={vendor?.email ?? ""} className={input} />
+          </Field>
+          <Field label="Second phone" hint="Who to call when the WhatsApp number goes quiet. 0803… or +234…">
+            <input name="backupPhone" inputMode="tel" defaultValue={vendor?.backupPhone ?? ""} className={input} />
           </Field>
           <Field label="Subcategories" hint="Comma-separated, e.g. pizza, grills">
             <input name="subcategories" defaultValue={vendor?.subcategories.join(", ")} className={input} />

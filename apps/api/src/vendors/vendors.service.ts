@@ -46,6 +46,8 @@ export interface VendorView {
   ownerName: string;
   whatsappNumber: string;
   email: string | null;
+  /** Second contact for when the WhatsApp number goes quiet. */
+  backupPhone: string | null;
   category: VendorRow['category'];
   subcategories: string[];
   serviceAreas: string[];
@@ -111,6 +113,7 @@ const FIELD_MAP: Record<string, string> = {
   ownerName: 'owner_name',
   whatsappNumber: 'whatsapp_number',
   email: 'email',
+  backupPhone: 'backup_phone',
   category: 'category',
   subcategories: 'subcategories',
   serviceAreas: 'service_areas',
@@ -175,6 +178,7 @@ function toView(row: VendorRow): VendorView {
     ownerName: row.owner_name,
     whatsappNumber: row.whatsapp_number,
     email: row.email,
+    backupPhone: row.backup_phone ?? null,
     category: row.category,
     subcategories: row.subcategories ?? [],
     serviceAreas: row.service_areas ?? [],

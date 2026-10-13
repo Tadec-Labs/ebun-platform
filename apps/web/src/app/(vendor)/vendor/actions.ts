@@ -159,6 +159,8 @@ export type VendorProfileInput = {
   ownerName: string;
   pickupAddress: string;
   pickupHours: string;
+  email: string;
+  backupPhone: string;
   bankName?: string;
   accountNumber?: string;
   accountName?: string;
@@ -172,6 +174,9 @@ export async function saveProfileAction(
     ownerName: input.ownerName.trim(),
     pickupAddress: input.pickupAddress.trim(),
     pickupHours: input.pickupHours.trim(),
+    // Sent blank to clear: the API reads "" as "remove it".
+    email: input.email.trim(),
+    backupPhone: input.backupPhone.trim(),
   };
   if (input.accountNumber !== undefined) {
     body.bankName = (input.bankName ?? "").trim();

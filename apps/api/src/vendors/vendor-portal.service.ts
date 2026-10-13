@@ -349,6 +349,8 @@ export class VendorPortalService {
 
     const values: Record<string, unknown> = {};
     if (dto.ownerName !== undefined) values.owner_name = dto.ownerName;
+    if (dto.email !== undefined) values.email = dto.email;
+    if (dto.backupPhone !== undefined) values.backup_phone = dto.backupPhone;
     if (dto.pickupAddress !== undefined)
       values.pickup_address = dto.pickupAddress;
     if (dto.pickupHours !== undefined) values.pickup_hours = dto.pickupHours;
@@ -399,6 +401,9 @@ export interface VendorProfileView {
   ownerName: string;
   pickupAddress: string | null;
   pickupHours: string | null;
+  /** Where order alerts are emailed. */
+  email: string | null;
+  backupPhone: string | null;
   bank: {
     bankName: string | null;
     accountName: string | null;
@@ -417,6 +422,8 @@ function toProfileView(row: VendorRow): VendorProfileView {
     ownerName: row.owner_name,
     pickupAddress: row.pickup_address,
     pickupHours: row.pickup_hours,
+    email: row.email,
+    backupPhone: row.backup_phone ?? null,
     bank: row.account_number
       ? {
           bankName: row.bank_name,

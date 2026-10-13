@@ -19,6 +19,8 @@ export function ShopForm({ initial }: { initial: VendorProfile }) {
   const [ownerName, setOwnerName] = useState(initial.ownerName);
   const [pickupAddress, setPickupAddress] = useState(initial.pickupAddress ?? "");
   const [pickupHours, setPickupHours] = useState(initial.pickupHours ?? "");
+  const [email, setEmail] = useState(initial.email ?? "");
+  const [backupPhone, setBackupPhone] = useState(initial.backupPhone ?? "");
   const [bankName, setBankName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountName, setAccountName] = useState("");
@@ -38,6 +40,8 @@ export function ShopForm({ initial }: { initial: VendorProfile }) {
             ownerName,
             pickupAddress,
             pickupHours,
+            email,
+            backupPhone,
             ...(settingBank ? { bankName, accountNumber, accountName } : {}),
           });
           if (result.ok) {
@@ -87,6 +91,39 @@ export function ShopForm({ initial }: { initial: VendorProfile }) {
             onChange={(e) => setPickupHours(e.target.value)}
             maxLength={120}
             placeholder="Mon–Sat, 9am–9pm"
+            className={input}
+          />
+        </label>
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-xl font-semibold">If WhatsApp misses it</h2>
+          <p className="mt-1 text-base text-zinc-600">
+            New orders are emailed to you as well, and if nobody taps &ldquo;Got it&rdquo; within 30 minutes we call the
+            second number.
+          </p>
+        </div>
+        <label className="flex flex-col gap-2">
+          <span className="text-base">Email for orders</span>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            maxLength={254}
+            autoComplete="email"
+            placeholder="orders@yourshop.com"
+            className={input}
+          />
+        </label>
+        <label className="flex flex-col gap-2">
+          <span className="text-base">Second phone number</span>
+          <input
+            value={backupPhone}
+            onChange={(e) => setBackupPhone(e.target.value)}
+            inputMode="tel"
+            maxLength={20}
+            placeholder="A manager or the shop line, e.g. 0803 123 4567"
             className={input}
           />
         </label>

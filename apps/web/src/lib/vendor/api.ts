@@ -85,6 +85,10 @@ export interface VendorProfile {
   ownerName: string;
   pickupAddress: string | null;
   pickupHours: string | null;
+  /** Where order alerts are emailed. */
+  email: string | null;
+  /** Second number SendEbun can call. */
+  backupPhone: string | null;
   bank: { bankName: string | null; accountName: string | null; accountLast4: string } | null;
   /** What still stops recipients being sent here. Empty = ready. */
   missing: string[];

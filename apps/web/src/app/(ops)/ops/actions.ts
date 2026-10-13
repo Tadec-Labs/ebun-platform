@@ -150,6 +150,7 @@ export async function saveVendorAction(formData: FormData): Promise<ActionResult
     serviceAreas: list(text(formData, "serviceAreas")),
     deliveryZones: list(text(formData, "deliveryZones")),
     email: optional("email"),
+    backupPhone: optional("backupPhone"),
     bankName: optional("bankName"),
     accountNumber: optional("accountNumber"),
     accountName: optional("accountName"),

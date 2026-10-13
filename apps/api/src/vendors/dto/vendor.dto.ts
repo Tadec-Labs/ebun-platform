@@ -56,6 +56,20 @@ const blankToNull = ({ value }: { value: unknown }): unknown => {
   return trimmed === '' ? null : trimmed;
 };
 
+/**
+ * A Nigerian number as people type it — "0803 123 4567", "234803…",
+ * "+234 803…" — to E.164. Blank becomes null (clear it). Anything else is
+ * passed through, spaces stripped, for the pattern to accept or reject.
+ */
+const nigerianPhoneOrNull = ({ value }: { value: unknown }): unknown => {
+  if (typeof value !== 'string') return value;
+  const compact = value.replace(/[\s()-]/g, '');
+  if (compact === '') return null;
+  if (/^0\d{10}$/.test(compact)) return `+234${compact.slice(1)}`;
+  if (/^234\d{10}$/.test(compact)) return `+${compact}`;
+  return compact;
+};
+
 /** Trims, drops blanks, de-duplicates (case-insensitively, keeping first spelling). */
 const cleanList = ({ value }: { value: unknown }): unknown => {
   if (!Array.isArray(value)) return value;
@@ -103,6 +117,15 @@ export class CreateVendorDto {
   @IsEmail()
   @MaxLength(254)
   email?: string;
+
+  /** A second number for when the WhatsApp one goes quiet. Ops-facing only. */
+  @Transform(nigerianPhoneOrNull)
+  @IsOptional()
+  @Matches(PHONE_PATTERN, {
+    message:
+      'backupPhone must be a phone number, e.g. 08031234567 or +2348031234567',
+  })
+  backupPhone?: string | null;
 
   @IsIn(VENDOR_CATEGORIES)
   category!: VendorCategory;
@@ -231,6 +254,14 @@ export class UpdateVendorDto {
   @IsEmail()
   @MaxLength(254)
   email?: string | null;
+
+  @Transform(nigerianPhoneOrNull)
+  @IsOptional()
+  @Matches(PHONE_PATTERN, {
+    message:
+      'backupPhone must be a phone number, e.g. 08031234567 or +2348031234567',
+  })
+  backupPhone?: string | null;
 
   @ValidateIf((o: UpdateVendorDto) => o.category !== undefined)
   @IsIn(VENDOR_CATEGORIES)
@@ -395,6 +426,21 @@ export class RequestVendorItemDto {
  * account" is exactly what someone holding a lost one would try.
  */
 export class UpdateVendorProfileDto {
+  /** Where order alerts are emailed — the fail-safe when WhatsApp is missed. Blank clears it. */
+  @Transform(blankToNull)
+  @IsOptional()
+  @IsEmail({}, { message: "That email address doesn't look right." })
+  @MaxLength(254)
+  email?: string | null;
+
+  /** A second number SendEbun can call — a manager, partner or shop line. Blank clears it. */
+  @Transform(nigerianPhoneOrNull)
+  @IsOptional()
+  @Matches(PHONE_PATTERN, {
+    message: "That phone number doesn't look right — e.g. 08031234567.",
+  })
+  backupPhone?: string | null;
+
   @Transform(blankToUndefined)
   @IsOptional()
   @IsString()

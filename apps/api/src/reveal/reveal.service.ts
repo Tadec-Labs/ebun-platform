@@ -19,6 +19,7 @@ import type { MediaUrlResolver } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
 import { RevealView } from './reveal-view.interface';
 import { DeliveriesService } from '../deliveries/deliveries.service';
+import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 import type { DeliveryDetailsInput } from '../deliveries/deliveries.service';
 
 const PRE_REVEAL_STATES = new Set([
@@ -84,6 +85,7 @@ export class RevealService {
     private readonly vendors: VendorsService,
     private readonly audit: AuditService,
     private readonly deliveries: DeliveriesService,
+    private readonly alerts: VendorAlertsService,
     @Inject(MEDIA_URL_RESOLVER)
     private readonly mediaResolver: MediaUrlResolver,
   ) {}
@@ -324,6 +326,10 @@ export class RevealService {
       resourceId: order.id,
       metadata: { vendorId, pickupAt: pickupAt.toISOString() },
     });
+
+    // Email as well as the vendor's "Coming in" list — the list only
+    // helps if someone is looking at it. Never throws.
+    await this.alerts.newPickup(order.id, vendorId, pickupAt.toISOString());
 
     return this.view(revealToken);
   }

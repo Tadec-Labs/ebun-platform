@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { FulfillmentStatus, FulfillmentType, OrderStatus } from '@ebun/types';
 import { AuditService } from '../audit/audit.service';
+import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 import { OrdersService } from '../orders/orders.service';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
 import {
@@ -126,6 +127,7 @@ describe('DeliveriesService', () => {
   let repo: Record<keyof DeliveriesRepository, jest.Mock>;
   let orders: { transitionNormal: jest.Mock };
   let audit: { record: jest.Mock };
+  let alerts: { newDelivery: jest.Mock };
 
   beforeEach(async () => {
     repo = {
@@ -145,6 +147,7 @@ describe('DeliveriesService', () => {
     };
     orders = { transitionNormal: jest.fn().mockResolvedValue(undefined) };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    alerts = { newDelivery: jest.fn().mockResolvedValue(undefined) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -152,6 +155,7 @@ describe('DeliveriesService', () => {
         { provide: DeliveriesRepository, useValue: repo },
         { provide: OrdersService, useValue: orders },
         { provide: AuditService, useValue: audit },
+        { provide: VendorAlertsService, useValue: alerts },
       ],
     }).compile();
     sut = moduleRef.get(DeliveriesService);
@@ -175,6 +179,8 @@ describe('DeliveriesService', () => {
         note: 'Blue gate',
       });
       expect(repo.assignVendor).toHaveBeenCalledWith('order-1', 'vendor-1');
+      // Email as well as the link — the fail-safe if WhatsApp is missed.
+      expect(alerts.newDelivery).toHaveBeenCalledWith('order-1', 'vendor-1');
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ eventType: 'order.delivery_details_added' }),
       );

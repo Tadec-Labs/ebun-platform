@@ -11,6 +11,7 @@ import { AuditService } from '../audit/audit.service';
 import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
 import { DeliveriesService } from '../deliveries/deliveries.service';
+import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 
 function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
   return {
@@ -52,6 +53,7 @@ describe('RevealService', () => {
   };
   let mediaResolver: { resolvePlaybackUrl: jest.Mock };
   let vendors: { collectionPointsForGift: jest.Mock; publicNameOf: jest.Mock };
+  let alerts: { newPickup: jest.Mock };
   let deliveries: {
     forRecipient: jest.Mock;
     setRecipientDetails: jest.Mock;
@@ -78,6 +80,7 @@ describe('RevealService', () => {
       publicNameOf: jest.fn().mockResolvedValue(null),
     };
 
+    alerts = { newPickup: jest.fn().mockResolvedValue(undefined) };
     deliveries = {
       forRecipient: jest.fn().mockResolvedValue({ stage: 'awaiting_address' }),
       setRecipientDetails: jest.fn().mockResolvedValue(undefined),
@@ -104,6 +107,7 @@ describe('RevealService', () => {
         { provide: VendorsService, useValue: vendors },
         { provide: AuditService, useValue: audit },
         { provide: DeliveriesService, useValue: deliveries },
+        { provide: VendorAlertsService, useValue: alerts },
         { provide: MEDIA_URL_RESOLVER, useValue: mediaResolver },
       ],
     }).compile();
@@ -713,6 +717,8 @@ describe('RevealService', () => {
           resourceId: 'order-1',
         }),
       );
+      // And emails the vendor, in case nobody is watching "Coming in".
+      expect(alerts.newPickup).toHaveBeenCalledWith('order-1', 'vendor-1', at);
     });
 
     it('refuses a place that cannot hand over this gift', async () => {
