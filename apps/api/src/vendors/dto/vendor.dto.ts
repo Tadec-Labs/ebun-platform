@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -428,4 +429,38 @@ export class UpdateVendorProfileDto {
   @IsString()
   @MaxLength(200)
   accountName?: string;
+}
+
+export const PAYMENT_METHODS = ['bank_transfer', 'cash', 'other'] as const;
+
+/**
+ * Ops recording a transfer they have already made to a vendor.
+ *
+ * `orderIds` are exactly the collections ops saw listed as owed. The
+ * amount is never sent: the database sums those collections, so the
+ * recorded figure can't drift from what was actually owed.
+ */
+export class RecordPayoutDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('4', { each: true })
+  orderIds!: string[];
+
+  /** The bank transfer reference, so a vendor query can be matched to a statement line. */
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  paymentRef!: string;
+
+  @IsOptional()
+  @IsIn(PAYMENT_METHODS)
+  paymentMethod?: (typeof PAYMENT_METHODS)[number];
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
 }

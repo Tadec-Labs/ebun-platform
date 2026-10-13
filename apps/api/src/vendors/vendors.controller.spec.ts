@@ -8,6 +8,7 @@ import { StaffGuard } from '../auth/staff.guard';
 import { UsersService } from '../users/users.service';
 import { VendorsController } from './vendors.controller';
 import { VendorsService } from './vendors.service';
+import { EarningsService } from './earnings.service';
 
 /**
  * Real HTTP, real StaffGuard, real ValidationPipe — only the services
@@ -17,6 +18,7 @@ import { VendorsService } from './vendors.service';
 describe('ops routes over HTTP', () => {
   let app: INestApplication<App>;
   let vendorsService: Record<string, jest.Mock>;
+  let earnings: { forOps: jest.Mock; recordPayout: jest.Mock };
   let auth: { verifyAccessToken: jest.Mock };
   let users: { findStaffByAuthId: jest.Mock };
 
@@ -53,6 +55,10 @@ describe('ops routes over HTTP', () => {
       upsertOffering: jest.fn().mockResolvedValue({}),
       removeOffering: jest.fn().mockResolvedValue(undefined),
     };
+    earnings = {
+      forOps: jest.fn().mockResolvedValue({ owedNow: 0 }),
+      recordPayout: jest.fn().mockResolvedValue({ id: 'payout-1' }),
+    };
     auth = { verifyAccessToken: jest.fn() };
     users = { findStaffByAuthId: jest.fn() };
 
@@ -61,6 +67,7 @@ describe('ops routes over HTTP', () => {
       providers: [
         StaffGuard,
         { provide: VendorsService, useValue: vendorsService },
+        { provide: EarningsService, useValue: earnings },
         { provide: AuthService, useValue: auth },
         { provide: UsersService, useValue: users },
       ],
@@ -147,6 +154,38 @@ describe('ops routes over HTTP', () => {
   describe('validation', () => {
     beforeEach(() => asRole('ebun_ops'));
     const authed = (req: request.Test) => req.set('Authorization', 'Bearer ok');
+
+    it('records a payout with the staff identity, never an amount from the client', async () => {
+      const orderIds = ['4f2b1a40-5c8e-4d61-9a7b-1c2d3e4f5a6b'];
+      await authed(
+        request(app.getHttpServer()).post(`/ops/vendors/${UUID}/payouts`),
+      )
+        .send({ orderIds, paymentRef: 'GTB-778812', amount: 999999999 })
+        .expect(201);
+
+      const [vendorId, dto, staff] = earnings.recordPayout.mock.calls[0] as [
+        string,
+        Record<string, unknown>,
+        { userId: string },
+      ];
+      expect(vendorId).toBe(UUID);
+      expect(dto).toEqual({ orderIds, paymentRef: 'GTB-778812' });
+      expect(staff).toHaveProperty('userId');
+    });
+
+    it('400s a payout with no collections, a bad id, or no reference', async () => {
+      const server = app.getHttpServer();
+      for (const body of [
+        { orderIds: [], paymentRef: 'x' },
+        { orderIds: ['not-a-uuid'], paymentRef: 'x' },
+        { orderIds: ['4f2b1a40-5c8e-4d61-9a7b-1c2d3e4f5a6b'] },
+      ]) {
+        await authed(request(server).post(`/ops/vendors/${UUID}/payouts`))
+          .send(body)
+          .expect(400);
+      }
+      expect(earnings.recordPayout).not.toHaveBeenCalled();
+    });
 
     it('creates with the staff identity attached', async () => {
       await authed(request(app.getHttpServer()).post('/ops/vendors'))

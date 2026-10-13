@@ -11,6 +11,8 @@ import { RedemptionsService } from '../redemptions/redemptions.service';
 import { VendorPortalController } from './vendor-portal.controller';
 import { VendorPortalGuard } from './vendor-portal.guard';
 import { VendorPortalService } from './vendor-portal.service';
+import { EarningsService } from './earnings.service';
+import { PayoutsRepository } from './payouts.repository';
 import { VendorsRepository } from './vendors.repository';
 
 const TOKEN = '11111111-1111-4111-8111-111111111111';
@@ -31,6 +33,7 @@ describe('vendor portal over HTTP', () => {
   let gifts: { createRequestedByVendor: jest.Mock; setImageUrl: jest.Mock };
   let orders: { findUpcomingPickups: jest.Mock; confirmPickup: jest.Mock };
   let photos: { upload: jest.Mock; deleteIfOurs: jest.Mock };
+  let payouts: { listCollections: jest.Mock; listPayouts: jest.Mock };
 
   const asVendor = (over: Record<string, unknown> = {}) => {
     vendors.findByPortalToken.mockResolvedValue({
@@ -71,6 +74,10 @@ describe('vendor portal over HTTP', () => {
       update: jest.fn(),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    payouts = {
+      listCollections: jest.fn().mockResolvedValue([]),
+      listPayouts: jest.fn().mockResolvedValue([]),
+    };
     photos = {
       upload: jest
         .fn()
@@ -100,6 +107,9 @@ describe('vendor portal over HTTP', () => {
         { provide: GiftsService, useValue: gifts },
         { provide: OrdersService, useValue: orders },
         { provide: PublicPhotosService, useValue: photos },
+        // Real: what a counter phone may see of the vendor's money is under test.
+        EarningsService,
+        { provide: PayoutsRepository, useValue: payouts },
         { provide: RedemptionsService, useValue: redemptions },
         { provide: VendorsRepository, useValue: vendors },
         { provide: AuditService, useValue: audit },
@@ -618,11 +628,15 @@ describe('vendor portal over HTTP', () => {
       expect(orders.confirmPickup).not.toHaveBeenCalled();
     });
 
-    it("lists this vendor's bookings by first name — never the collection code", async () => {
+    it("lists this vendor's bookings by first name and what they'll receive — never the collection code", async () => {
       asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([
+        { gift_template_id: GIFT_ID, vendor_price: 720000 },
+      ]);
       orders.findUpcomingPickups.mockResolvedValue([
         {
           id: ORDER_ID,
+          gift_template_id: GIFT_ID,
           recipient_name: 'Adaeze Okonkwo',
           pickup_at: '2026-10-12T11:30:00.000Z',
           pickup_confirmed_at: null,
@@ -646,6 +660,7 @@ describe('vendor portal over HTTP', () => {
           recipientFirstName: 'Adaeze',
           pickupAt: '2026-10-12T11:30:00.000Z',
           confirmed: false,
+          youReceive: 720000,
         },
       ]);
       expect(JSON.stringify(response.body)).not.toMatch(/EBN-/);
@@ -901,6 +916,78 @@ describe('vendor portal over HTTP', () => {
         .send({ accountNumber: '0123456789' })
         .expect(400);
       expect(vendors.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('earnings', () => {
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+
+    it('401s without a token', async () => {
+      await request(app.getHttpServer()).get('/vendor/earnings').expect(401);
+      expect(payouts.listCollections).not.toHaveBeenCalled();
+    });
+
+    it("shows this vendor's collections, what is owed, and what has been paid", async () => {
+      asVendor();
+      payouts.listCollections.mockResolvedValue([
+        {
+          id: 'o-2',
+          order_number: 'EBN-0031',
+          vendor_payout_amount: 720000,
+          vendor_paid_at: null,
+          vendor_payout_id: null,
+          updated_at: '2026-10-13T10:00:00.000Z',
+          gift_templates: { name: 'Large Pepperoni' },
+          redemptions: [{ completed_at: '2026-10-13T09:58:00.000Z' }],
+        },
+        {
+          id: 'o-1',
+          order_number: 'EBN-0030',
+          vendor_payout_amount: 405000,
+          vendor_paid_at: '2026-10-12T17:00:00.000Z',
+          vendor_payout_id: 'p-1',
+          updated_at: '2026-10-12T12:00:00.000Z',
+          gift_templates: { name: 'Jollof & Chicken' },
+          redemptions: { completed_at: '2026-10-12T11:00:00.000Z' },
+        },
+      ]);
+      payouts.listPayouts.mockResolvedValue([
+        {
+          id: 'p-1',
+          net_payout: 405000,
+          orders_count: 1,
+          paid_at: '2026-10-12T17:00:00.000Z',
+          payment_method: 'bank_transfer',
+          payment_ref: 'GTB-1',
+          notes: 'internal note',
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/vendor/earnings')
+        .set(auth)
+        .expect(200);
+
+      expect(payouts.listCollections).toHaveBeenCalledWith(
+        'vendor-1',
+        expect.any(Number),
+      );
+      expect(response.body).toMatchObject({
+        owedNow: 720000,
+        paidTotal: 405000,
+        collections: [
+          {
+            orderNumber: 'EBN-0031',
+            paid: false,
+            collectedAt: '2026-10-13T09:58:00.000Z',
+          },
+          { orderNumber: 'EBN-0030', paid: true },
+        ],
+        payments: [{ amount: 405000, reference: 'GTB-1' }],
+      });
+      // Ops-only detail stays off the counter phone.
+      expect(response.body).not.toHaveProperty('unpaidOrderIds');
+      expect(JSON.stringify(response.body)).not.toContain('internal note');
     });
   });
 });

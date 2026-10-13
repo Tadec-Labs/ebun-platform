@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { VendorApiError, vendorFetch, type VendorProfile } from "@/lib/vendor/api";
 import { ShopForm } from "./shop-form";
+import { VendorNav } from "../vendor-nav";
 
 export const metadata: Metadata = {
   title: "Your shop",
@@ -40,14 +40,7 @@ export default async function VendorShopPage() {
       <header>
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-zinc-500">{profile.businessName}</p>
-          <nav className="flex gap-4">
-            <Link href="/vendor" className="text-base font-medium text-zinc-900 underline underline-offset-4">
-              Collect
-            </Link>
-            <Link href="/vendor/gifts" className="text-base font-medium text-zinc-900 underline underline-offset-4">
-              Items
-            </Link>
-          </nav>
+          <VendorNav current="/vendor/shop" />
         </div>
         <h1 className="mt-1 text-3xl font-semibold">Your shop</h1>
       </header>

@@ -308,3 +308,28 @@ export const ORDER_STATUS_GROUPS: { label: string; statuses: OrderStatusValue[] 
   { label: "Settled", statuses: ["redeemed", "fulfilled", "refunded", "cancelled"] },
   { label: "Never paid", statuses: ["draft", "pending_payment", "payment_failed"] },
 ];
+
+/** Mirrors the API's OpsEarningsView. Amounts in kobo. */
+export interface VendorEarnings {
+  owedNow: number;
+  paidTotal: number;
+  collections: {
+    orderId: string;
+    orderNumber: string | null;
+    giftName: string;
+    amount: number;
+    collectedAt: string;
+    paid: boolean;
+    paidAt: string | null;
+  }[];
+  payments: {
+    id: string;
+    amount: number;
+    collections: number;
+    paidAt: string | null;
+    method: string | null;
+    reference: string | null;
+  }[];
+  /** Exactly the collections to send when recording a payment. */
+  unpaidOrderIds: string[];
+}

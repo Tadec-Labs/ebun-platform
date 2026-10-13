@@ -8,6 +8,7 @@ import {
   type VendorProfile,
 } from "@/lib/vendor/api";
 import { ItemsManager } from "./items-manager";
+import { VendorNav } from "../vendor-nav";
 
 export const metadata: Metadata = {
   title: "Your items",
@@ -55,14 +56,7 @@ export default async function VendorItemsPage() {
       <header>
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-zinc-500">{identity.businessName}</p>
-          <nav className="flex gap-4">
-            <Link href="/vendor" className="text-base font-medium text-zinc-900 underline underline-offset-4">
-              Collect
-            </Link>
-            <Link href="/vendor/shop" className="text-base font-medium text-zinc-900 underline underline-offset-4">
-              Shop
-            </Link>
-          </nav>
+          <VendorNav current="/vendor/gifts" />
         </div>
         <h1 className="mt-1 text-3xl font-semibold">Your items</h1>
       </header>

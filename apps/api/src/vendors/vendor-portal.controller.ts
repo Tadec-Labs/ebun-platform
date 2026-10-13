@@ -30,6 +30,7 @@ import {
   UpdateVendorProfileDto,
 } from './dto/vendor.dto';
 import { VendorPortalService } from './vendor-portal.service';
+import { EarningsService } from './earnings.service';
 
 /**
  * The counter screen's API. One vendor, their own gifts, nothing else.
@@ -57,6 +58,7 @@ export class VendorPortalController {
     private readonly vendors: VendorsRepository,
     private readonly audit: AuditService,
     private readonly portal: VendorPortalService,
+    private readonly earnings: EarningsService,
   ) {}
 
   /** Confirms the link works and names the business, so staff can see whose till they are on. */
@@ -208,6 +210,13 @@ export class VendorPortalController {
     @Req() request: VendorRequest,
   ) {
     return this.portal.updateProfile(vendorOf(request), body, metaOf(request));
+  }
+
+  /** What the vendor has collected, what SendEbun owes them, and what's been paid. */
+  @Get('earnings')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  getEarnings(@Req() request: VendorRequest) {
+    return this.earnings.forVendor(vendorOf(request).vendorId);
   }
 
   /** Recipients who booked a time to collect here — so it's ready when they arrive. */

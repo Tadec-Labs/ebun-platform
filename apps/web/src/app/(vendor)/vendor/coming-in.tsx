@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { formatNaira } from "@/lib/format-money";
 import type { VendorPickup } from "@/lib/vendor/api";
 import { confirmPickupAction, listPickupsAction } from "./actions";
 
@@ -80,6 +81,12 @@ export function ComingIn({ initial }: { initial: VendorPickup[] }) {
               <p className="text-base text-zinc-700">
                 {pickup.recipientFirstName} · {formatTime(pickup.pickupAt)}
               </p>
+              {/* The money is already paid — say so before anyone starts cooking. */}
+              {pickup.youReceive !== null && (
+                <p className="text-sm font-medium text-emerald-700">
+                  Paid ✓ · you receive {formatNaira(pickup.youReceive)}
+                </p>
+              )}
             </div>
             {pickup.confirmed ? (
               <span className="shrink-0 text-base font-medium text-emerald-700">✓ Ready</span>

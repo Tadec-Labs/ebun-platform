@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
-import type { GiftTemplate, Offering, Vendor, VendorSummary } from "@/lib/ops/types";
+import type { GiftTemplate, Offering, Vendor, VendorEarnings, VendorSummary } from "@/lib/ops/types";
+import { EarningsPanel } from "./earnings-panel";
 import { VendorForm } from "../vendor-form";
 import { OfferingsPanel } from "./offerings-panel";
 import { PortalLink } from "./portal-link";
@@ -19,7 +20,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
     throw error;
   }
 
-  const [offerings, vendors, catalog] = await Promise.all([
+  const [offerings, vendors, catalog, earnings] = await Promise.all([
     opsFetch<Offering[]>(`/ops/vendors/${id}/offerings`),
     opsFetch<VendorSummary[]>("/ops/vendors"),
     // The OPS catalogue, not the public one. New gifts are created off
@@ -28,6 +29,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
     // had already been published, which is backwards: you link the
     // vendor who fulfils it, then put it on sale.
     opsFetch<GiftTemplate[]>("/ops/gifts"),
+    opsFetch<VendorEarnings>(`/ops/vendors/${id}/earnings`),
   ]);
 
   return (
@@ -45,6 +47,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
       )}
 
       <div className="flex flex-col gap-10">
+        <EarningsPanel vendor={vendor} earnings={earnings} />
         <OfferingsPanel
           vendorId={vendor.id}
           offerings={offerings}

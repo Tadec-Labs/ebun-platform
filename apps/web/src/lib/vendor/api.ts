@@ -35,6 +35,31 @@ export interface VendorPickup {
   pickupAt: string; // ISO
   /** This vendor already tapped "Got it". */
   confirmed: boolean;
+  /** kobo — already paid by the sender, owed to this vendor on handover. */
+  youReceive: number | null;
+}
+
+/** Mirrors the API's EarningsView. Amounts in kobo. */
+export interface VendorEarnings {
+  owedNow: number;
+  paidTotal: number;
+  collections: {
+    orderId: string;
+    orderNumber: string | null;
+    giftName: string;
+    amount: number;
+    collectedAt: string;
+    paid: boolean;
+    paidAt: string | null;
+  }[];
+  payments: {
+    id: string;
+    amount: number;
+    collections: number;
+    paidAt: string | null;
+    method: string | null;
+    reference: string | null;
+  }[];
 }
 
 /** The vendor's own details. Mirrors the API's VendorProfileView. */

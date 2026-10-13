@@ -46,6 +46,11 @@ export interface PickupView {
   pickupAt: string;
   /** The vendor already tapped "Got it". */
   confirmed: boolean;
+  /**
+   * kobo — already paid by the sender and owed to the vendor on handover.
+   * Shown so the counter sees the money is real before preparing anything.
+   */
+  youReceive: number | null;
 }
 
 /** A booking stays on the vendor's list this long after its time. */
@@ -87,11 +92,18 @@ export class VendorPortalService {
    * collected.
    */
   async listPickups(vendorId: string): Promise<PickupView[]> {
-    const rows = await this.orders.findUpcomingPickups(
-      vendorId,
-      new Date(Date.now() - LATE_ARRIVAL_WINDOW_MS),
+    const [rows, offerings] = await Promise.all([
+      this.orders.findUpcomingPickups(
+        vendorId,
+        new Date(Date.now() - LATE_ARRIVAL_WINDOW_MS),
+      ),
+      this.vendors.listPortalOfferings(vendorId),
+    ]);
+    const priceOf = new Map(
+      offerings.map((o) => [o.gift_template_id, o.vendor_price]),
     );
     return rows.map((row) => ({
+      youReceive: priceOf.get(row.gift_template_id) ?? null,
       orderId: row.id,
       giftName: row.gift_templates?.name ?? 'Gift',
       recipientFirstName:

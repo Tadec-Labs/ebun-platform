@@ -302,6 +302,41 @@ export async function uploadGiftPhotoAction(giftId: string, form: FormData): Pro
   return { ok: true, message: "Photo saved." };
 }
 
+/**
+ * Records a transfer already made to a vendor. Sends exactly the
+ * collections ops was looking at; the API sums them itself, so the
+ * recorded amount can't differ from the one on screen — and if another
+ * collection landed or one was paid in the meantime, it refuses (409)
+ * instead of recording a different figure.
+ */
+export async function recordVendorPayoutAction(input: {
+  vendorId: string;
+  orderIds: string[];
+  paymentRef: string;
+  paymentMethod: string;
+  notes: string;
+}): Promise<ActionResult> {
+  if (input.orderIds.length === 0) return fail(["Nothing is owed to this vendor."]);
+  if (!input.paymentRef.trim()) return fail(["Enter the transfer reference from your bank."]);
+
+  try {
+    await opsFetch(`/ops/vendors/${input.vendorId}/payouts`, {
+      method: "POST",
+      body: {
+        orderIds: input.orderIds,
+        paymentRef: input.paymentRef.trim(),
+        paymentMethod: input.paymentMethod,
+        notes: input.notes.trim() || undefined,
+      },
+    });
+  } catch (error) {
+    return asFailure(error);
+  }
+
+  revalidatePath(`/ops/vendors/${input.vendorId}`);
+  return { ok: true, message: "Payment recorded. The vendor sees it on their Earnings screen." };
+}
+
 // ---------------------------------------------------------- redemption
 
 export type LookupResult =

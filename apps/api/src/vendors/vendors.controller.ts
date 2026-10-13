@@ -19,9 +19,11 @@ import { StaffRoles } from '../auth/staff-roles.decorator';
 import { NoStoreInterceptor } from '../common/no-store.interceptor';
 import {
   CreateVendorDto,
+  RecordPayoutDto,
   UpdateVendorDto,
   UpsertOfferingDto,
 } from './dto/vendor.dto';
+import { EarningsService } from './earnings.service';
 import { VendorsService } from './vendors.service';
 import type { RequestMeta } from './vendors.service';
 
@@ -51,7 +53,10 @@ function metaOf(request: StaffRequest): RequestMeta {
 @StaffRoles('ebun_admin', 'ebun_ops')
 @UseInterceptors(NoStoreInterceptor)
 export class VendorsController {
-  constructor(private readonly vendors: VendorsService) {}
+  constructor(
+    private readonly vendors: VendorsService,
+    private readonly earnings: EarningsService,
+  ) {}
 
   @Get()
   list() {
@@ -128,5 +133,26 @@ export class VendorsController {
       metaOf(request),
     );
     return { removed: true };
+  }
+
+  /** What this vendor is owed, what they've been paid, and the exact collections behind it. */
+  @Get(':id/earnings')
+  getEarnings(@Param('id', ParseUUIDPipe) id: string) {
+    return this.earnings.forOps(id);
+  }
+
+  /** Record a transfer already made. The amount is computed from `orderIds`, never sent. */
+  @Post(':id/payouts')
+  recordPayout(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RecordPayoutDto,
+    @Req() request: StaffRequest,
+  ) {
+    return this.earnings.recordPayout(
+      id,
+      dto,
+      staffOf(request),
+      metaOf(request),
+    );
   }
 }

@@ -11,6 +11,8 @@ import { VendorPortalService } from './vendor-portal.service';
 import { VendorsController } from './vendors.controller';
 import { VendorsRepository } from './vendors.repository';
 import { VendorsService } from './vendors.service';
+import { EarningsService } from './earnings.service';
+import { PayoutsRepository } from './payouts.repository';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { VendorsService } from './vendors.service';
     VendorsRepository,
     VendorsService,
     VendorPortalService,
+    PayoutsRepository,
+    EarningsService,
     VendorPortalGuard,
   ],
   exports: [VendorsService],
