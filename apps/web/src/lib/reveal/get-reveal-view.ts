@@ -2,6 +2,7 @@ import { FulfillmentType, OrderStatus, RedemptionStatus } from "@ebun/types";
 import { API_BASE_URL } from "@/lib/api-config";
 import { renderQrSvg } from "./qr";
 import { deriveScreenState } from "./types";
+import type { DeliveryDetails } from "./types";
 import type { RevealPayload, RevealScreenState } from "./types";
 
 /**
@@ -50,6 +51,8 @@ interface ApiRevealView {
     confirmed: boolean;
   };
   collected?: { at: string | null; placeName: string | null };
+  delivery?: DeliveryDetails;
+  messageLocked?: boolean;
 }
 
 export type RevealFetchResult =
@@ -128,7 +131,11 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
   // exists yet, which is the whole difference between "scratch this"
   // and "here is your code" — both of which are orderStatus
   // reveal_opened.
-  let screenState = deriveScreenState(view.orderStatus, fulfillmentType, false);
+  let screenState = deriveScreenState(
+    view.orderStatus,
+    fulfillmentType,
+    Boolean(view.delivery?.address),
+  );
   if (screenState === "ready" && view.redemption) {
     screenState = "claimed";
   }
@@ -146,6 +153,8 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
     theme: toTheme(view.theme),
     message: view.message,
     collected: view.collected,
+    delivery: view.delivery,
+    messageLocked: view.messageLocked,
   };
 
   if (view.redemption) {

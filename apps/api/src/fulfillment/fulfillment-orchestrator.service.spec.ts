@@ -290,8 +290,37 @@ describe('FulfillmentOrchestratorService', () => {
     });
   });
 
+  describe('physical (doorstep delivery)', () => {
+    beforeEach(() => {
+      gifts.findById.mockResolvedValue({
+        id: 'template-1',
+        delivery_type: FulfillmentType.Physical,
+      });
+    });
+
+    it('opens the delivery at fulfillment_in_progress and sends the reveal link, with no vendor yet', async () => {
+      await sut.start('order-1');
+
+      expect(orders.transitionNormal).toHaveBeenNthCalledWith(
+        2,
+        'order-1',
+        OrderStatus.Processing,
+        OrderStatus.FulfillmentInProgress,
+        { type: 'system' },
+      );
+      // Stops there: nothing can be dispatched before the recipient gives an address.
+      expect(orders.transitionNormal).toHaveBeenCalledTimes(2);
+      expect(fulfillments.create).toHaveBeenCalledWith({
+        orderId: 'order-1',
+        fulfillmentType: FulfillmentType.Physical,
+        status: FulfillmentStatus.Pending,
+      });
+      expect(notifications.sendGiftRevealLink).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('unsupported fulfillment types', () => {
-    it.each([FulfillmentType.Physical, FulfillmentType.Experience])(
+    it.each([FulfillmentType.Experience])(
       'throws for %s and leaves the order at processing',
       async (deliveryType) => {
         gifts.findById.mockResolvedValue({

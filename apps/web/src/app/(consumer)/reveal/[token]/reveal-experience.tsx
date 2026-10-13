@@ -2,27 +2,25 @@
 
 import { BrandLogo } from "@/components/brand-logo";
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { FulfillmentType } from "@ebun/types";
 import type { CollectionPoint, PickupBooking, RedemptionDetails, RevealPayload } from "@/lib/reveal/types";
-import { claimGiftAction } from "./actions";
+import { claimGiftAction, refreshRevealAction } from "./actions";
+import { AddressScreen, TransitScreen } from "./components/delivery-screens";
 import { HoldToUnwrap } from "./components/hold-to-unwrap";
 import { GiftMark, LockGlyph } from "@/components/icons";
 import { MessagePlayer } from "./components/message-player";
 import { PickupBookingPanel } from "./components/pickup-booking";
 import { ScratchPanel } from "./components/scratch-panel";
-import { StatusLine } from "./components/status-line";
 
 /**
  * Phase is local state; what it is allowed to start as comes from the
- * server (see initialPhase). Only one transition talks to the API:
- *  - reveal -> claimed:        POST /reveal/:token/accept, via claimGiftAction
- * The physical-journey phases below still have no endpoints behind
- * them — address capture and arrival-triggered reveal have no backend
- * contract — and no physical order can reach them today, because the
- * two delivered gift templates are withheld from the catalog until
- * that fulfillment path exists. The screens are kept rather than
- * deleted: they are the spec for that work, not dead code.
+ * server (see initialPhase). Transitions that talk to the API:
+ *  - reveal -> claimed:          POST /reveal/:token/accept (vouchers)
+ *  - address -> transit:         POST /reveal/:token/delivery (doorstep gifts)
+ *  - arrival-message -> fulfilled: POST /reveal/:token/accept (marks it opened)
+ * While a doorstep gift is on its way the page re-reads itself every
+ * minute, so "It's here" appears on a phone left open on this screen.
  */
 type Phase =
   | "entry"
@@ -69,7 +67,9 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
   const [scratched, setScratched] = useState(
     !["ready", "not_ready", "expired", "unavailable"].includes(initial.screenState),
   );
-  const [address, setAddress] = useState("");
+  // The doorstep-delivery half of the payload, replaced as the page
+  // re-reads itself — the sender's message only arrives with delivery.
+  const [live, setLive] = useState(initial);
   // Starts as whatever the server already knew (a returning visitor who
   // claimed on an earlier visit), and is replaced by the real record
   // the claim call returns. Never invented locally: a code this screen
@@ -83,6 +83,33 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claiming, startClaim] = useTransition();
   const isPhysical = initial.fulfillmentType === FulfillmentType.Physical;
+
+  // Follow a delivery while it's on its way. Once a minute, only while
+  // the tab is visible (a pocketed phone shouldn't burn data), and it
+  // stops itself at "arrived".
+  useEffect(() => {
+    if (!isPhysical || phase !== "transit") return;
+    const tick = async () => {
+      if (document.visibilityState !== "visible") return;
+      const next = await refreshRevealAction(token);
+      if (!next) return;
+      setLive(next);
+      if (next.screenState === "arrived") setPhase("arrival-lock");
+      else if (next.screenState === "fulfilled") setPhase("fulfilled");
+    };
+    const timer = setInterval(() => void tick(), 60_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [isPhysical, phase, token]);
+
+  /** Unwrapped after delivery: tell the server (best effort — the moment already happened). */
+  function finishDelivered() {
+    setPhase("fulfilled");
+    void claimGiftAction(token);
+  }
 
   function claim() {
     setClaimError(null);
@@ -143,10 +170,14 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
 
         {phase === "address" && (
           <AddressScreen
+            token={token}
             giftName={initial.giftName}
-            address={address}
-            onChangeAddress={setAddress}
-            onSubmit={() => setPhase("transit")}
+            current={live.delivery?.address ? live.delivery : null}
+            onSaved={(payload) => {
+              setLive(payload);
+              setPhase("transit");
+            }}
+            onCancel={live.delivery?.address ? () => setPhase("transit") : undefined}
           />
         )}
 
@@ -154,19 +185,21 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
           <TransitScreen
             giftName={initial.giftName}
             senderName={initial.senderName}
-            etaLabel={initial.deliveryEtaLabel}
+            delivery={live.delivery ?? null}
+            messageLocked={Boolean(live.messageLocked)}
+            onChangeAddress={() => setPhase("address")}
           />
         )}
 
         {phase === "arrival-lock" && (
-          <ArrivalLockScreen onUnwrapped={() => setPhase("arrival-message")} />
+          <ArrivalLockScreen
+            hasMessage={Boolean(live.message)}
+            onUnwrapped={() => (live.message ? setPhase("arrival-message") : finishDelivered())}
+          />
         )}
 
-        {phase === "arrival-message" && initial.message && (
-          <ArrivalMessageScreen
-            payload={initial}
-            onDone={() => setPhase("fulfilled")}
-          />
+        {phase === "arrival-message" && live.message && (
+          <ArrivalMessageScreen payload={live} onDone={finishDelivered} />
         )}
 
         {phase === "claimed" && claimed && (
@@ -193,10 +226,13 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
         )}
 
         {phase === "fulfilled" && (
-          <TerminalScreen
-            title="Delivered, and opened"
-            body="You've already unwrapped this one."
+          <CollectedScreen
             giftName={initial.giftName}
+            delivered
+            collected={{
+              at: live.delivery?.deliveredAt ?? null,
+              placeName: live.delivery?.placeName ?? null,
+            }}
           />
         )}
       </div>
@@ -327,7 +363,7 @@ function RevealScreen({
         giftImageUrl={payload.giftImageUrl}
       />
 
-      {isPhysical && (
+      {isPhysical && payload.messageLocked && (
         <div
           className="flex items-center gap-3 border px-4 py-3"
           style={{ borderColor: "var(--border)" }}
@@ -380,95 +416,13 @@ function RevealScreen({
   );
 }
 
-function AddressScreen({
-  giftName,
-  address,
-  onChangeAddress,
-  onSubmit,
+function ArrivalLockScreen({
+  hasMessage,
+  onUnwrapped,
 }: {
-  giftName?: string;
-  address: string;
-  onChangeAddress: (v: string) => void;
-  onSubmit: () => void;
+  hasMessage: boolean;
+  onUnwrapped: () => void;
 }) {
-  return (
-    <div className="flex flex-1 flex-col justify-center gap-7">
-      <div className="flex flex-col gap-2 text-center">
-        <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
-          Where should this go?
-        </h2>
-        <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
-          {giftName ? `${giftName} is ready to be sent your way.` : "Your gift is ready to send."}
-        </p>
-      </div>
-      <textarea
-        value={address}
-        onChange={(e) => onChangeAddress(e.target.value)}
-        placeholder="House number, street, area, city"
-        rows={4}
-        className="w-full resize-none border bg-transparent p-4 text-sm outline-none"
-        style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
-      />
-      <button
-        type="button"
-        onClick={onSubmit}
-        disabled={address.trim().length < 6}
-        className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
-        style={{ background: "var(--action)", color: "var(--ink)" }}
-      >
-        Confirm delivery address
-      </button>
-    </div>
-  );
-}
-
-function TransitScreen({
-  giftName,
-  senderName,
-  etaLabel,
-}: {
-  giftName?: string;
-  senderName?: string | null;
-  etaLabel?: string;
-}) {
-  return (
-    <div className="flex flex-1 flex-col justify-center gap-10">
-      <div className="flex flex-col gap-2 text-center">
-        <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
-          It&rsquo;s on its way.
-        </h2>
-        {etaLabel && (
-          <p className="text-sm" style={{ color: "var(--gold-light)" }}>
-            {etaLabel}
-          </p>
-        )}
-        {giftName && (
-          <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
-            {giftName}
-          </p>
-        )}
-      </div>
-
-      <StatusLine
-        steps={[
-          { label: "Confirmed", state: "done" },
-          { label: "On its way", state: "current" },
-          { label: "Arriving", state: "upcoming" },
-        ]}
-      />
-
-      <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: "var(--border)" }}>
-        <LockGlyph className="h-4 w-4 flex-shrink-0 text-[color:var(--gold-dim)]" />
-        <p className="text-xs leading-snug" style={{ color: "var(--cream-dim)" }}>
-          {senderName ? `${senderName}'s` : "Their"} message opens with it, the moment it
-          arrives.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function ArrivalLockScreen({ onUnwrapped }: { onUnwrapped: () => void }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-8 text-center">
       <div className="flex flex-col gap-2">
@@ -476,7 +430,7 @@ function ArrivalLockScreen({ onUnwrapped }: { onUnwrapped: () => void }) {
           It&rsquo;s here.
         </h2>
         <p className="mx-auto max-w-[28ch] text-sm" style={{ color: "var(--cream-dim)" }}>
-          Your message has been waiting for this moment.
+          {hasMessage ? "Your message has been waiting for this moment." : "Hold to open it properly."}
         </p>
       </div>
       <HoldToUnwrap onUnwrapped={onUnwrapped} />
@@ -699,22 +653,29 @@ function directionsUrl(place: CollectionPoint): string {
 function CollectedScreen({
   giftName,
   collected,
+  delivered = false,
 }: {
   giftName?: string;
   collected?: { at: string | null; placeName: string | null };
+  /** A doorstep gift: "Delivered by X", not "Collected at X". */
+  delivered?: boolean;
 }) {
   const when = collected?.at
     ? new Date(collected.at).toLocaleDateString("en-NG", { day: "numeric", month: "long" })
     : null;
   const where = collected?.placeName ?? null;
+  const verb = delivered ? "Delivered" : "Collected";
+  const prep = delivered ? "by" : "at";
   const detail =
     where && when
-      ? `Collected at ${where} on ${when}.`
+      ? `${verb} ${prep} ${where} on ${when}.`
       : where
-        ? `Collected at ${where}.`
+        ? `${verb} ${prep} ${where}.`
         : when
-          ? `Collected on ${when}.`
-          : "This gift has been collected.";
+          ? `${verb} on ${when}.`
+          : delivered
+            ? "Your gift has been delivered."
+            : "This gift has been collected.";
 
   return (
     <div className="flex flex-1 flex-col justify-center gap-10 text-center">
@@ -744,32 +705,6 @@ function CollectedScreen({
           Send one back
         </Link>
       </div>
-    </div>
-  );
-}
-
-function TerminalScreen({
-  title,
-  body,
-  giftName,
-}: {
-  title: string;
-  body: string;
-  giftName?: string;
-}) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-      <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
-        {title}
-      </h2>
-      <p className="max-w-[28ch] text-sm" style={{ color: "var(--cream-dim)" }}>
-        {body}
-      </p>
-      {giftName && (
-        <p className="mt-2 text-xs tracking-wide" style={{ color: "var(--gold-dim)" }}>
-          {giftName}
-        </p>
-      )}
     </div>
   );
 }

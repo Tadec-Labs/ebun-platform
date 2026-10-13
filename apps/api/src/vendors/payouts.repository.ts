@@ -15,6 +15,9 @@ export interface CollectionRow {
   // object or a one-element array depending on how it reads the FK.
   redemptions:
     { completed_at: string | null } | { completed_at: string | null }[] | null;
+  /** Doorstep gifts: handed over at the door rather than at a counter. Same one-to-one embed. */
+  gift_fulfillments?:
+    { delivered_at: string | null } | { delivered_at: string | null }[] | null;
 }
 
 /**
@@ -33,7 +36,7 @@ export interface PayoutRow {
 }
 
 const COLLECTION_COLUMNS =
-  'id, order_number, vendor_payout_amount, vendor_paid_at, vendor_payout_id, updated_at, gift_templates!gift_template_id(name), redemptions(completed_at)';
+  'id, order_number, vendor_payout_amount, vendor_paid_at, vendor_payout_id, updated_at, gift_templates!gift_template_id(name), redemptions(completed_at), gift_fulfillments(delivered_at)';
 
 const PAYOUT_COLUMNS =
   'id, net_payout, orders_count, paid_at, payment_method, payment_ref, notes';

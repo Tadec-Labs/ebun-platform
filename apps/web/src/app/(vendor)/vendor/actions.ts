@@ -6,6 +6,7 @@ import {
   VendorApiError,
   vendorFetch,
   type VendorOffering,
+  type VendorDelivery,
   type VendorPickup,
   type VendorProfile,
   type VendorRedemption,
@@ -195,6 +196,38 @@ export async function listPickupsAction(): Promise<
 > {
   try {
     return { ok: true, pickups: await vendorFetch<VendorPickup[]>("/vendor/pickups") };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+export async function listDeliveriesAction(): Promise<
+  { ok: true; deliveries: VendorDelivery[] } | { ok: false; message: string }
+> {
+  try {
+    return { ok: true, deliveries: await vendorFetch<VendorDelivery[]>("/vendor/deliveries") };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+/**
+ * The three things a shop does with a delivery: "Got it", "Out for
+ * delivery" (optionally naming the rider, which the recipient sees with
+ * a call button), and "Delivered" — which credits them.
+ */
+export async function deliveryStepAction(
+  orderId: string,
+  step: "ack" | "dispatch" | "delivered",
+  rider?: { riderName?: string; riderPhone?: string },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await vendorFetch<{ ok: true }>(
+      `/vendor/deliveries/${encodeURIComponent(orderId)}/${step}`,
+      { method: "POST", body: step === "dispatch" ? (rider ?? {}) : undefined },
+    );
+    if (step === "delivered") revalidatePath("/vendor/earnings");
+    return { ok: true };
   } catch (error) {
     return { ok: false, message: messageOf(error) };
   }

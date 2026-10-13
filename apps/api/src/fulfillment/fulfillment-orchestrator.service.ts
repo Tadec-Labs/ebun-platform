@@ -12,13 +12,17 @@ import type { VtuProviderService } from './vtu-provider.interface';
 import { UnsupportedFulfillmentTypeException } from './exceptions/unsupported-fulfillment-type.exception';
 
 /**
- * Entry point for Phase 1 fulfillment: walks a `paid` order through
+ * Entry point for fulfillment: walks a `paid` order through
  * `processing → fulfillment_in_progress → {voucher_issued | ready_for_redemption}`
  * for the two fulfillment types that bypass vendor notification entirely
  * (digital_voucher, vtu — see order-state-machine.ts's SCHEMA-tagged
- * comment on why those two skip vendor_notified). `physical` and
- * `experience` both need the vendor-marketplace module, which doesn't
- * exist yet — see UnsupportedFulfillmentTypeException.
+ * comment on why those two skip vendor_notified).
+ *
+ * `physical` (doorstep delivery) stops at `fulfillment_in_progress`
+ * with the reveal link sent: nothing more can happen until the recipient
+ * says where to bring it. DeliveriesService takes it from there.
+ * `experience` still has no fulfilment — see
+ * UnsupportedFulfillmentTypeException.
  *
  * INVOCATION & FAILURE MODE — read before wiring this in elsewhere:
  * Called synchronously from PaystackWebhookService right after payment
@@ -92,8 +96,11 @@ export class FulfillmentOrchestratorService {
       case FulfillmentType.Vtu:
         await this.fulfilVtu(order);
         return;
+      case FulfillmentType.Physical:
+        await this.startDelivery(order);
+        return;
       default:
-        // physical | experience — left at 'processing', see exception's
+        // experience — left at 'processing', see exception's
         // own doc comment for why this is a 500, not a 400.
         throw new UnsupportedFulfillmentTypeException(
           order.id,
@@ -139,6 +146,33 @@ export class FulfillmentOrchestratorService {
     );
 
     this.logger.log(`Order ${order.id}: digital voucher issued`);
+
+    await this.notifyRecipient(order);
+  }
+
+  /**
+   * Doorstep delivery's first step. The gift can't be prepared for an
+   * address nobody has given yet, so this opens the delivery record and
+   * sends the reveal link — the recipient scratches, then says where to
+   * bring it. No vendor yet: one is assigned when the address arrives
+   * (DeliveriesService.setRecipientDetails), so the choice can take the
+   * recipient's area into account.
+   */
+  private async startDelivery(order: OrderRow): Promise<void> {
+    await this.ordersService.transitionNormal(
+      order.id,
+      OrderStatus.Processing,
+      OrderStatus.FulfillmentInProgress,
+      { type: 'system' },
+    );
+
+    await this.fulfillments.create({
+      orderId: order.id,
+      fulfillmentType: FulfillmentType.Physical,
+      status: FulfillmentStatus.Pending,
+    });
+
+    this.logger.log(`Order ${order.id}: delivery opened, waiting for address`);
 
     await this.notifyRecipient(order);
   }

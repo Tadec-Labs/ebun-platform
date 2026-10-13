@@ -264,8 +264,8 @@ function describeCollection(item: GiftCatalogItem): string {
   switch (item.deliveryType) {
     case FulfillmentType.Physical:
       return item.deliveryWindow
-        ? `Delivered in ${item.deliveryWindow}`
-        : "Delivered";
+        ? `Delivered to their door · ${item.deliveryWindow}`
+        : "Delivered to their door";
     case FulfillmentType.Vtu:
       return "Arrives on their line in seconds";
     default:

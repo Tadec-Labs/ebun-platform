@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { FulfillmentType } from "@ebun/types";
 import { CreateOrderError, createOrder } from "@/lib/orders/create-order";
 import { formatNaira } from "@/lib/format-money";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
@@ -117,10 +118,21 @@ export function ReviewAndPay({
             style={{ borderColor: "var(--border)" }}
           >
             <SummaryRow label="Gift" value={formatNaira(gift.basePrice)} />
+            {gift.deliveryFee > 0 && (
+              <SummaryRow label="Delivery to their door" value={formatNaira(gift.deliveryFee)} />
+            )}
             {gift.serviceFee > 0 && (
               <SummaryRow label="Service fee" value={formatNaira(gift.serviceFee)} />
             )}
           </div>
+          {gift.deliveryType === FulfillmentType.Physical && (
+            // Answers the question every sender of a hamper has: "but I
+            // didn't give an address". They don't need one.
+            <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+              No address needed from you. {message.recipientName || "They"} will tell us where to bring it when they
+              open the gift — the surprise stays intact.
+            </p>
+          )}
           <div
             className="flex items-baseline justify-between border-t pt-3"
             style={{ borderColor: "var(--border)" }}

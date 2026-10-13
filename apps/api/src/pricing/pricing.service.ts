@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { FulfillmentType } from '@ebun/types';
 import {
   computeServiceFee,
+  resolveDeliveryFeeKobo,
   resolveServiceFeePolicy,
   ServiceFeePolicy,
 } from './service-fee';
@@ -9,7 +11,7 @@ export interface GiftPrice {
   /** The gift itself, kobo — the vendor's in-store price. */
   giftValue: number;
   serviceFee: number;
-  /** Not charged yet: nothing delivered is on sale. Kept explicit so the total is honest about its parts. */
+  /** Doorstep gifts only (DELIVERY_FEE_KOBO); 0 for everything collected or digital. Passed through to the vendor who delivers. */
   deliveryFee: number;
   total: number;
 }
@@ -25,14 +27,21 @@ export interface GiftPrice {
 @Injectable()
 export class PricingService {
   private readonly policy: ServiceFeePolicy;
+  private readonly deliveryFeeKobo: number;
 
   constructor() {
     this.policy = resolveServiceFeePolicy();
+    this.deliveryFeeKobo = resolveDeliveryFeeKobo();
   }
 
-  priceGift(giftValue: number): GiftPrice {
+  /**
+   * The service fee is on the gift alone, never on the delivery fee:
+   * SendEbun doesn't earn a cut of the rider's money.
+   */
+  priceGift(giftValue: number, deliveryType?: FulfillmentType): GiftPrice {
     const serviceFee = computeServiceFee(giftValue, this.policy);
-    const deliveryFee = 0;
+    const deliveryFee =
+      deliveryType === FulfillmentType.Physical ? this.deliveryFeeKobo : 0;
     return {
       giftValue,
       serviceFee,

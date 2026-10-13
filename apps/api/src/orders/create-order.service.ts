@@ -51,7 +51,10 @@ export class CreateOrderService {
       deliveryFee,
       serviceFee,
       total: totalAmount,
-    } = this.pricing.priceGift(giftTemplate.base_price);
+    } = this.pricing.priceGift(
+      giftTemplate.base_price,
+      giftTemplate.delivery_type,
+    );
 
     const paystackReference = `ebun_${randomUUID()}`;
 

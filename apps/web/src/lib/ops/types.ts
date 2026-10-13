@@ -118,7 +118,7 @@ export interface RedemptionLookup {
 }
 
 /** Mirrors apps/api/src/gifts/ops-gifts.service.ts's GiftTemplateView. */
-export type GiftDeliveryType = "digital_voucher" | "vtu";
+export type GiftDeliveryType = "digital_voucher" | "physical" | "vtu";
 
 export interface GiftTemplate {
   id: string;
@@ -126,7 +126,7 @@ export interface GiftTemplate {
   description: string | null;
   category: VendorCategory;
   basePrice: number; // kobo
-  deliveryType: GiftDeliveryType | "physical" | "experience";
+  deliveryType: GiftDeliveryType | "experience";
   deliveryWindow: string | null;
   imageUrl: string | null;
   requiresAddress: boolean;
@@ -140,28 +140,33 @@ export interface GiftTemplate {
 }
 
 /**
- * Every delivery type a template can hold, including the two that can no
- * longer be created. An existing `physical` gift still has to render
- * somewhere, and labelling it honestly is the whole point — the edit
- * form used to be unable to represent it and silently overwrote it.
+ * Every delivery type a template can hold, including `experience`, which
+ * can't be created. Labelling an existing one honestly is the point —
+ * the edit form used to be unable to represent a type and silently
+ * overwrote it.
  */
 export const DELIVERY_TYPE_LABEL: Record<GiftTemplate["deliveryType"], string> = {
   digital_voucher: "Collected in person",
+  physical: "Delivered to their door",
   vtu: "Sent to their phone",
-  physical: "Delivered to an address — not fulfillable",
   experience: "Booked experience — not fulfillable",
 };
 
 /**
- * Only the two the fulfilment orchestrator can complete. Physical and
- * experience take the money and then raise — see the API's
- * CREATABLE_DELIVERY_TYPES for why they are not offered.
+ * The types the fulfilment orchestrator can complete (the API's
+ * CREATABLE_DELIVERY_TYPES). Appointment-style gifts — spa, studio —
+ * are "Collected in person" with Collection set to Appointment.
  */
 export const GIFT_DELIVERY_TYPES: { value: GiftDeliveryType; label: string; hint: string }[] = [
   {
     value: "digital_voucher",
     label: "Collected in person",
-    hint: "They get a code and pick it up at the vendor.",
+    hint: "They get a code and collect it (or book a slot) at the vendor.",
+  },
+  {
+    value: "physical",
+    label: "Delivered to their door",
+    hint: "Hampers, groceries, cakes, flowers. They give their address after opening it; the vendor delivers. The delivery fee (DELIVERY_FEE_KOBO, ₦1,500 by default) is added at checkout and goes to the vendor.",
   },
   {
     value: "vtu",
@@ -357,3 +362,35 @@ export interface VendorEarnings {
   /** Exactly the collections to send when recording a payment. */
   unpaidOrderIds: string[];
 }
+
+/* ------------------------------------------------------------------ */
+/* Deliveries — mirrors apps/api/src/deliveries/deliveries.service.ts  */
+/* ------------------------------------------------------------------ */
+
+export type OpsDeliveryStage =
+  | "awaiting_address"
+  | "needs_vendor"
+  | "unacknowledged"
+  | "preparing"
+  | "on_the_way";
+
+export interface OpsDelivery {
+  orderId: string;
+  orderNumber: string | null;
+  giftName: string;
+  recipientName: string;
+  area: string | null;
+  vendorId: string | null;
+  vendorName: string | null;
+  stage: OpsDeliveryStage;
+  /** When it entered its current wait. */
+  waitingSince: string;
+}
+
+export const DELIVERY_STAGE_LABEL: Record<OpsDeliveryStage, string> = {
+  awaiting_address: "Waiting for address",
+  needs_vendor: "Needs a vendor",
+  unacknowledged: "Vendor hasn't seen it",
+  preparing: "Being prepared",
+  on_the_way: "On its way",
+};

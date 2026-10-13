@@ -503,3 +503,33 @@ export async function rotateVendorPortalTokenAction(
     message: "New link issued. The old one stopped working immediately.",
   };
 }
+
+// ---------------------------------------------------------- deliveries
+
+/**
+ * Ops' hands on a doorstep delivery: give it to another vendor, or mark
+ * it sent / delivered when the vendor confirmed by phone rather than on
+ * their link. "Delivered" credits the vendor exactly as their own tap
+ * would — the API does that, not this.
+ */
+export async function deliveryOpsAction(
+  orderId: string,
+  step: "vendor" | "dispatch" | "delivered",
+  vendorId?: string,
+): Promise<ActionResult> {
+  try {
+    await opsFetch<{ ok: true }>(`/ops/deliveries/${encodeURIComponent(orderId)}/${step}`, {
+      method: "POST",
+      body: step === "vendor" ? { vendorId } : {},
+    });
+  } catch (error) {
+    return asFailure(error);
+  }
+  revalidatePath("/ops/deliveries");
+  revalidatePath(`/ops/orders/${orderId}`);
+  return {
+    ok: true,
+    message:
+      step === "vendor" ? "Vendor assigned." : step === "dispatch" ? "Marked as on its way." : "Marked as delivered.",
+  };
+}

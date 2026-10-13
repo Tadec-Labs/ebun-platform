@@ -1,4 +1,5 @@
 import { FulfillmentType, OrderStatus, RedemptionStatus } from '@ebun/types';
+import type { RecipientDeliveryView } from '../deliveries/deliveries.service';
 
 /**
  * PROVISIONAL — built ahead of real mockups, at the person's own
@@ -68,6 +69,10 @@ export interface RevealView {
     at: string;
     confirmed: boolean;
   };
+  /** physical only: where the delivery is, and where it's going. */
+  delivery?: RecipientDeliveryView;
+  /** physical, before delivery: there is a message, and it opens when the gift arrives. */
+  messageLocked?: boolean;
   /**
    * digital_voucher only, once collected: when, and at which business.
    * Either can be null (older rows, a since-deleted vendor) — the screen

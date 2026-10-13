@@ -100,6 +100,26 @@ export interface RevealPayload {
   qrSvg?: string | null;
   /** Physical, in_transit only — e.g. "Arriving this evening". Display copy, not a timestamp to compute against. */
   deliveryEtaLabel?: string;
+  /** Physical only: where the delivery is and where it's going. */
+  delivery?: DeliveryDetails;
+  /** Physical, before delivery: a message exists and opens when the gift arrives. Its content is not sent until then. */
+  messageLocked?: boolean;
+}
+
+/** Mirrors apps/api's RecipientDeliveryView (deliveries.service.ts). */
+export interface DeliveryDetails {
+  stage: "awaiting_address" | "preparing" | "on_the_way" | "delivered";
+  address: string | null;
+  area: string | null;
+  phone: string | null;
+  note: string | null;
+  placeName: string | null;
+  riderName: string | null;
+  riderPhone: string | null;
+  dispatchedAt: string | null;
+  deliveredAt: string | null;
+  window: string | null;
+  canChangeAddress: boolean;
 }
 
 /**
@@ -110,10 +130,10 @@ export interface RevealPayload {
  * are both orderStatus reveal_opened, so the caller layers that
  * distinction on top.
  *
- * hasDeliveryAddress is still always false at every call site: the
- * physical journey has no backend contract, so no order can have one.
- * Kept in the signature because the branch it drives is already
- * written and correct for when that work lands.
+ * hasDeliveryAddress comes from the API's delivery view: a doorstep
+ * gift with an address is "on its way" (being prepared or with a
+ * rider); without one, it starts at the scratch like any other gift and
+ * asks for the address after.
  */
 export function deriveScreenState(
   orderStatus: OrderStatus,
@@ -132,6 +152,11 @@ export function deriveScreenState(
       return "redeemed";
     case OrderStatus.Fulfilled:
       return fulfillmentType === FulfillmentType.Physical ? "fulfilled" : "redeemed";
+    case OrderStatus.FulfillmentInProgress:
+      // Doorstep gifts are viewable from payment: scratch first, then the
+      // address. Any other type sitting here is mid-fulfilment.
+      if (fulfillmentType !== FulfillmentType.Physical) return "not_ready";
+      return hasDeliveryAddress ? "in_transit" : "ready";
     case OrderStatus.Dispatched:
       return "in_transit";
     case OrderStatus.Delivered:

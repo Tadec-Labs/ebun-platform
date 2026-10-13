@@ -1,7 +1,7 @@
 "use server";
 
 import { API_BASE_URL } from "@/lib/api-config";
-import { toPayload } from "@/lib/reveal/get-reveal-view";
+import { getRevealView, toPayload } from "@/lib/reveal/get-reveal-view";
 import type { RevealPayload } from "@/lib/reveal/types";
 
 export type ClaimResult =
@@ -106,4 +106,67 @@ export async function bookPickupAction(
   } catch {
     return { ok: false, message: "Booked, but couldn't refresh the page. Reload to see it." };
   }
+}
+
+export type SetDeliveryResult =
+  | { ok: true; payload: RevealPayload }
+  | { ok: false; message: string };
+
+/**
+ * "Bring it here" — POST /reveal/:token/delivery. Returns the refreshed
+ * view so the screen shows the delivery as the server now has it (and
+ * who is preparing it), not what the form hoped to save.
+ */
+export async function setDeliveryAction(
+  token: string,
+  details: { address: string; area: string; phone: string; note: string },
+): Promise<SetDeliveryResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/reveal/${encodeURIComponent(token)}/delivery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(details),
+      cache: "no-store",
+    });
+  } catch {
+    return {
+      ok: false,
+      message: "Couldn't reach SendEbun just then. Check your connection and try again.",
+    };
+  }
+
+  if (res.status === 429) {
+    return { ok: false, message: "That was a lot of taps — give it a moment and try again." };
+  }
+  if (!res.ok) {
+    // Validation messages are written for the recipient ("Add the area,
+    // e.g. Lekki Phase 1"), so show the first one as-is.
+    let message = "Couldn't save that address. Check it and try again.";
+    try {
+      const body = (await res.json()) as { message?: unknown };
+      if (typeof body.message === "string") message = body.message;
+      else if (Array.isArray(body.message) && typeof body.message[0] === "string") message = body.message[0];
+    } catch {
+      // keep the generic message
+    }
+    return { ok: false, message };
+  }
+
+  try {
+    const view = (await res.json()) as Parameters<typeof toPayload>[0];
+    return { ok: true, payload: await toPayload(view) };
+  } catch {
+    return { ok: false, message: "Saved, but couldn't refresh the page. Reload to see it." };
+  }
+}
+
+/**
+ * Re-reads the gift for a page left open while a delivery is on its way,
+ * so "it's here" appears without the recipient having to reload. Null on
+ * any failure — the caller just tries again on its next tick.
+ */
+export async function refreshRevealAction(token: string): Promise<RevealPayload | null> {
+  const result = await getRevealView(token);
+  return result.kind === "ok" ? result.payload : null;
 }

@@ -27,16 +27,17 @@ export { GIFT_CATEGORIES };
 export type { GiftCategory };
 
 /**
- * Only the two fulfillment types the orchestrator can actually complete.
+ * Only the fulfillment types the orchestrator can actually complete.
  *
- * `physical` and `experience` both raise UnsupportedFulfillmentTypeException
- * after the money has been taken, which is why the two delivered gifts
- * were withheld from the catalogue in the first place. Letting ops
- * create a new one from this form would re-open that hole by hand, so
- * the option simply is not offered until physical fulfilment exists.
+ * `physical` is doorstep delivery (see DeliveriesService): the recipient
+ * gives an address after the reveal and the vendor delivers.
+ * `experience` still raises UnsupportedFulfillmentTypeException after the
+ * money has been taken, so it is not offered — appointment-style gifts
+ * (spa, studio) are digital vouchers with bookingStyle 'appointment'.
  */
 export const CREATABLE_DELIVERY_TYPES = [
   FulfillmentType.DigitalVoucher,
+  FulfillmentType.Physical,
   FulfillmentType.Vtu,
 ] as const;
 

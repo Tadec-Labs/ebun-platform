@@ -31,6 +31,8 @@ import {
 } from './dto/vendor.dto';
 import { VendorPortalService } from './vendor-portal.service';
 import { EarningsService } from './earnings.service';
+import { DeliveriesService } from '../deliveries/deliveries.service';
+import { DispatchDeliveryDto } from '../deliveries/dto/delivery.dto';
 
 /**
  * The counter screen's API. One vendor, their own gifts, nothing else.
@@ -59,6 +61,7 @@ export class VendorPortalController {
     private readonly audit: AuditService,
     private readonly portal: VendorPortalService,
     private readonly earnings: EarningsService,
+    private readonly deliveries: DeliveriesService,
   ) {}
 
   /** Confirms the link works and names the business, so staff can see whose till they are on. */
@@ -237,6 +240,57 @@ export class VendorPortalController {
       orderId,
       metaOf(request),
     );
+  }
+
+  /**
+   * Doorstep gifts this shop is delivering: name, phone, address and
+   * landmark — what a rider needs. Only deliveries assigned to this
+   * vendor, and only once the recipient has given an address.
+   */
+  @Get('deliveries')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  listDeliveries(@Req() request: VendorRequest) {
+    return this.deliveries.listForVendor(vendorOf(request).vendorId);
+  }
+
+  /** "Got it" — the vendor has seen it and is preparing it. */
+  @Post('deliveries/:orderId/ack')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async acknowledgeDelivery(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Req() request: VendorRequest,
+  ) {
+    await this.deliveries.acknowledge(vendorOf(request).vendorId, orderId);
+    return { ok: true };
+  }
+
+  @Post('deliveries/:orderId/dispatch')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async dispatchDelivery(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Body() dto: DispatchDeliveryDto,
+    @Req() request: VendorRequest,
+  ) {
+    await this.deliveries.dispatch(
+      { kind: 'vendor', vendorId: vendorOf(request).vendorId },
+      orderId,
+      { name: dto.riderName, phone: dto.riderPhone },
+    );
+    return { ok: true };
+  }
+
+  /** Handed over at the door. Credits the vendor (item + delivery fee) on their Earnings screen. */
+  @Post('deliveries/:orderId/delivered')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async deliveredDelivery(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Req() request: VendorRequest,
+  ) {
+    await this.deliveries.markDelivered(
+      { kind: 'vendor', vendorId: vendorOf(request).vendorId },
+      orderId,
+    );
+    return { ok: true };
   }
 
   /**

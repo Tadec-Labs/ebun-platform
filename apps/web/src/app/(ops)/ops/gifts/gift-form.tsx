@@ -157,10 +157,13 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
                   </option>
                 ))}
               </select>
-              <span className="text-xs text-zinc-500">
-                Delivered-to-an-address gifts aren&rsquo;t offered: nothing
-                fulfils them yet, so an order would take the money and stop.
-              </span>
+              <ul className="flex flex-col gap-1 text-xs text-zinc-500">
+                {GIFT_DELIVERY_TYPES.map((type) => (
+                  <li key={type.value}>
+                    <span className="font-medium text-zinc-700">{type.label}:</span> {type.hint}
+                  </li>
+                ))}
+              </ul>
             </>
           )}
         </Field>

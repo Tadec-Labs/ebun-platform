@@ -25,6 +25,8 @@ export interface GiftCatalogItem {
   basePrice: number; // kobo — the vendor's in-store price
   /** kobo — SendEbun's fee on top, shown as its own line at checkout. */
   serviceFee: number;
+  /** kobo — doorstep gifts only, shown as its own line. Goes to the vendor who delivers. */
+  deliveryFee: number;
   /** kobo — exactly what Paystack will charge. */
   totalPrice: number;
   deliveryType: GiftTemplateRow['delivery_type'];
@@ -39,7 +41,7 @@ function toCatalogItem(
   template: GiftTemplateRow,
   pricing: PricingService,
 ): GiftCatalogItem {
-  const price = pricing.priceGift(template.base_price);
+  const price = pricing.priceGift(template.base_price, template.delivery_type);
   return {
     id: template.id,
     name: template.name,
@@ -48,6 +50,7 @@ function toCatalogItem(
     imageUrl: template.image_url,
     basePrice: template.base_price,
     serviceFee: price.serviceFee,
+    deliveryFee: price.deliveryFee,
     totalPrice: price.total,
     deliveryType: template.delivery_type,
     deliveryWindow: template.delivery_window,

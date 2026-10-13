@@ -10,6 +10,7 @@ import { VendorsService } from '../vendors/vendors.service';
 import { AuditService } from '../audit/audit.service';
 import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
+import { DeliveriesService } from '../deliveries/deliveries.service';
 
 function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
   return {
@@ -51,6 +52,11 @@ describe('RevealService', () => {
   };
   let mediaResolver: { resolvePlaybackUrl: jest.Mock };
   let vendors: { collectionPointsForGift: jest.Mock; publicNameOf: jest.Mock };
+  let deliveries: {
+    forRecipient: jest.Mock;
+    setRecipientDetails: jest.Mock;
+    markOpened: jest.Mock;
+  };
 
   beforeEach(async () => {
     orders = {
@@ -72,6 +78,12 @@ describe('RevealService', () => {
       publicNameOf: jest.fn().mockResolvedValue(null),
     };
 
+    deliveries = {
+      forRecipient: jest.fn().mockResolvedValue({ stage: 'awaiting_address' }),
+      setRecipientDetails: jest.fn().mockResolvedValue(undefined),
+      markOpened: jest.fn().mockResolvedValue(undefined),
+    };
+
     gifts.findById.mockResolvedValue({
       id: 'template-1',
       name: 'Jollof Rice for Two',
@@ -91,11 +103,109 @@ describe('RevealService', () => {
         { provide: RedemptionsService, useValue: redemptions },
         { provide: VendorsService, useValue: vendors },
         { provide: AuditService, useValue: audit },
+        { provide: DeliveriesService, useValue: deliveries },
         { provide: MEDIA_URL_RESOLVER, useValue: mediaResolver },
       ],
     }).compile();
 
     sut = moduleRef.get(RevealService);
+  });
+
+  describe('doorstep (physical) gifts', () => {
+    beforeEach(() => {
+      gifts.findById.mockResolvedValue({
+        id: 'template-1',
+        name: 'Grocery Hamper',
+        description: null,
+        image_url: null,
+        delivery_type: FulfillmentType.Physical,
+      });
+    });
+
+    it('is viewable as soon as it is paid for, with the delivery and no message yet', async () => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.FulfillmentInProgress,
+          message_type: 'text',
+          sender_message: 'Happy birthday!',
+        }),
+      );
+
+      const view = await sut.view('token');
+
+      expect(view.viewState).toBe('ready');
+      expect(view.delivery).toEqual({ stage: 'awaiting_address' });
+      // The message opens with the gift: not sent to the page before then.
+      expect(view.message).toBeUndefined();
+      expect(view.messageLocked).toBe(true);
+      // No reveal_opened transition — that edge doesn't exist from here.
+      expect(orders.transitionNormal).not.toHaveBeenCalled();
+    });
+
+    it('never shows a paid, undelivered hamper as expired', async () => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.Dispatched,
+          expires_at: new Date(Date.now() - 86_400_000).toISOString(),
+        }),
+      );
+
+      expect((await sut.view('token')).viewState).toBe('ready');
+    });
+
+    it('releases the message once delivered', async () => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.Delivered,
+          message_type: 'text',
+          sender_message: 'Happy birthday!',
+        }),
+      );
+
+      const view = await sut.view('token');
+
+      expect(view.message).toEqual({ type: 'text', text: 'Happy birthday!' });
+      expect(view.messageLocked).toBeUndefined();
+    });
+
+    it('accepting a delivered gift marks it opened (fulfilled)', async () => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({ id: 'order-1', status: OrderStatus.Delivered }),
+      );
+
+      await sut.acceptGift('token');
+
+      expect(deliveries.markOpened).toHaveBeenCalledWith('order-1');
+      expect(redemptions.createPendingForOrder).not.toHaveBeenCalled();
+    });
+
+    it('passes the address to delivery and returns the refreshed view', async () => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({ id: 'order-1', status: OrderStatus.FulfillmentInProgress }),
+      );
+      const details = { address: '12 Admiralty Way', area: 'Lekki Phase 1' };
+
+      const view = await sut.setDelivery('token', details);
+
+      expect(deliveries.setRecipientDetails).toHaveBeenCalledWith(
+        'order-1',
+        details,
+      );
+      expect(view.viewState).toBe('ready');
+    });
+
+    it('still treats a digital gift mid-fulfilment as not ready', async () => {
+      gifts.findById.mockResolvedValue({
+        id: 'template-1',
+        name: 'Pizza',
+        delivery_type: FulfillmentType.DigitalVoucher,
+      });
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({ status: OrderStatus.FulfillmentInProgress }),
+      );
+
+      expect((await sut.view('token')).viewState).toBe('not_ready');
+    });
   });
 
   describe('view', () => {

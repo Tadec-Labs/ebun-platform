@@ -14,6 +14,7 @@ import { RedemptionsModule } from './redemptions/redemptions.module';
 import { validateEnv } from './config/env.validation';
 import { AuthModule } from './auth/auth.module';
 import { VendorsModule } from './vendors/vendors.module';
+import { DeliveriesModule } from './deliveries/deliveries.module';
 import { JobsModule } from './jobs/jobs.module';
 
 @Module({
@@ -35,6 +36,7 @@ import { JobsModule } from './jobs/jobs.module';
     RedemptionsModule,
     AuthModule,
     VendorsModule,
+    DeliveriesModule,
     JobsModule,
   ],
   controllers: [AppController, HealthController],

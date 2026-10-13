@@ -78,6 +78,7 @@ describe('GiftsService', () => {
           imageUrl: null,
           basePrice: 800000,
           serviceFee: 40000,
+          deliveryFee: 0,
           totalPrice: 840000,
           deliveryType: FulfillmentType.DigitalVoucher,
           deliveryWindow: '2-4hrs',

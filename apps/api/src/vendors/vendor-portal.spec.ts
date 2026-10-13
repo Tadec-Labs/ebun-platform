@@ -14,6 +14,7 @@ import { VendorPortalService } from './vendor-portal.service';
 import { EarningsService } from './earnings.service';
 import { PayoutsRepository } from './payouts.repository';
 import { VendorsRepository } from './vendors.repository';
+import { DeliveriesService } from '../deliveries/deliveries.service';
 
 const TOKEN = '11111111-1111-4111-8111-111111111111';
 const OTHER_TOKEN = '22222222-2222-4222-8222-222222222222';
@@ -34,6 +35,7 @@ describe('vendor portal over HTTP', () => {
   let orders: { findUpcomingPickups: jest.Mock; confirmPickup: jest.Mock };
   let photos: { upload: jest.Mock; deleteIfOurs: jest.Mock };
   let payouts: { listCollections: jest.Mock; listPayouts: jest.Mock };
+  let deliveries: Record<string, jest.Mock>;
 
   const asVendor = (over: Record<string, unknown> = {}) => {
     vendors.findByPortalToken.mockResolvedValue({
@@ -46,6 +48,12 @@ describe('vendor portal over HTTP', () => {
   };
 
   beforeEach(async () => {
+    deliveries = {
+      listForVendor: jest.fn().mockResolvedValue([]),
+      acknowledge: jest.fn().mockResolvedValue(undefined),
+      dispatch: jest.fn().mockResolvedValue(undefined),
+      markDelivered: jest.fn().mockResolvedValue(undefined),
+    };
     redemptions = {
       lookupForVendor: jest
         .fn()
@@ -113,6 +121,7 @@ describe('vendor portal over HTTP', () => {
         { provide: RedemptionsService, useValue: redemptions },
         { provide: VendorsRepository, useValue: vendors },
         { provide: AuditService, useValue: audit },
+        { provide: DeliveriesService, useValue: deliveries },
       ],
     }).compile();
 
@@ -988,6 +997,47 @@ describe('vendor portal over HTTP', () => {
       // Ops-only detail stays off the counter phone.
       expect(response.body).not.toHaveProperty('unpaidOrderIds');
       expect(JSON.stringify(response.body)).not.toContain('internal note');
+    });
+  });
+
+  describe('deliveries', () => {
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+
+    it('401s without a token, and never reaches delivery', async () => {
+      await request(app.getHttpServer())
+        .post(
+          '/vendor/deliveries/22222222-2222-4222-8222-222222222222/delivered',
+        )
+        .expect(401);
+      expect(deliveries.markDelivered).not.toHaveBeenCalled();
+    });
+
+    it('acts as the vendor the link belongs to — never one named in the request', async () => {
+      asVendor();
+      await request(app.getHttpServer())
+        .post(
+          '/vendor/deliveries/22222222-2222-4222-8222-222222222222/dispatch',
+        )
+        .set(auth)
+        .send({ riderName: 'Musa', riderPhone: '0803 000 0000', vendorId: 'x' })
+        .expect(201);
+      expect(deliveries.dispatch).toHaveBeenCalledWith(
+        { kind: 'vendor', vendorId: 'vendor-1' },
+        '22222222-2222-4222-8222-222222222222',
+        { name: 'Musa', phone: '0803 000 0000' },
+      );
+    });
+
+    it('rejects a nonsense rider phone before anything moves', async () => {
+      asVendor();
+      await request(app.getHttpServer())
+        .post(
+          '/vendor/deliveries/22222222-2222-4222-8222-222222222222/dispatch',
+        )
+        .set(auth)
+        .send({ riderPhone: 'call me' })
+        .expect(400);
+      expect(deliveries.dispatch).not.toHaveBeenCalled();
     });
   });
 });

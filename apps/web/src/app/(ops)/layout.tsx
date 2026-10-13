@@ -30,6 +30,9 @@ export default async function OpsLayout({ children }: LayoutProps<"/">) {
                 <Link href="/ops/orders" className="hover:text-zinc-900">
                   Orders
                 </Link>
+                <Link href="/ops/deliveries" className="hover:text-zinc-900">
+                  Deliveries
+                </Link>
                 <Link href="/ops/vendors" className="hover:text-zinc-900">
                   Vendors
                 </Link>

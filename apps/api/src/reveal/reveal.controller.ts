@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { BookPickupDto } from './dto/book-pickup.dto';
+import { SetDeliveryDetailsDto } from '../deliveries/dto/delivery.dto';
 import { RevealService } from './reveal.service';
 
 /**
@@ -23,7 +24,6 @@ export class RevealController {
 
   @Get(':token')
   // Throttle's decorator type is not resolved by the lint type checker.
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async view(@Param('token', new ParseUUIDPipe()) token: string) {
     return this.reveal.view(token);
@@ -31,7 +31,6 @@ export class RevealController {
 
   @Post(':token/accept')
   // Throttle's decorator type is not resolved by the lint type checker.
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async accept(@Param('token', new ParseUUIDPipe()) token: string) {
     return this.reveal.acceptGift(token);
@@ -49,5 +48,15 @@ export class RevealController {
     @Body() body: BookPickupDto,
   ) {
     return this.reveal.bookPickup(token, body.vendorId, body.pickupAt);
+  }
+
+  /** Doorstep gifts: where to bring it. Repeatable until it's on its way. */
+  @Post(':token/delivery')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async setDelivery(
+    @Param('token', new ParseUUIDPipe()) token: string,
+    @Body() body: SetDeliveryDetailsDto,
+  ) {
+    return this.reveal.setDelivery(token, body);
   }
 }

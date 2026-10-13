@@ -83,6 +83,33 @@ export function resolveServiceFeePolicy(
  * Rounded UP to a whole naira before the floor and ceiling apply, so a
  * checkout never shows kobo, and rounding never costs Ebun the fraction.
  */
+/** ₦1,500 — a Lagos same-day bike run, roughly. Paid through to the delivering vendor. */
+export const DEFAULT_DELIVERY_FEE_KOBO = 150_000;
+
+/**
+ * The flat delivery fee added to doorstep gifts (DELIVERY_FEE_KOBO).
+ * Flat, not distance-priced: the recipient's address isn't known when the
+ * sender pays — they give it after the reveal — so the only honest price
+ * at checkout is one that doesn't depend on it.
+ */
+export function resolveDeliveryFeeKobo(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const fee = readWholeNumber(
+    env,
+    'DELIVERY_FEE_KOBO',
+    DEFAULT_DELIVERY_FEE_KOBO,
+  );
+  // ₦20,000 for a delivery is a naira-typed-as-kobo slip in the other
+  // direction (2000000), not a price.
+  if (fee > 2_000_000) {
+    throw new Error(
+      `DELIVERY_FEE_KOBO is ${fee} (₦${fee / 100}). It is in kobo: 150000 means ₦1,500.`,
+    );
+  }
+  return fee;
+}
+
 export function computeServiceFee(
   giftValueKobo: number,
   policy: ServiceFeePolicy,

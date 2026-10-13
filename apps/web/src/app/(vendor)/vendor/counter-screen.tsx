@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { VendorPickup, VendorRedemption } from "@/lib/vendor/api";
+import type { VendorDelivery, VendorPickup, VendorRedemption } from "@/lib/vendor/api";
 import { confirmCollectionAction, lookupCodeAction } from "./actions";
 import { ComingIn } from "./coming-in";
+import { ToDeliver } from "./to-deliver";
 import { QrScanner } from "./qr-scanner";
 import { VendorNav } from "./vendor-nav";
 
@@ -23,9 +24,11 @@ import { VendorNav } from "./vendor-nav";
 export function CounterScreen({
   businessName,
   initialPickups,
+  initialDeliveries,
 }: {
   businessName: string;
   initialPickups: VendorPickup[];
+  initialDeliveries: VendorDelivery[];
 }) {
   const [code, setCode] = useState("");
   const [found, setFound] = useState<VendorRedemption | null>(null);
@@ -85,6 +88,7 @@ export function CounterScreen({
       </header>
 
       {/* Hidden mid-collection, like the scanner: one thing at a time. */}
+      {!found && <ToDeliver initial={initialDeliveries} />}
       {!found && <ComingIn initial={initialPickups} />}
 
       {/* Hidden once a code is found: the next thing to do is confirm,

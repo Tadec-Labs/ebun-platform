@@ -18,6 +18,8 @@ import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
 import type { MediaUrlResolver } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
 import { RevealView } from './reveal-view.interface';
+import { DeliveriesService } from '../deliveries/deliveries.service';
+import type { DeliveryDetailsInput } from '../deliveries/deliveries.service';
 
 const PRE_REVEAL_STATES = new Set([
   OrderStatus.VoucherIssued,
@@ -27,6 +29,24 @@ const PRE_REVEAL_STATES = new Set([
 const VIEWABLE_AFTER_REVEAL_STATES = new Set([
   OrderStatus.RevealOpened,
   OrderStatus.Redeemed,
+  OrderStatus.Fulfilled,
+]);
+
+/**
+ * A doorstep gift is viewable from the moment it's paid for: the
+ * recipient opens it, then says where to bring it. These are the states
+ * it sits in while that happens — for any other fulfillment type they
+ * mean "not ready yet".
+ */
+const PHYSICAL_IN_FLIGHT_STATES = new Set([
+  OrderStatus.FulfillmentInProgress,
+  OrderStatus.Dispatched,
+  OrderStatus.Delivered,
+]);
+
+/** The sender's message on a delivered gift opens with the gift, not before. */
+const PHYSICAL_MESSAGE_RELEASED_STATES = new Set([
+  OrderStatus.Delivered,
   OrderStatus.Fulfilled,
 ]);
 
@@ -63,6 +83,7 @@ export class RevealService {
     private readonly redemptions: RedemptionsService,
     private readonly vendors: VendorsService,
     private readonly audit: AuditService,
+    private readonly deliveries: DeliveriesService,
     @Inject(MEDIA_URL_RESOLVER)
     private readonly mediaResolver: MediaUrlResolver,
   ) {}
@@ -77,6 +98,18 @@ export class RevealService {
     const order = await this.ordersService.findByRevealToken(revealToken);
     if (!order) {
       throw new NotFoundException('No gift found for this link.');
+    }
+
+    // Doorstep gifts are open to view as soon as they're paid for, and
+    // don't expire on this screen: the recipient may take a few days to
+    // give an address, and a paid hamper must never show "expired" to
+    // the person it's for. (A digital gift sitting in these same states
+    // is mid-fulfilment and falls through to not_ready below.)
+    if (PHYSICAL_IN_FLIGHT_STATES.has(order.status)) {
+      const template = await this.giftsService.findById(order.gift_template_id);
+      if (template.delivery_type === FulfillmentType.Physical) {
+        return this.buildView(order, 'ready');
+      }
     }
 
     // Checked directly against expires_at, NOT trusted from order.status
@@ -154,6 +187,16 @@ export class RevealService {
     if (PRE_REVEAL_STATES.has(order.status)) {
       await this.view(revealToken); // reuses the same idempotent transition + race handling
       order.status = OrderStatus.RevealOpened;
+    }
+
+    // A delivered doorstep gift: "accepting" is unwrapping the message
+    // that arrived with it, which completes the gift.
+    if (order.status === OrderStatus.Delivered) {
+      const template = await this.giftsService.findById(order.gift_template_id);
+      if (template.delivery_type === FulfillmentType.Physical) {
+        await this.deliveries.markOpened(order.id);
+      }
+      return this.view(revealToken);
     }
 
     if (order.status !== OrderStatus.RevealOpened) {
@@ -285,6 +328,23 @@ export class RevealService {
     return this.view(revealToken);
   }
 
+  /**
+   * POST /reveal/:token/delivery. Where to bring a doorstep gift — and
+   * the moment a vendor is assigned to it. Can be repeated to correct the
+   * address until a rider has it.
+   */
+  async setDelivery(
+    revealToken: string,
+    details: DeliveryDetailsInput,
+  ): Promise<RevealView> {
+    const order = await this.ordersService.findByRevealToken(revealToken);
+    if (!order) {
+      throw new NotFoundException('No gift found for this link.');
+    }
+    await this.deliveries.setRecipientDetails(order.id, details);
+    return this.view(revealToken);
+  }
+
   private async buildView(
     order: OrderRow,
     viewState: RevealView['viewState'],
@@ -319,7 +379,22 @@ export class RevealService {
       theme: order.reveal_theme,
     };
 
-    if (order.message_type === 'text') {
+    const isPhysical = giftTemplate.delivery_type === FulfillmentType.Physical;
+    if (isPhysical) {
+      view.delivery =
+        (await this.deliveries.forRecipient(order.id, order.status)) ??
+        undefined;
+    }
+
+    // A doorstep gift's message is withheld until it has been delivered —
+    // server-side, so the "opens when it arrives" lock is real and not
+    // just a screen that hides what the page already downloaded.
+    const messageReleased =
+      !isPhysical || PHYSICAL_MESSAGE_RELEASED_STATES.has(order.status);
+
+    if (!messageReleased) {
+      view.messageLocked = order.message_type !== null;
+    } else if (order.message_type === 'text') {
       view.message = { type: 'text', text: order.sender_message };
     } else if (
       order.message_type === 'voice' ||

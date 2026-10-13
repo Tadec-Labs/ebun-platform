@@ -19,6 +19,8 @@ export interface GiftCatalogItem {
   basePrice: number; // kobo — the vendor's in-store price
   /** kobo — SendEbun's fee, shown as its own line before paying. */
   serviceFee: number;
+  /** kobo — doorstep gifts only; 0 otherwise. Its own line at checkout. */
+  deliveryFee: number;
   /** kobo — exactly what Paystack charges. Computed by the API, never here. */
   totalPrice: number;
   deliveryType: FulfillmentType;

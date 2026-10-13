@@ -380,9 +380,10 @@ describe('ops gift routes over HTTP', () => {
   });
 
   it('refuses a fulfilment type nothing can actually complete', async () => {
-    // physical and experience both take the money and then raise.
+    // experience takes the money and then raises. (physical is now
+    // fulfilled as doorstep delivery — see DeliveriesService.)
     asRole('ebun_admin');
-    for (const deliveryType of ['physical', 'experience', 'nonsense']) {
+    for (const deliveryType of ['experience', 'nonsense']) {
       await request(app.getHttpServer())
         .post('/ops/gifts')
         .set('Authorization', 'Bearer good')

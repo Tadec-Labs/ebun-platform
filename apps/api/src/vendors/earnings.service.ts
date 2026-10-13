@@ -163,12 +163,16 @@ function toCollectionView(row: CollectionRow): CollectionView {
   const redemption = Array.isArray(row.redemptions)
     ? row.redemptions[0]
     : row.redemptions;
+  const fulfillment = Array.isArray(row.gift_fulfillments)
+    ? row.gift_fulfillments[0]
+    : row.gift_fulfillments;
   return {
     orderId: row.id,
     orderNumber: row.order_number,
     giftName: row.gift_templates?.name ?? 'Gift',
     amount: row.vendor_payout_amount,
-    collectedAt: redemption?.completed_at ?? row.updated_at,
+    collectedAt:
+      redemption?.completed_at ?? fulfillment?.delivered_at ?? row.updated_at,
     paid: row.vendor_paid_at !== null,
     paidAt: row.vendor_paid_at,
   };

@@ -500,18 +500,40 @@ export class OrdersRepository {
   ): Promise<OrderRow[]> {
     const response = (await this.supabase
       .from('orders')
-      .select()
+      .select('*, gift_fulfillments(fulfillment_type)')
       .in('status', [OrderStatus.Processing, OrderStatus.FulfillmentInProgress])
       .lt('updated_at', olderThan.toISOString())
       .order('updated_at', { ascending: true })
       .limit(limit)) as {
-      data: OrderRow[] | null;
+      data:
+        | (OrderRow & {
+            gift_fulfillments:
+              | { fulfillment_type: string }
+              | { fulfillment_type: string }[]
+              | null;
+          })[]
+        | null;
       error: PostgrestError | null;
     };
 
     if (response.error) {
       throw response.error;
     }
-    return response.data ?? [];
+    // A doorstep gift waiting at fulfillment_in_progress for an address
+    // or a rider is working as intended, not stuck — that wait is shown
+    // on /ops deliveries instead. Only its absence of a fulfillment row
+    // (the orchestrator died before creating one) still counts here.
+    return (response.data ?? [])
+      .filter((row) => {
+        const f = Array.isArray(row.gift_fulfillments)
+          ? row.gift_fulfillments[0]
+          : row.gift_fulfillments;
+        return f?.fulfillment_type !== 'physical';
+      })
+      .map((row) => {
+        const order: OrderRow & { gift_fulfillments?: unknown } = { ...row };
+        delete order.gift_fulfillments;
+        return order;
+      });
   }
 }

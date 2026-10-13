@@ -39,6 +39,23 @@ export interface VendorPickup {
   youReceive: number | null;
 }
 
+/** Mirrors the API's VendorDeliveryView (deliveries.service.ts). A doorstep gift this shop is delivering. */
+export interface VendorDelivery {
+  orderId: string;
+  orderNumber: string | null;
+  giftName: string;
+  recipientName: string;
+  phone: string;
+  address: string;
+  area: string | null;
+  note: string | null;
+  /** new = not seen yet; acknowledged = "Got it"; on_the_way = rider has it. */
+  stage: "new" | "acknowledged" | "on_the_way";
+  /** kobo — item plus delivery fee, credited when delivered. */
+  youReceive: number | null;
+  assignedAt: string | null;
+}
+
 /** Mirrors the API's EarningsView. Amounts in kobo. */
 export interface VendorEarnings {
   owedNow: number;
