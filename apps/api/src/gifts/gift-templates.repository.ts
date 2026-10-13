@@ -1,13 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { FulfillmentType } from '@ebun/types';
+import type { BookingStyle, GiftCategory } from '@ebun/types';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
 
 export interface GiftTemplateRow {
   id: string;
   name: string;
   description: string | null;
-  category: 'food' | 'experience' | 'keepsake' | 'utility'; // matches the schema's check constraint
+  category: GiftCategory; // matches the schema's check constraint
+  occasions: string[];
+  booking_style: BookingStyle;
   image_url: string | null;
   base_price: number; // kobo
   available: boolean;

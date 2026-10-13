@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
+import type { GiftCategory } from '@ebun/types';
 
 export interface VendorRow {
   id: string;
@@ -9,7 +10,7 @@ export interface VendorRow {
   owner_name: string;
   whatsapp_number: string;
   email: string | null;
-  category: 'food' | 'experience' | 'keepsake' | 'utility';
+  category: GiftCategory;
   subcategories: string[] | null;
   service_areas: string[] | null;
   delivery_zones: string[] | null;

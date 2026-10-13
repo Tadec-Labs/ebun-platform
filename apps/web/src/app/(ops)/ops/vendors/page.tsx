@@ -1,13 +1,9 @@
 import Link from "next/link";
 import { opsFetch } from "@/lib/ops/api";
+import { GIFT_CATEGORY_LABEL } from "@ebun/types";
 import type { VendorSummary } from "@/lib/ops/types";
 
-const CATEGORY_LABEL: Record<string, string> = {
-  food: "Food",
-  experience: "Experience",
-  keepsake: "Keepsake",
-  utility: "Utility",
-};
+const CATEGORY_LABEL: Record<string, string> = GIFT_CATEGORY_LABEL;
 
 function Badge({ tone, children }: { tone: "green" | "grey" | "amber"; children: React.ReactNode }) {
   const styles = {

@@ -435,6 +435,9 @@ export async function saveGiftAction(formData: FormData): Promise<ActionResult> 
     description: optional("description"),
     deliveryWindow: optional("deliveryWindow"),
     imageUrl: optional("imageUrl"),
+    // Always sent: unticking every box must clear the tags, not leave them.
+    occasions: formData.getAll("occasions").map(String),
+    bookingStyle: text(formData, "bookingStyle") || "pickup",
   };
 
   let createdId: string | null = null;

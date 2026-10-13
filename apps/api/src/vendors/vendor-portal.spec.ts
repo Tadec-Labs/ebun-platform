@@ -39,7 +39,7 @@ describe('vendor portal over HTTP', () => {
     vendors.findByPortalToken.mockResolvedValue({
       id: 'vendor-1',
       business_name: 'Mama Cass Kitchen',
-      category: 'food',
+      category: 'dine',
       active: true,
       ...over,
     });
@@ -67,7 +67,7 @@ describe('vendor portal over HTTP', () => {
       countAwaitingApproval: jest.fn().mockResolvedValue(0),
       findById: jest.fn().mockResolvedValue({
         id: 'vendor-1',
-        category: 'food',
+        category: 'dine',
         commission_rate: 0.9,
       }),
       upsertOffering: jest.fn().mockResolvedValue({}),
@@ -561,7 +561,7 @@ describe('vendor portal over HTTP', () => {
         name: 'Jollof & Chicken',
         description: 'Party jollof, one drumstick',
         inStorePrice: 450000,
-        category: 'food',
+        category: 'dine',
         imageUrl: null,
       });
       expect(vendors.upsertOffering).toHaveBeenCalledWith({
@@ -824,7 +824,7 @@ describe('vendor portal over HTTP', () => {
       id: 'vendor-1',
       business_name: 'Mama Cass Kitchen',
       owner_name: 'Cass',
-      category: 'food',
+      category: 'dine',
       commission_rate: 0.9,
       pickup_address: null,
       pickup_hours: null,

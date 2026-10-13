@@ -1,6 +1,17 @@
 /** Mirrors apps/api/src/vendors/vendors.service.ts's views field-for-field. */
 
-export type VendorCategory = "food" | "experience" | "keepsake" | "utility";
+import {
+  BOOKING_STYLES,
+  GIFT_CATEGORIES,
+  GIFT_CATEGORY_LABEL,
+  OCCASIONS,
+  OCCASION_LABEL,
+  type BookingStyle,
+  type GiftCategory,
+  type Occasion,
+} from "@ebun/types";
+
+export type VendorCategory = GiftCategory;
 
 export interface VendorSummary {
   id: string;
@@ -67,12 +78,23 @@ export type ActionResult =
   | { ok: true; message?: string }
   | { ok: false; errors: string[] };
 
-export const VENDOR_CATEGORIES: { value: VendorCategory; label: string }[] = [
-  { value: "food", label: "Food" },
-  { value: "experience", label: "Experience" },
-  { value: "keepsake", label: "Keepsake" },
-  { value: "utility", label: "Utility" },
-];
+/** One list, shared with the API and /send, so a category can't exist in one place and not another. */
+export const VENDOR_CATEGORIES: { value: VendorCategory; label: string }[] = GIFT_CATEGORIES.map((value) => ({
+  value,
+  label: GIFT_CATEGORY_LABEL[value],
+}));
+
+export const OCCASION_OPTIONS: { value: Occasion; label: string }[] = OCCASIONS.map((value) => ({
+  value,
+  label: OCCASION_LABEL[value],
+}));
+
+export const BOOKING_STYLE_OPTIONS: { value: BookingStyle; label: string }[] = BOOKING_STYLES.map((value) => ({
+  value,
+  label: value === "pickup" ? "Walk in — collect any time they're open" : "Appointment — recipient books a slot",
+}));
+
+export type { BookingStyle, Occasion };
 
 /** Mirrors apps/api/src/redemptions/redemptions.service.ts's RedemptionLookupView. */
 export interface RedemptionLookup {
@@ -110,6 +132,8 @@ export interface GiftTemplate {
   requiresAddress: boolean;
   available: boolean;
   featured: boolean;
+  occasions: Occasion[];
+  bookingStyle: BookingStyle;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;

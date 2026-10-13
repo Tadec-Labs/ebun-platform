@@ -15,7 +15,7 @@ function makeTemplate(
     id: 'template-1',
     name: 'A Pizza, On Him',
     description: 'Redeemable at any partner pizza spot.',
-    category: 'food',
+    category: 'dine',
     image_url: null,
     base_price: 800000,
     available: true,
@@ -23,6 +23,8 @@ function makeTemplate(
     delivery_window: null,
     requires_address: false,
     delivery_type: FulfillmentType.DigitalVoucher,
+    occasions: ['birthday'],
+    booking_style: 'pickup',
     ...overrides,
   };
 }
@@ -72,7 +74,7 @@ describe('GiftsService', () => {
           id: 'template-1',
           name: 'A Pizza, On Him',
           description: 'Redeemable at any partner pizza spot.',
-          category: 'food',
+          category: 'dine',
           imageUrl: null,
           basePrice: 800000,
           serviceFee: 40000,
@@ -81,6 +83,8 @@ describe('GiftsService', () => {
           deliveryWindow: '2-4hrs',
           requiresAddress: false,
           featured: true,
+          occasions: ['birthday'],
+          bookingStyle: 'pickup',
         },
       ]);
     });

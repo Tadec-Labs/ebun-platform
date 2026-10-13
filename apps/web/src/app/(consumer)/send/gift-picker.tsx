@@ -1,18 +1,37 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FulfillmentType } from "@ebun/types";
+import {
+  FulfillmentType,
+  GIFT_CATEGORIES,
+  GIFT_CATEGORY_LABEL,
+  OCCASIONS,
+  OCCASION_LABEL,
+  type Occasion,
+} from "@ebun/types";
 import { GiftMark } from "@/components/icons";
 import { formatNaira } from "@/lib/format-money";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 
 type Category = GiftCatalogItem["category"];
 
-const CATEGORY_LABEL: Record<Category, string> = {
-  food: "Food & drink",
-  experience: "Experiences",
-  keepsake: "Keepsakes",
-  utility: "Airtime & bills",
+const CATEGORY_LABEL: Record<Category, string> = GIFT_CATEGORY_LABEL;
+
+/**
+ * Price bands in naira, on the price the card shows. Three, because the
+ * sender's real question is "roughly how much am I spending" — a slider
+ * on a phone is fiddly and nobody needs ₦13,500 precision to browse.
+ */
+const PRICE_BANDS = [
+  { id: "under10", label: "Under ₦10k", min: 0, max: 1_000_000 },
+  { id: "10to25", label: "₦10k–25k", min: 1_000_000, max: 2_500_000 },
+  { id: "over25", label: "₦25k+", min: 2_500_000, max: Number.POSITIVE_INFINITY },
+] as const;
+type PriceBand = (typeof PRICE_BANDS)[number]["id"];
+
+const inBand = (item: GiftCatalogItem, band: PriceBand) => {
+  const b = PRICE_BANDS.find((x) => x.id === band)!;
+  return item.basePrice >= b.min && item.basePrice < b.max;
 };
 
 /**
@@ -31,6 +50,11 @@ const CATEGORY_LABEL: Record<Category, string> = {
  * the grid when browsing everything — a starting point for someone who
  * opened the app without a gift in mind, which is most people.
  *
+ * Three filters, all optional and combinable: what kind of gift
+ * (category), what it's for (occasion), and roughly how much (price
+ * band). Each only appears when it would actually split the list —
+ * a filter that every gift passes is just noise on a small screen.
+ *
  * Built to hold up with no photographs, because today there are none:
  * see GiftArt for the designed stand-in.
  */
@@ -44,21 +68,36 @@ export function GiftPicker({
   onChoose: (gift: GiftCatalogItem) => void;
 }) {
   const [category, setCategory] = useState<Category | "all">("all");
+  const [occasion, setOccasion] = useState<Occasion | null>(null);
+  const [band, setBand] = useState<PriceBand | null>(null);
 
+  // Fixed order (the shared list), not order of first appearance, so
+  // chips don't shuffle when ops reorders the catalogue.
   const categories = useMemo(
-    () => [...new Set(catalog.map((item) => item.category))],
+    () => GIFT_CATEGORIES.filter((c) => catalog.some((item) => item.category === c)),
+    [catalog],
+  );
+  const occasions = useMemo(
+    () => OCCASIONS.filter((o) => catalog.some((item) => item.occasions?.includes(o))),
+    [catalog],
+  );
+  const bands = useMemo(
+    () => PRICE_BANDS.filter((b) => catalog.some((item) => inBand(item, b.id))),
     [catalog],
   );
 
-  const visible =
-    category === "all"
-      ? catalog
-      : catalog.filter((item) => item.category === category);
+  const visible = catalog.filter(
+    (item) =>
+      (category === "all" || item.category === category) &&
+      (occasion === null || item.occasions?.includes(occasion)) &&
+      (band === null || inBand(item, band)),
+  );
+  const filtered = category !== "all" || occasion !== null || band !== null;
 
   // Only lead with a hero when there is enough to browse beneath it —
   // a hero over a single other card is just a big card and a small one.
   const hero =
-    category === "all" && visible.length >= 3
+    !filtered && visible.length >= 3
       ? (visible.find((item) => item.featured) ?? null)
       : null;
   const grid = hero ? visible.filter((item) => item.id !== hero.id) : visible;
@@ -101,7 +140,59 @@ export function GiftPicker({
         </div>
       )}
 
-      {catalog.length === 0 ? (
+      {(occasions.length > 0 || bands.length > 1) && (
+        <div
+          className="-mx-7 -mt-3 mb-6 flex items-center gap-2 overflow-x-auto px-7 pb-1 [scrollbar-width:none] md:mx-0 md:px-0"
+          role="group"
+          aria-label="Filter gifts by occasion and price"
+        >
+          {occasions.map((item) => (
+            <CategoryChip
+              key={item}
+              subtle
+              active={occasion === item}
+              onClick={() => setOccasion(occasion === item ? null : item)}
+            >
+              {OCCASION_LABEL[item]}
+            </CategoryChip>
+          ))}
+          {occasions.length > 0 && bands.length > 1 && (
+            <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0" style={{ background: "var(--border-strong)" }} />
+          )}
+          {bands.length > 1 &&
+            bands.map((item) => (
+              <CategoryChip
+                key={item.id}
+                subtle
+                active={band === item.id}
+                onClick={() => setBand(band === item.id ? null : item.id)}
+              >
+                {item.label}
+              </CategoryChip>
+            ))}
+        </div>
+      )}
+
+      {catalog.length > 0 && visible.length === 0 ? (
+        <div
+          className="mb-12 flex flex-col items-center gap-3 border p-6 text-center text-sm leading-relaxed"
+          style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
+        >
+          Nothing matches all of that yet.
+          <button
+            type="button"
+            onClick={() => {
+              setCategory("all");
+              setOccasion(null);
+              setBand(null);
+            }}
+            className="border-b pb-0.5 text-xs"
+            style={{ borderColor: "var(--gold-dim)", color: "var(--gold-light)" }}
+          >
+            Show everything
+          </button>
+        </div>
+      ) : catalog.length === 0 ? (
         <div
           className="mb-12 border p-6 text-center text-sm leading-relaxed"
           style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
@@ -137,17 +228,22 @@ function CategoryChip({
   active,
   children,
   onClick,
+  subtle = false,
 }: {
   active: boolean;
   children: React.ReactNode;
   onClick: () => void;
+  /** Secondary filters (occasion, price): smaller and rounded, so the category row stays the main choice. */
+  subtle?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="shrink-0 border px-4 py-2 text-xs tracking-wide whitespace-nowrap transition-colors"
+      className={`shrink-0 border tracking-wide whitespace-nowrap transition-colors ${
+        subtle ? "rounded-full px-3 py-1.5 text-[11px]" : "px-4 py-2 text-xs"
+      }`}
       style={{
         borderColor: active ? "var(--gold)" : "var(--border)",
         background: active ? "var(--gold-glow)" : "transparent",
@@ -173,7 +269,9 @@ function describeCollection(item: GiftCatalogItem): string {
     case FulfillmentType.Vtu:
       return "Arrives on their line in seconds";
     default:
-      return "Collected in person";
+      return item.bookingStyle === "appointment"
+        ? "They book a time that suits them"
+        : "Collected in person";
   }
 }
 
@@ -308,9 +406,12 @@ function HeroCard({
  * state that ships today, so it has to look like a decision.
  */
 const GLOW_POSITION: Record<Category, string> = {
-  food: "30% 25%",
-  experience: "70% 30%",
-  keepsake: "50% 70%",
+  treats: "30% 25%",
+  dine: "70% 25%",
+  pamper: "50% 30%",
+  experiences: "70% 30%",
+  hampers: "30% 70%",
+  flowers: "50% 70%",
   utility: "25% 70%",
 };
 

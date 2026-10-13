@@ -236,6 +236,7 @@ export class VendorPortalService {
         inStorePrice: dto.inStorePrice,
         category: record.category,
         imageUrl,
+        bookingStyle: dto.bookingStyle,
       });
 
       await this.vendors.upsertOffering({

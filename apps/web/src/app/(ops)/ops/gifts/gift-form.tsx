@@ -4,7 +4,9 @@ import { useState, useTransition } from "react";
 import { saveGiftAction } from "../actions";
 import {
   DELIVERY_TYPE_LABEL,
+  BOOKING_STYLE_OPTIONS,
   GIFT_DELIVERY_TYPES,
+  OCCASION_OPTIONS,
   VENDOR_CATEGORIES,
   type GiftTemplate,
 } from "@/lib/ops/types";
@@ -89,7 +91,7 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
         <Field label="Category">
           <select
             name="category"
-            defaultValue={gift?.category ?? "food"}
+            defaultValue={gift?.category ?? "dine"}
             className={input}
           >
             {VENDOR_CATEGORIES.map((category) => (
@@ -99,6 +101,25 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
             ))}
           </select>
         </Field>
+        <div className="flex flex-col gap-1 sm:col-span-2">
+          <span className="font-medium">Good for</span>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {OCCASION_OPTIONS.map((occasion) => (
+              <label key={occasion.value} className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  name="occasions"
+                  value={occasion.value}
+                  defaultChecked={gift?.occasions.includes(occasion.value) ?? false}
+                />
+                {occasion.label}
+              </label>
+            ))}
+          </div>
+          <span className="text-xs text-zinc-500">
+            Senders filter by occasion on /send. Untagged gifts still show under “Everything”.
+          </span>
+        </div>
       </fieldset>
 
       <fieldset className="grid gap-4 rounded border border-zinc-200 bg-white p-5 sm:grid-cols-2">
@@ -142,6 +163,22 @@ export function GiftForm({ gift }: { gift?: GiftTemplate }) {
               </span>
             </>
           )}
+        </Field>
+        <Field
+          label="Collection"
+          hint="Appointment for spas, studios and anything with limited slots — the recipient asks for a time and the vendor confirms."
+        >
+          <select
+            name="bookingStyle"
+            defaultValue={gift?.bookingStyle ?? "pickup"}
+            className={input}
+          >
+            {BOOKING_STYLE_OPTIONS.map((style) => (
+              <option key={style.value} value={style.value}>
+                {style.label}
+              </option>
+            ))}
+          </select>
         </Field>
         <Field
           label="Timing note"

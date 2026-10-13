@@ -32,6 +32,8 @@ export interface GiftTemplateView {
   available: boolean;
   featured: boolean;
   sortOrder: number;
+  occasions: string[];
+  bookingStyle: GiftTemplateRow['booking_style'];
   createdAt: string;
   updatedAt: string;
 }
@@ -48,6 +50,8 @@ const FIELD_MAP: Record<string, string> = {
   available: 'available',
   featured: 'featured',
   sortOrder: 'sort_order',
+  occasions: 'occasions',
+  bookingStyle: 'booking_style',
 };
 
 /** `undefined` = not provided (skipped). `null` = explicitly clear. */
@@ -80,6 +84,8 @@ function toView(row: GiftTemplateRow): GiftTemplateView {
     available: row.available,
     featured: row.featured,
     sortOrder: (row.sort_order as number | undefined) ?? 0,
+    occasions: row.occasions ?? [],
+    bookingStyle: row.booking_style ?? 'pickup',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

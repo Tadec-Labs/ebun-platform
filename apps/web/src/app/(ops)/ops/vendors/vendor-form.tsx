@@ -105,7 +105,7 @@ export function VendorForm({
           />
         </Field>
         <Field label="Category">
-          <select name="category" defaultValue={vendor?.category ?? "food"} className={input}>
+          <select name="category" defaultValue={vendor?.category ?? "dine"} className={input}>
             {VENDOR_CATEGORIES.map((c) => (
               <option key={c.value} value={c.value}>
                 {c.label}

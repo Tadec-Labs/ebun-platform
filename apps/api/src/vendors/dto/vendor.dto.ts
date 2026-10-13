@@ -1,3 +1,5 @@
+import { BOOKING_STYLES, GIFT_CATEGORIES } from '@ebun/types';
+import type { BookingStyle } from '@ebun/types';
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -25,12 +27,7 @@ import {
 const PHONE_PATTERN = /^\+[1-9]\d{6,14}$/;
 const NUBAN_PATTERN = /^\d{10}$/;
 
-export const VENDOR_CATEGORIES = [
-  'food',
-  'experience',
-  'keepsake',
-  'utility',
-] as const;
+export const VENDOR_CATEGORIES = GIFT_CATEGORIES;
 export type VendorCategory = (typeof VENDOR_CATEGORIES)[number];
 
 const trim = ({ value }: { value: unknown }): unknown =>
@@ -382,6 +379,11 @@ export class RequestVendorItemDto {
   @Min(10_000)
   @Max(50_000_000)
   inStorePrice!: number;
+
+  /** A massage is booked as an appointment; a cake is collected. */
+  @IsOptional()
+  @IsIn(BOOKING_STYLES)
+  bookingStyle?: BookingStyle;
 }
 
 /**

@@ -180,6 +180,7 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
                 places={claimed.redemption.collectAt}
                 giftName={initial.giftName}
                 recipientName={initial.recipientName}
+                appointment={initial.bookingStyle === "appointment"}
                 booking={pickup}
                 onBooked={setPickup}
               />

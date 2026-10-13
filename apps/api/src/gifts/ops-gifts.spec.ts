@@ -18,7 +18,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   id: UUID,
   name: 'Burger meal',
   description: 'Flame-grilled beef burger with fries.',
-  category: 'food' as const,
+  category: 'dine' as const,
   base_price: 600000,
   delivery_type: FulfillmentType.DigitalVoucher,
   delivery_window: null,
@@ -133,7 +133,7 @@ describe('OpsGiftsService', () => {
     await sut.create(
       {
         name: 'Burger meal',
-        category: 'food',
+        category: 'dine',
         basePrice: 600000,
         deliveryType: FulfillmentType.DigitalVoucher,
       },
@@ -152,7 +152,7 @@ describe('OpsGiftsService', () => {
     await sut.create(
       {
         name: 'Burger meal',
-        category: 'food',
+        category: 'dine',
         basePrice: 600000,
         deliveryType: FulfillmentType.DigitalVoucher,
         available: true,
@@ -171,7 +171,7 @@ describe('OpsGiftsService', () => {
     await sut.create(
       {
         name: 'Burger meal',
-        category: 'food',
+        category: 'dine',
         basePrice: 600000,
         deliveryType: FulfillmentType.DigitalVoucher,
       },
@@ -272,7 +272,7 @@ describe('ops gift routes over HTTP', () => {
 
   const VALID = {
     name: 'Burger meal',
-    category: 'food',
+    category: 'dine',
     basePrice: 600000,
     deliveryType: 'digital_voucher',
   };

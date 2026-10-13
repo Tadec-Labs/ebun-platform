@@ -28,7 +28,7 @@ function makeVendor(overrides: Partial<VendorRow> = {}): VendorRow {
     owner_name: 'Cassandra Okoye',
     whatsapp_number: '+2348012345678',
     email: 'cass@example.com',
-    category: 'food',
+    category: 'dine',
     subcategories: null,
     service_areas: ['Lekki'],
     delivery_zones: null,
@@ -124,7 +124,7 @@ describe('VendorsService', () => {
         businessName: 'Mama Cass Kitchen',
         ownerName: 'Cassandra Okoye',
         whatsappNumber: '+2348012345678',
-        category: 'food',
+        category: 'dine',
         serviceAreas: ['Lekki'],
       });
       const result = await sut.create(dto, STAFF, META);
@@ -133,7 +133,7 @@ describe('VendorsService', () => {
         business_name: 'Mama Cass Kitchen',
         owner_name: 'Cassandra Okoye',
         whatsapp_number: '+2348012345678',
-        category: 'food',
+        category: 'dine',
         service_areas: ['Lekki'],
       });
       expect(result.businessName).toBe('Mama Cass Kitchen');
@@ -155,7 +155,7 @@ describe('VendorsService', () => {
         businessName: 'X',
         ownerName: 'Y',
         whatsappNumber: '+2348012345678',
-        category: 'food',
+        category: 'dine',
         backupVendorId: 'ghost',
       });
 

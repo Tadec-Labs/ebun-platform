@@ -315,6 +315,7 @@ export class RevealService {
       giftName: giftTemplate.name,
       giftDescription: giftTemplate.description,
       giftImageUrl: giftTemplate.image_url,
+      bookingStyle: giftTemplate.booking_style ?? 'pickup',
       theme: order.reveal_theme,
     };
 

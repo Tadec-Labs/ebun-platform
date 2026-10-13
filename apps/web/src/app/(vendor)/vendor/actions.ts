@@ -115,6 +115,7 @@ export async function requestItemAction(form: FormData): Promise<VendorItemResul
   const description = String(form.get("description") ?? "").trim();
   if (description) body.set("description", description);
   body.set("inStorePrice", String(inStorePrice));
+  body.set("bookingStyle", form.get("bookingStyle") === "appointment" ? "appointment" : "pickup");
   const photo = form.get("photo");
   if (photo instanceof Blob && photo.size > 0) body.set("photo", photo, "photo");
 

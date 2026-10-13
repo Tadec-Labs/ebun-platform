@@ -31,6 +31,8 @@ export interface GiftCatalogItem {
   deliveryWindow: string | null;
   requiresAddress: boolean;
   featured: boolean;
+  occasions: string[];
+  bookingStyle: GiftTemplateRow['booking_style'];
 }
 
 function toCatalogItem(
@@ -51,6 +53,8 @@ function toCatalogItem(
     deliveryWindow: template.delivery_window,
     requiresAddress: template.requires_address,
     featured: template.featured,
+    occasions: template.occasions ?? [],
+    bookingStyle: template.booking_style ?? 'pickup',
   };
 }
 
@@ -139,11 +143,13 @@ export class GiftsService {
     inStorePrice: number;
     category: GiftTemplateRow['category'];
     imageUrl?: string | null;
+    bookingStyle?: GiftTemplateRow['booking_style'];
   }): Promise<GiftTemplateRow> {
     return this.repository.create({
       name: input.name,
       description: input.description,
       image_url: input.imageUrl ?? null,
+      booking_style: input.bookingStyle ?? 'pickup',
       base_price: input.inStorePrice,
       category: input.category,
       delivery_type: FulfillmentType.DigitalVoucher,

@@ -1,5 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEmpty,
   IsIn,
@@ -13,15 +15,16 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
-import { FulfillmentType } from '@ebun/types';
+import {
+  BOOKING_STYLES,
+  FulfillmentType,
+  GIFT_CATEGORIES,
+  OCCASIONS,
+} from '@ebun/types';
+import type { BookingStyle, GiftCategory, Occasion } from '@ebun/types';
 
-export const GIFT_CATEGORIES = [
-  'food',
-  'experience',
-  'keepsake',
-  'utility',
-] as const;
-export type GiftCategory = (typeof GIFT_CATEGORIES)[number];
+export { GIFT_CATEGORIES };
+export type { GiftCategory };
 
 /**
  * Only the two fulfillment types the orchestrator can actually complete.
@@ -122,6 +125,18 @@ export class CreateGiftTemplateDto {
   @Min(0)
   @Max(10_000)
   sortOrder?: number;
+
+  /** Occasions to browse by on /send. Empty = shown under "all" only. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(OCCASIONS.length)
+  @IsIn(OCCASIONS, { each: true })
+  occasions?: Occasion[];
+
+  /** How a collected gift is redeemed — decides the recipient's wording. */
+  @IsOptional()
+  @IsIn(BOOKING_STYLES)
+  bookingStyle?: BookingStyle;
 }
 
 /**
@@ -209,4 +224,16 @@ export class UpdateGiftTemplateDto {
   @Min(0)
   @Max(10_000)
   sortOrder?: number;
+
+  /** Occasions to browse by on /send. Empty = shown under "all" only. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(OCCASIONS.length)
+  @IsIn(OCCASIONS, { each: true })
+  occasions?: Occasion[];
+
+  /** How a collected gift is redeemed — decides the recipient's wording. */
+  @IsOptional()
+  @IsIn(BOOKING_STYLES)
+  bookingStyle?: BookingStyle;
 }

@@ -27,6 +27,8 @@ export interface RevealView {
   giftName?: string;
   giftDescription?: string | null;
   giftImageUrl?: string | null;
+  /** Collected gifts: 'pickup' ("when are you collecting?") or 'appointment' ("book your appointment"). */
+  bookingStyle?: 'pickup' | 'appointment';
   theme?: string;
   message?: {
     type: 'text' | 'voice' | 'video';

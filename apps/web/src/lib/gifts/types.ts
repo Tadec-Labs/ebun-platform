@@ -1,4 +1,4 @@
-import { FulfillmentType } from "@ebun/types";
+import type { BookingStyle, FulfillmentType, GiftCategory, Occasion } from "@ebun/types";
 
 /**
  * Mirrors apps/api's GiftCatalogItem (apps/api/src/gifts/gifts.service.ts)
@@ -10,7 +10,11 @@ export interface GiftCatalogItem {
   id: string;
   name: string;
   description: string | null;
-  category: "food" | "experience" | "keepsake" | "utility";
+  category: GiftCategory;
+  /** Occasions ops tagged this gift for — drives the "For…" filter on /send. */
+  occasions: Occasion[];
+  /** pickup = collect any time in opening hours; appointment = book a slot (spa, studio). */
+  bookingStyle: BookingStyle;
   imageUrl: string | null;
   basePrice: number; // kobo — the vendor's in-store price
   /** kobo — SendEbun's fee, shown as its own line before paying. */

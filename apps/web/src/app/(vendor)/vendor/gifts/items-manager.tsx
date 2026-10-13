@@ -166,6 +166,7 @@ function RequestItemForm({ onAdded }: { onAdded: (offering: VendorOffering) => v
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [priceNaira, setPriceNaira] = useState("");
+  const [needsBooking, setNeedsBooking] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
@@ -181,6 +182,7 @@ function RequestItemForm({ onAdded }: { onAdded: (offering: VendorOffering) => v
           form.set("name", name);
           form.set("description", description);
           form.set("priceNaira", priceNaira);
+          form.set("bookingStyle", needsBooking ? "appointment" : "pickup");
           if (photo) {
             try {
               form.set("photo", await shrinkPhoto(photo), "photo");
@@ -195,6 +197,7 @@ function RequestItemForm({ onAdded }: { onAdded: (offering: VendorOffering) => v
             setName("");
             setDescription("");
             setPriceNaira("");
+            setNeedsBooking(false);
             setPhoto(null);
             setMessage({
               ok: true,
@@ -242,6 +245,27 @@ function RequestItemForm({ onAdded }: { onAdded: (offering: VendorOffering) => v
           The same price you charge at the counter. Senders pay this; SendEbun&rsquo;s fee is charged to them separately.
         </span>
       </label>
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-2 text-base">Does the customer need to book a time?</legend>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { value: false, label: "No — they just come in" },
+            { value: true, label: "Yes — e.g. spa, studio" },
+          ].map((option) => (
+            <button
+              key={String(option.value)}
+              type="button"
+              aria-pressed={needsBooking === option.value}
+              onClick={() => setNeedsBooking(option.value)}
+              className={`rounded-lg border-2 px-3 py-3 text-base ${
+                needsBooking === option.value ? "border-zinc-900 bg-white font-semibold" : "border-zinc-300 bg-white text-zinc-600"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
       <label className="flex flex-col gap-2">
         <span className="text-base">Photo</span>
         <input

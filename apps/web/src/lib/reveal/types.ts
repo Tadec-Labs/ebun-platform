@@ -81,6 +81,8 @@ export interface RevealPayload {
   recipientName?: string;
   senderName?: string | null;
   giftName?: string;
+  /** pickup = "when are you collecting?"; appointment = "book your appointment" (spa, studio). */
+  bookingStyle?: "pickup" | "appointment";
   giftDescription?: string | null;
   giftImageUrl?: string | null;
   theme?: "gold" | "red" | "white" | "green";

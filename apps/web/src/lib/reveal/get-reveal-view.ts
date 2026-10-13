@@ -21,6 +21,7 @@ interface ApiRevealView {
   giftName?: string;
   giftDescription?: string | null;
   giftImageUrl?: string | null;
+  bookingStyle?: "pickup" | "appointment";
   theme?: string;
   message?: {
     type: "text" | "voice" | "video";
@@ -141,6 +142,7 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
     giftName: view.giftName,
     giftDescription: view.giftDescription,
     giftImageUrl: view.giftImageUrl,
+    bookingStyle: view.bookingStyle,
     theme: toTheme(view.theme),
     message: view.message,
     collected: view.collected,

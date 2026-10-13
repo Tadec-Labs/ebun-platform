@@ -41,7 +41,7 @@ describe('ops routes over HTTP', () => {
     businessName: 'Mama Cass Kitchen',
     ownerName: 'Cassandra Okoye',
     whatsappNumber: '+2348012345678',
-    category: 'food',
+    category: 'dine',
   };
   const UUID = '3f2b1a40-5c8e-4d61-9a7b-1c2d3e4f5a6b';
 

@@ -19,7 +19,7 @@ const VALID_CREATE = {
   businessName: '  Mama Cass Kitchen  ',
   ownerName: 'Cassandra Okoye',
   whatsappNumber: '+2348012345678',
-  category: 'food',
+  category: 'dine',
 };
 
 describe('CreateVendorDto', () => {
