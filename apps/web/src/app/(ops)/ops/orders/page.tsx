@@ -1,4 +1,6 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import { Card, EmptyState, PageHeader } from "@/components/ops/ui";
 import { formatNaira } from "@/lib/format-money";
 import { opsFetch } from "@/lib/ops/api";
 import { formatWhen } from "@/lib/ops/format-time";
@@ -6,6 +8,8 @@ import { ORDER_STATUS_LABEL } from "@/lib/ops/types";
 import type { OrderListResult, OrderStatusValue } from "@/lib/ops/types";
 import { OrderFilters } from "./order-filters";
 import { StatusBadge, StuckBadge } from "./status-badge";
+
+export const metadata: Metadata = { title: "Orders" };
 
 const PAGE_SIZE = 50;
 
@@ -80,21 +84,18 @@ export default async function OrdersPage({
 
   return (
     <>
-      <div className="mb-5">
-        <h1 className="text-lg font-semibold">Orders</h1>
-        <p className="text-zinc-600">
-          {result.total} {result.total === 1 ? "order" : "orders"}
-          {statuses.length > 0 || search || fromDay || toDay || stuck
-            ? " matching"
-            : " in total"}
-        </p>
-      </div>
+      <PageHeader
+        title="Orders"
+        description={`${result.total} ${result.total === 1 ? "order" : "orders"}${
+          statuses.length > 0 || search || fromDay || toDay || stuck ? " matching" : " in total"
+        }`}
+      />
 
       {/* Always shown, even when the list is filtered elsewhere: a stuck
           paid order is money taken for a gift that was never delivered,
           and it should not be possible to filter it out of sight. */}
       {result.stuckCount > 0 && !stuck && (
-        <p className="mb-5 rounded border border-red-300 bg-red-50 px-3 py-2 text-red-900">
+        <p className="mb-5 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-red-900">
           <strong>
             {result.stuckCount}{" "}
             {result.stuckCount === 1 ? "order has" : "orders have"} been stuck
@@ -121,23 +122,24 @@ export default async function OrdersPage({
       />
 
       {result.orders.length === 0 ? (
-        <div className="rounded border border-dashed border-zinc-300 bg-white px-6 py-12 text-center">
-          <p className="mb-1 font-medium">
-            {result.total === 0 && !search && !stuck && statuses.length === 0
+        <EmptyState
+          title={
+            result.total === 0 && !search && !stuck && statuses.length === 0
               ? "No orders yet"
-              : "Nothing matches those filters"}
-          </p>
-          <p className="text-zinc-600">
-            {result.total === 0 && !search && !stuck && statuses.length === 0
+              : "Nothing matches those filters"
+          }
+          body={
+            result.total === 0 && !search && !stuck && statuses.length === 0
               ? "Orders appear here the moment a sender starts checkout."
-              : "Try widening the dates or clearing the status filter."}
-          </p>
-        </div>
+              : "Try widening the dates or clearing the status filter."
+          }
+        />
       ) : (
         <>
-          <div className="overflow-x-auto rounded border border-zinc-200 bg-white">
+          <Card flush>
+          <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left">
-              <thead className="border-b border-zinc-200 bg-zinc-50 text-xs tracking-wide text-zinc-500 uppercase">
+              <thead className="border-b border-zinc-100 bg-zinc-50/60 text-xs tracking-wide text-zinc-500 uppercase">
                 <tr>
                   <th className="px-4 py-2.5 font-medium">Order</th>
                   <th className="px-4 py-2.5 font-medium">Recipient</th>
@@ -192,6 +194,7 @@ export default async function OrdersPage({
               </tbody>
             </table>
           </div>
+          </Card>
 
           <div className="mt-3 flex items-center justify-between text-zinc-600">
             <span>

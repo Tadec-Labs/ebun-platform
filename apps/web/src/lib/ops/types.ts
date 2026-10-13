@@ -387,6 +387,8 @@ export interface OpsDelivery {
   stage: OpsDeliveryStage;
   /** When it entered its current wait. */
   waitingSince: string;
+  /** Past the point where someone should chase it. */
+  late: boolean;
 }
 
 export const DELIVERY_STAGE_LABEL: Record<OpsDeliveryStage, string> = {
@@ -396,3 +398,49 @@ export const DELIVERY_STAGE_LABEL: Record<OpsDeliveryStage, string> = {
   preparing: "Being prepared",
   on_the_way: "On its way",
 };
+
+/* ------------------------------------------------------------------ */
+/* Overview & payouts — mirrors apps/api/src/overview/overview.service */
+/* ------------------------------------------------------------------ */
+
+export interface AttentionItem {
+  kind: "stuck_order" | "delivery" | "pickup" | "approval" | "partner_details";
+  /** 1 = money taken and nothing happening; 3 = tidy-up. */
+  urgency: 1 | 2 | 3;
+  title: string;
+  detail: string | null;
+  href: string;
+  since: string | null;
+}
+
+export interface OpsCounts {
+  attention: number;
+  deliveries: number;
+  approvals: number;
+  payouts: number;
+}
+
+export interface OpsOverview {
+  today: { orders: number; takings: number; handedOver: number };
+  owed: { total: number; partners: number };
+  counts: OpsCounts;
+  attention: AttentionItem[];
+  recentOrders: {
+    id: string;
+    orderNumber: string | null;
+    status: OrderStatusValue;
+    recipientName: string;
+    giftName: string;
+    totalAmount: number;
+    createdAt: string;
+  }[];
+}
+
+export interface PayoutRow {
+  vendorId: string;
+  name: string;
+  owed: number;
+  collections: number;
+  oldestAt: string;
+  bank: { bankName: string | null; accountName: string | null; last4: string } | null;
+}

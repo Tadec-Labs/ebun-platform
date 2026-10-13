@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Card, EmptyState, PageHeader, Pill } from "@/components/ops/ui";
 import { opsFetch } from "@/lib/ops/api";
 import {
   DELIVERY_STAGE_LABEL,
@@ -20,15 +21,6 @@ const STAGE_ORDER: OpsDeliveryStage[] = [
   "on_the_way",
 ];
 
-/** How long each wait can run before it is worth a phone call. */
-const NUDGE_AFTER_MIN: Record<OpsDeliveryStage, number> = {
-  needs_vendor: 0,
-  unacknowledged: 30,
-  awaiting_address: 24 * 60,
-  preparing: 4 * 60,
-  on_the_way: 3 * 60,
-};
-
 /**
  * Every doorstep gift not yet delivered, grouped by what it is waiting
  * on. Anything past its nudge time is flagged: a vendor who hasn't seen
@@ -45,35 +37,39 @@ export default async function DeliveriesPage() {
     .map((v) => ({ id: v.id, name: v.businessName }));
 
   return (
-    <div className="flex flex-col gap-8">
-      <header>
-        <h1 className="text-xl font-semibold">Deliveries</h1>
-        <p className="mt-1 text-zinc-600">
-          Doorstep gifts not yet delivered. Vendors work these from their own link; step in here when they confirm by
-          phone instead, or when one needs moving.
-        </p>
-      </header>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Deliveries"
+        description="Doorstep gifts not yet delivered. Partners work these from their own link; step in when they confirm by phone instead, or when one needs moving."
+      />
 
       {deliveries.length === 0 && (
-        <p className="rounded border border-dashed border-zinc-300 bg-white px-4 py-8 text-center text-zinc-500">
-          Nothing out for delivery.
-        </p>
+        <EmptyState
+          title="Nothing out for delivery"
+          body="Hampers, groceries and flowers appear here from the moment they’re paid for."
+        />
       )}
 
       {STAGE_ORDER.map((stage) => {
         const rows = deliveries.filter((d) => d.stage === stage);
         if (rows.length === 0) return null;
         return (
-          <section key={stage} className="flex flex-col gap-2">
-            <h2 className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
-              {DELIVERY_STAGE_LABEL[stage]} · {rows.length}
-            </h2>
-            <ul className="divide-y divide-zinc-100 rounded border border-zinc-200 bg-white">
+          <Card
+            key={stage}
+            title={
+              <span className="flex items-center gap-2">
+                {DELIVERY_STAGE_LABEL[stage]}
+                <Pill tone={stage === "needs_vendor" ? "red" : "grey"}>{rows.length}</Pill>
+              </span>
+            }
+            flush
+          >
+            <ul className="divide-y divide-zinc-100">
               {rows.map((d) => {
                 const waitedMin = minutesSince(d.waitingSince);
-                const late = waitedMin >= NUDGE_AFTER_MIN[stage] && stage !== "needs_vendor";
+                const late = d.late && stage !== "needs_vendor";
                 return (
-                  <li key={d.orderId} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <li key={d.orderId} className="flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <p className="font-medium">
                         <Link href={`/ops/orders/${d.orderId}`} className="hover:underline">
@@ -96,7 +92,7 @@ export default async function DeliveriesPage() {
                 );
               })}
             </ul>
-          </section>
+          </Card>
         );
       })}
     </div>

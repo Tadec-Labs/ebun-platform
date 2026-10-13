@@ -1,8 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import { ButtonLink, PageHeader } from "@/components/ops/ui";
 import { opsFetch } from "@/lib/ops/api";
 import { formatNaira } from "@/lib/format-money";
 import type { GiftTemplate } from "@/lib/ops/types";
 import { AvailabilityToggle } from "./availability-toggle";
+
+export const metadata: Metadata = { title: "Gifts" };
 
 export default async function GiftsPage() {
   const gifts = await opsFetch<GiftTemplate[]>("/ops/gifts");
@@ -10,17 +14,11 @@ export default async function GiftsPage() {
 
   return (
     <>
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">Gifts</h1>
-          <p className="text-zinc-600">
-            {onSale} on sale · {gifts.length} total
-          </p>
-        </div>
-        <Link href="/ops/gifts/new" className="rounded bg-zinc-900 px-4 py-2 font-medium text-white">
-          Add gift
-        </Link>
-      </div>
+      <PageHeader
+        title="Gifts"
+        description={`${onSale} on sale · ${gifts.length} total`}
+        actions={<ButtonLink href="/ops/gifts/new">Add gift</ButtonLink>}
+      />
 
       {onSale === 0 && gifts.length > 0 && (
         <p className="mb-5 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">

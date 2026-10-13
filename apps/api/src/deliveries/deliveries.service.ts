@@ -77,7 +77,22 @@ export interface OpsDeliveryView {
     | 'on_the_way';
   /** When the order entered its current wait — what "how long has this been stuck" is measured from. */
   waitingSince: string;
+  /** Waited past the point where someone should chase it (see LATE_AFTER_MINUTES). */
+  late: boolean;
 }
+
+/**
+ * How long each wait can run before ops should pick up the phone. A
+ * vendor who hasn't seen a delivery in 30 minutes needs a call; a
+ * recipient who hasn't given an address in a day needs a nudge.
+ */
+export const LATE_AFTER_MINUTES: Record<OpsDeliveryView['stage'], number> = {
+  needs_vendor: 0,
+  unacknowledged: 30,
+  awaiting_address: 24 * 60,
+  preparing: 4 * 60,
+  on_the_way: 3 * 60,
+};
 
 export interface DeliveryDetailsInput {
   address: string;
@@ -619,5 +634,8 @@ function toOpsView(row: OpenDeliveryRow): OpsDeliveryView {
     vendorName: row.vendors?.business_name ?? null,
     stage,
     waitingSince,
+    late:
+      Date.now() - new Date(waitingSince).getTime() >=
+      LATE_AFTER_MINUTES[stage] * 60_000,
   };
 }

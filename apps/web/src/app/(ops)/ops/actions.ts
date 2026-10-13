@@ -10,6 +10,8 @@ import type {
   ActionResult,
   GiftTemplate,
   Offering,
+  OpsCounts,
+  OpsOverview,
   RedemptionLookup,
   Vendor,
 } from "@/lib/ops/types";
@@ -97,7 +99,7 @@ export async function loginAction(formData: FormData): Promise<ActionResult> {
   }
 
   await setOpsToken(accessToken, Math.min(expiresIn, 60 * 60 * 12));
-  redirect("/ops/vendors");
+  redirect("/ops");
 }
 
 export async function logoutAction(): Promise<void> {
@@ -533,4 +535,20 @@ export async function deliveryOpsAction(
     message:
       step === "vendor" ? "Vendor assigned." : step === "dispatch" ? "Marked as on its way." : "Marked as delivered.",
   };
+}
+
+// ------------------------------------------------------------ overview
+
+/**
+ * The sidebar's badge counts, re-read on every navigation (the layout
+ * itself doesn't re-render between pages). Null on any failure — the
+ * sidebar just shows no badges rather than an error.
+ */
+export async function getOpsCountsAction(): Promise<OpsCounts | null> {
+  try {
+    const overview = await opsFetch<OpsOverview>("/ops/overview");
+    return overview.counts;
+  } catch {
+    return null;
+  }
 }

@@ -29,7 +29,7 @@ export function EarningsPanel({
   const hasBank = Boolean(vendor.accountNumber);
 
   return (
-    <section>
+    <section id="earnings" className="scroll-mt-6">
       <h2 className="mb-1 font-semibold">Earnings & payouts</h2>
       <p className="mb-4 text-zinc-600">
         Owed now: <span className="font-semibold text-zinc-900">{formatNaira(earnings.owedNow)}</span> across{" "}

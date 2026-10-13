@@ -1,95 +1,117 @@
+import type { Metadata } from "next";
 import Link from "next/link";
-import { opsFetch } from "@/lib/ops/api";
 import { GIFT_CATEGORY_LABEL } from "@ebun/types";
-import type { VendorSummary } from "@/lib/ops/types";
+import { ButtonLink, Card, EmptyState, PageHeader, Pill } from "@/components/ops/ui";
+import { formatNaira } from "@/lib/format-money";
+import { opsFetch } from "@/lib/ops/api";
+import type { PayoutRow, VendorSummary } from "@/lib/ops/types";
+
+export const metadata: Metadata = { title: "Partners" };
 
 const CATEGORY_LABEL: Record<string, string> = GIFT_CATEGORY_LABEL;
 
-function Badge({ tone, children }: { tone: "green" | "grey" | "amber"; children: React.ReactNode }) {
-  const styles = {
-    green: "border-emerald-300 bg-emerald-50 text-emerald-800",
-    grey: "border-zinc-300 bg-zinc-100 text-zinc-600",
-    amber: "border-amber-300 bg-amber-50 text-amber-900",
-  }[tone];
-  return <span className={`inline-block rounded border px-1.5 py-0.5 text-xs ${styles}`}>{children}</span>;
-}
-
-export default async function VendorsPage() {
-  const vendors = await opsFetch<VendorSummary[]>("/ops/vendors");
+/**
+ * Every partner, with what matters about them in one row: can they be
+ * sent orders (items live, active), is anything waiting on us (items to
+ * approve, money owed), and how to reach them. Sorted so partners
+ * needing ops come first.
+ */
+export default async function PartnersPage() {
+  const [vendors, payouts] = await Promise.all([
+    opsFetch<VendorSummary[]>("/ops/vendors"),
+    // Owed is a help on this page, not its job.
+    opsFetch<PayoutRow[]>("/ops/payouts").catch(() => [] as PayoutRow[]),
+  ]);
+  const owedBy = new Map(payouts.map((p) => [p.vendorId, p.owed]));
+  const needsUs = (v: VendorSummary) => v.awaitingApprovalCount > 0 || (owedBy.get(v.id) ?? 0) > 0;
+  const sorted = [...vendors].sort(
+    (a, b) =>
+      Number(b.active) - Number(a.active) ||
+      Number(needsUs(b)) - Number(needsUs(a)) ||
+      a.businessName.localeCompare(b.businessName),
+  );
+  const active = vendors.filter((v) => v.active).length;
 
   return (
     <>
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">Vendors</h1>
-          <p className="text-zinc-600">
-            {vendors.length} {vendors.length === 1 ? "vendor" : "vendors"}
-          </p>
-        </div>
-        <Link href="/ops/vendors/new" className="rounded bg-zinc-900 px-4 py-2 font-medium text-white">
-          Add vendor
-        </Link>
-      </div>
+      <PageHeader
+        title="Partners"
+        description={`${active} active · ${vendors.length} total`}
+        actions={<ButtonLink href="/ops/vendors/new">Add partner</ButtonLink>}
+      />
 
       {vendors.length === 0 ? (
-        <div className="rounded border border-dashed border-zinc-300 bg-white px-6 py-12 text-center">
-          <p className="mb-1 font-medium">No vendors yet</p>
-          <p className="mb-4 text-zinc-600">Add your first vendor, then link them to the gifts they can fulfil.</p>
-          <Link href="/ops/vendors/new" className="rounded bg-zinc-900 px-4 py-2 font-medium text-white">
-            Add vendor
-          </Link>
-        </div>
+        <EmptyState
+          title="No partners yet"
+          body="Add your first partner and send them their link — they add their items, photos and bank details themselves."
+          action={<ButtonLink href="/ops/vendors/new">Add partner</ButtonLink>}
+        />
       ) : (
-        <div className="overflow-x-auto rounded border border-zinc-200 bg-white">
-          <table className="w-full min-w-[640px] text-left">
-            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
-              <tr>
-                <th className="px-4 py-2.5 font-medium">Vendor</th>
-                <th className="px-4 py-2.5 font-medium">Category</th>
-                <th className="px-4 py-2.5 font-medium">Areas</th>
-                <th className="px-4 py-2.5 font-medium">Offerings</th>
-                <th className="px-4 py-2.5 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {vendors.map((vendor) => (
-                <tr key={vendor.id} className="hover:bg-zinc-50">
-                  <td className="px-4 py-3">
-                    <Link href={`/ops/vendors/${vendor.id}`} className="font-medium text-zinc-900 underline-offset-2 hover:underline">
-                      {vendor.businessName}
-                    </Link>
-                    <div className="text-zinc-500">
-                      {vendor.ownerName} · {vendor.whatsappNumber}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{CATEGORY_LABEL[vendor.category] ?? vendor.category}</td>
-                  <td className="px-4 py-3 text-zinc-600">
-                    {vendor.serviceAreas.length > 0 ? vendor.serviceAreas.join(", ") : "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    {vendor.offeringsCount === 0 ? (
-                      // A vendor with no offerings can't be matched to any gift.
-                      <Badge tone="amber">None — can’t fulfil anything</Badge>
-                    ) : (
-                      vendor.offeringsCount
-                    )}
-                    {vendor.awaitingApprovalCount > 0 && (
-                      <span className="ml-2">
-                        <Badge tone="amber">{vendor.awaitingApprovalCount} to approve</Badge>
-                      </span>
-                    )}
-                  </td>
-                  <td className="space-x-1.5 px-4 py-3">
-                    <Badge tone={vendor.active ? "green" : "grey"}>{vendor.active ? "Active" : "Inactive"}</Badge>
-                    <Badge tone={vendor.verified ? "green" : "amber"}>
-                      {vendor.verified ? "Verified" : "Unverified"}
-                    </Badge>
-                  </td>
+        <Card flush>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left">
+              <thead className="border-b border-zinc-100 bg-zinc-50/60 text-xs tracking-wide text-zinc-500 uppercase">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Partner</th>
+                  <th className="px-5 py-3 font-medium">Category</th>
+                  <th className="px-5 py-3 font-medium">Items</th>
+                  <th className="px-5 py-3 font-medium">Owed</th>
+                  <th className="px-5 py-3 font-medium">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {sorted.map((vendor) => {
+                  const owed = owedBy.get(vendor.id) ?? 0;
+                  return (
+                    <tr key={vendor.id} className={`hover:bg-zinc-50 ${vendor.active ? "" : "opacity-60"}`}>
+                      <td className="px-5 py-3.5">
+                        <Link href={`/ops/vendors/${vendor.id}`} className="font-medium text-zinc-900 hover:underline">
+                          {vendor.businessName}
+                        </Link>
+                        <p className="text-zinc-500">
+                          {vendor.ownerName} · {vendor.whatsappNumber}
+                        </p>
+                      </td>
+                      <td className="px-5 py-3.5 text-zinc-700">
+                        {CATEGORY_LABEL[vendor.category] ?? vendor.category}
+                        {vendor.serviceAreas.length > 0 && (
+                          <p className="text-xs text-zinc-500">{vendor.serviceAreas.join(", ")}</p>
+                        )}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {vendor.offeringsCount === 0 ? (
+                            <Pill tone="amber">None yet</Pill>
+                          ) : (
+                            <span className="tabular-nums">{vendor.offeringsCount}</span>
+                          )}
+                          {vendor.awaitingApprovalCount > 0 && (
+                            <Pill tone="amber">{vendor.awaitingApprovalCount} to approve</Pill>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5 tabular-nums">
+                        {owed > 0 ? (
+                          <Link href={`/ops/vendors/${vendor.id}#earnings`} className="font-medium hover:underline">
+                            {formatNaira(owed)}
+                          </Link>
+                        ) : (
+                          <span className="text-zinc-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex flex-wrap gap-1.5">
+                          <Pill tone={vendor.active ? "green" : "grey"}>{vendor.active ? "Active" : "Paused"}</Pill>
+                          {!vendor.verified && <Pill tone="amber">Unverified</Pill>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </>
   );

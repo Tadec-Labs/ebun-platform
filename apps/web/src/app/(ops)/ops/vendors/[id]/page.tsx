@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageHeader, Pill } from "@/components/ops/ui";
 import { notFound } from "next/navigation";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
 import type { GiftTemplate, Offering, Vendor, VendorEarnings, VendorSummary } from "@/lib/ops/types";
@@ -35,18 +36,42 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
   return (
     <>
       <Link href="/ops/vendors" className="mb-3 inline-block text-zinc-600 hover:text-zinc-900">
-        ← Vendors
+        ← Partners
       </Link>
-      <h1 className="mb-1 text-lg font-semibold">{vendor.businessName}</h1>
-      <p className="mb-6 text-zinc-600">
-        {vendor.totalOrders} {vendor.totalOrders === 1 ? "order" : "orders"} fulfilled
-      </p>
+      <PageHeader
+        title={vendor.businessName}
+        description={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Pill tone={vendor.active ? "green" : "grey"}>{vendor.active ? "Active" : "Paused"}</Pill>
+            <span>
+              WhatsApp{" "}
+              <a href={`tel:${vendor.whatsappNumber}`} className="font-medium text-zinc-900 hover:underline">
+                {vendor.whatsappNumber}
+              </a>
+            </span>
+            {vendor.backupPhone ? (
+              <span>
+                Second{" "}
+                <a href={`tel:${vendor.backupPhone}`} className="font-medium text-zinc-900 hover:underline">
+                  {vendor.backupPhone}
+                </a>
+              </span>
+            ) : (
+              <span className="text-amber-700">No second number</span>
+            )}
+            {vendor.email ? <span>{vendor.email}</span> : <span className="text-amber-700">No alert email</span>}
+            <span>
+              {vendor.totalOrders} {vendor.totalOrders === 1 ? "order" : "orders"} fulfilled
+            </span>
+          </span>
+        }
+      />
 
       {query.created === "1" && (
         <CreatedNotice gifts={Number(query.gifts ?? 0)} failed={Number(query.failed ?? 0)} />
       )}
 
-      <div className="flex flex-col gap-10">
+      <div className="flex flex-col gap-6 [&>*]:rounded-xl [&>*]:border [&>*]:border-zinc-200 [&>*]:bg-white [&>*]:p-5 [&>*]:shadow-sm">
         <EarningsPanel vendor={vendor} earnings={earnings} />
         <OfferingsPanel
           vendorId={vendor.id}
