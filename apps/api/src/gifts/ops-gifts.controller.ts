@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   InternalServerErrorException,
   Param,
   ParseUUIDPipe,
@@ -66,6 +68,19 @@ export class OpsGiftsController {
     @Req() request: StaffRequest,
   ) {
     return this.gifts.update(id, dto, staffOf(request), metaOf(request));
+  }
+
+  /**
+   * Only for a gift nobody has bought (a duplicate or a mistake); refused
+   * with 409 otherwise. Admin and ops only, like every other edit here.
+   */
+  @Delete(':id')
+  @HttpCode(204)
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: StaffRequest,
+  ): Promise<void> {
+    await this.gifts.remove(id, staffOf(request), metaOf(request));
   }
 
   /** Multipart, field `photo`. Stored in R2; replaces (and deletes) the old one. */

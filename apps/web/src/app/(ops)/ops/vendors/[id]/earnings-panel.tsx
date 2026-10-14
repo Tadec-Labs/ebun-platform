@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useConfirm } from "@/components/ui/feedback";
 import { formatNaira } from "@/lib/format-money";
 import type { Vendor, VendorEarnings } from "@/lib/ops/types";
 import { recordVendorPayoutAction } from "../../actions";
@@ -24,6 +25,7 @@ export function EarningsPanel({
   const [errors, setErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [ask, askDialog] = useConfirm();
 
   const unpaid = earnings.collections.filter((c) => !c.paid);
   const hasBank = Boolean(vendor.accountNumber);
@@ -65,9 +67,14 @@ export function EarningsPanel({
         (hasBank ? (
           <form
             className="grid gap-4 rounded border border-zinc-200 bg-white p-5 sm:grid-cols-2"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
-              if (!window.confirm(`Record a payment of ${formatNaira(earnings.owedNow)} to this vendor?`)) return;
+              const ok = await ask({
+                title: `Record ${formatNaira(earnings.owedNow)} paid?`,
+                body: "Only after the transfer has gone through in your bank app. The partner sees this payment, with your reference, on their Earnings screen.",
+                confirmLabel: "Record payment",
+              });
+              if (!ok) return;
               setErrors([]);
               setNotice(null);
               startTransition(async () => {
@@ -151,6 +158,7 @@ export function EarningsPanel({
         </ul>
       )}
 
+      {askDialog}
       {earnings.payments.length > 0 && (
         <div className="mt-6">
           <h3 className="mb-2 text-sm font-medium text-zinc-700">Past payments</h3>

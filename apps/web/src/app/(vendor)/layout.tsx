@@ -26,7 +26,8 @@ export const viewport: Viewport = {
 export default function VendorLayout({ children }: LayoutProps<"/"> ) {
   return (
     <div className="min-h-dvh bg-white text-zinc-900">
-      <div className="mx-auto w-full max-w-md px-5 pb-16">{children}</div>
+      {/* Bottom padding clears the fixed tab bar (see VendorNav). */}
+      <div className="mx-auto w-full max-w-md px-5 pb-28">{children}</div>
     </div>
   );
 }

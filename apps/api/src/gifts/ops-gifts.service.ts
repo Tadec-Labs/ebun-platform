@@ -1,6 +1,10 @@
 import { PublicPhotosService } from '../storage/public-photos.service';
 import type { UploadedPhoto } from '../storage/public-photos.service';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { FulfillmentType } from '@ebun/types';
 import { AuditService } from '../audit/audit.service';
 import type { StaffContext } from '../auth/staff.guard';
@@ -9,6 +13,7 @@ import {
   UpdateGiftTemplateDto,
 } from './dto/gift-template.dto';
 import {
+  GiftSellerRow,
   GiftTemplateRow,
   GiftTemplatesRepository,
 } from './gift-templates.repository';
@@ -36,6 +41,33 @@ export interface GiftTemplateView {
   bookingStyle: GiftTemplateRow['booking_style'];
   createdAt: string;
   updatedAt: string;
+  /** Partners that sell this gift, and on what terms. */
+  sellers: GiftSellerView[];
+  /** True exactly when senders can see and buy it on /send right now. */
+  live: boolean;
+  /**
+   * Why it isn't live, when it isn't — so "On sale" can never quietly mean
+   * "hidden". Same rule as GiftsService.listAvailable, spelled out.
+   */
+  notLiveBecause:
+    | null
+    | 'off_sale'
+    | 'no_partner'
+    | 'partner_not_approved'
+    | 'partner_paused';
+}
+
+export interface GiftSellerView {
+  vendorId: string;
+  vendorName: string;
+  /** kobo — what SendEbun pays the partner per gift. */
+  vendorPrice: number;
+  availableZones: string[];
+  /** The partner's own "sold out today" switch. */
+  available: boolean;
+  approved: boolean;
+  /** The partner account itself is switched on. */
+  vendorActive: boolean;
 }
 
 const FIELD_MAP: Record<string, string> = {
@@ -70,7 +102,49 @@ function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
-function toView(row: GiftTemplateRow): GiftTemplateView {
+function toSellerView(row: GiftSellerRow): GiftSellerView {
+  return {
+    vendorId: row.vendor_id,
+    vendorName: row.vendors?.business_name ?? 'Unknown partner',
+    vendorPrice: row.vendor_price,
+    availableZones: row.available_zones ?? [],
+    available: row.available,
+    approved: row.approved,
+    vendorActive: row.vendors?.active ?? false,
+  };
+}
+
+/**
+ * Mirrors GiftsService.isSellable: on sale, and (unless it's a top-up
+ * with no vendor step) at least one active partner with an approved,
+ * available offering. Reports the most useful single reason when not.
+ */
+function listing(
+  row: GiftTemplateRow,
+  sellers: GiftSellerView[],
+): Pick<GiftTemplateView, 'live' | 'notLiveBecause'> {
+  if (!row.available) return { live: false, notLiveBecause: 'off_sale' };
+  if (row.delivery_type === FulfillmentType.Vtu) {
+    return { live: true, notLiveBecause: null };
+  }
+  const active = sellers.filter((seller) => seller.vendorActive);
+  if (active.some((seller) => seller.approved && seller.available)) {
+    return { live: true, notLiveBecause: null };
+  }
+  if (active.length === 0) return { live: false, notLiveBecause: 'no_partner' };
+  if (!active.some((seller) => seller.approved)) {
+    return { live: false, notLiveBecause: 'partner_not_approved' };
+  }
+  return { live: false, notLiveBecause: 'partner_paused' };
+}
+
+function toView(
+  row: GiftTemplateRow,
+  sellerRows: GiftSellerRow[] = [],
+): GiftTemplateView {
+  const sellers = sellerRows
+    .map(toSellerView)
+    .sort((a, b) => a.vendorName.localeCompare(b.vendorName));
   return {
     id: row.id,
     name: row.name,
@@ -88,7 +162,16 @@ function toView(row: GiftTemplateRow): GiftTemplateView {
     bookingStyle: row.booking_style ?? 'pickup',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
+    sellers,
+    ...listing(row, sellers),
   };
+}
+
+/** "Ofada  rice " and "ofada rice" are the same gift to a person scanning a list. */
+function sameName(a: string, b: string): boolean {
+  const norm = (value: string) =>
+    value.trim().replace(/\s+/g, ' ').toLowerCase();
+  return norm(a) === norm(b);
 }
 
 /**
@@ -113,16 +196,88 @@ export class OpsGiftsService {
   ) {}
 
   async list(): Promise<GiftTemplateView[]> {
-    const rows = await this.repository.findAllForOps();
-    return rows.map(toView);
+    const [rows, sellers] = await Promise.all([
+      this.repository.findAllForOps(),
+      this.repository.findSellersForOps(),
+    ]);
+    const byGift = new Map<string, GiftSellerRow[]>();
+    for (const seller of sellers) {
+      const list = byGift.get(seller.gift_template_id) ?? [];
+      list.push(seller);
+      byGift.set(seller.gift_template_id, list);
+    }
+    return rows.map((row) => toView(row, byGift.get(row.id)));
   }
 
   async get(id: string): Promise<GiftTemplateView> {
-    const row = await this.repository.findById(id);
+    const [row, sellers] = await Promise.all([
+      this.repository.findById(id),
+      this.repository.findSellersForOps(id),
+    ]);
     if (!row) {
       throw new NotFoundException('Gift not found.');
     }
-    return toView(row);
+    return toView(row, sellers);
+  }
+
+  /** A single gift's view, sellers included, so "live" is never computed from an empty list. */
+  private async withSellers(row: GiftTemplateRow): Promise<GiftTemplateView> {
+    return toView(row, await this.repository.findSellersForOps(row.id));
+  }
+
+  /**
+   * One gift per thing sold. Two "Ofada Rice" rows means two places to
+   * set a price and a photo, and ops editing the one senders can't see —
+   * exactly how a photo "disappears". Several partners selling the same
+   * thing is one gift with several sellers, not several gifts.
+   */
+  private async assertNameFree(name: string, exceptId?: string): Promise<void> {
+    const rows = await this.repository.findAllForOps();
+    const clash = rows.find(
+      (row) => row.id !== exceptId && sameName(row.name, name),
+    );
+    if (clash) {
+      throw new ConflictException(
+        `A gift called "${clash.name}" already exists. Open that one instead — add more partners to it rather than a second copy.`,
+      );
+    }
+  }
+
+  /**
+   * Removes a gift nobody has bought — the clean-up for a duplicate or a
+   * mistake. A gift with orders is history and stays; take it off sale.
+   */
+  async remove(
+    id: string,
+    staff: StaffContext,
+    meta: RequestMeta,
+  ): Promise<void> {
+    const existing = await this.repository.findById(id);
+    if (!existing) {
+      throw new NotFoundException('Gift not found.');
+    }
+    if (await this.repository.isReferenced(id)) {
+      throw new ConflictException(
+        'This gift has orders, so it stays for the record. Take it off sale instead.',
+      );
+    }
+    const removed = await this.repository.delete(id);
+    if (!removed) {
+      throw new NotFoundException('Gift not found.');
+    }
+    await this.photos.deleteIfOurs(existing.image_url);
+    await this.audit.record({
+      eventType: 'GIFT_TEMPLATE_DELETED',
+      actorId: staff.userId,
+      actorType: 'admin',
+      resourceType: 'gift_template',
+      resourceId: id,
+      previousState: existing.available ? 'available' : 'withheld',
+      newState: 'deleted',
+      metadata: { name: existing.name, basePrice: existing.base_price },
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+    });
   }
 
   async create(
@@ -130,6 +285,7 @@ export class OpsGiftsService {
     staff: StaffContext,
     meta: RequestMeta,
   ): Promise<GiftTemplateView> {
+    await this.assertNameFree(dto.name);
     const row = await this.repository.create({
       ...toRowValues(dto),
       // A new gift is a draft unless ops says otherwise. The column
@@ -150,7 +306,7 @@ export class OpsGiftsService {
       userAgent: meta.userAgent,
     });
 
-    return toView(row);
+    return this.withSellers(row);
   }
 
   async update(
@@ -162,6 +318,10 @@ export class OpsGiftsService {
     const existing = await this.repository.findById(id);
     if (!existing) {
       throw new NotFoundException('Gift not found.');
+    }
+
+    if (dto.name !== undefined && !sameName(dto.name, existing.name)) {
+      await this.assertNameFree(dto.name, id);
     }
 
     const requested = toRowValues(dto);
@@ -178,7 +338,7 @@ export class OpsGiftsService {
     // Nothing actually different — don't write, and don't put a
     // no-op in an append-only audit log.
     if (Object.keys(changed).length === 0) {
-      return toView(existing);
+      return this.withSellers(existing);
     }
 
     const row = await this.repository.update(id, changed);
@@ -206,7 +366,7 @@ export class OpsGiftsService {
       userAgent: meta.userAgent,
     });
 
-    return toView(row);
+    return this.withSellers(row);
   }
 
   /**
@@ -246,6 +406,6 @@ export class OpsGiftsService {
       userAgent: meta.userAgent,
     });
 
-    return toView(row);
+    return this.withSellers(row);
   }
 }

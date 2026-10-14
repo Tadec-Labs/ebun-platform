@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useConfirm } from "@/components/ui/feedback";
 import type { OpsDelivery } from "@/lib/ops/types";
 import { deliveryOpsAction } from "../actions";
 
@@ -19,9 +20,18 @@ export function DeliveryActions({
   const [vendorId, setVendorId] = useState(delivery.vendorId ?? "");
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
+  const [ask, askDialog] = useConfirm();
 
-  function run(step: "vendor" | "dispatch" | "delivered") {
-    if (step === "delivered" && !window.confirm("Mark as delivered? This credits the vendor.")) return;
+  async function run(step: "vendor" | "dispatch" | "delivered") {
+    if (
+      step === "delivered" &&
+      !(await ask({
+        title: "Mark as delivered?",
+        body: `${delivery.giftName} for ${delivery.recipientName}. The partner is credited for it, and the recipient's message unlocks.`,
+        confirmLabel: "Mark delivered",
+      }))
+    )
+      return;
     setMessage(null);
     startTransition(async () => {
       const result = await deliveryOpsAction(delivery.orderId, step, step === "vendor" ? vendorId : undefined);
@@ -53,7 +63,7 @@ export function DeliveryActions({
             <button
               type="button"
               disabled={pending || !vendorId || vendorId === delivery.vendorId}
-              onClick={() => run("vendor")}
+              onClick={() => void run("vendor")}
               className="rounded border border-zinc-300 px-3 py-1.5 font-medium disabled:opacity-40"
             >
               {hasVendor ? "Reassign" : "Assign"}
@@ -64,7 +74,7 @@ export function DeliveryActions({
           <button
             type="button"
             disabled={pending}
-            onClick={() => run("dispatch")}
+            onClick={() => void run("dispatch")}
             className="rounded border border-zinc-300 px-3 py-1.5 font-medium disabled:opacity-40"
           >
             On its way
@@ -74,13 +84,14 @@ export function DeliveryActions({
           <button
             type="button"
             disabled={pending}
-            onClick={() => run("delivered")}
+            onClick={() => void run("delivered")}
             className="rounded bg-zinc-900 px-3 py-1.5 font-medium text-white disabled:opacity-40"
           >
             Delivered
           </button>
         )}
       </div>
+      {askDialog}
       {message && (
         <p role={message.ok ? "status" : "alert"} className={message.ok ? "text-emerald-700" : "text-red-700"}>
           {message.text}

@@ -84,12 +84,16 @@ export function CounterScreen({
           <p className="text-sm text-zinc-500">{businessName}</p>
           <VendorNav current="/vendor" />
         </div>
-        <h1 className="mt-1 text-3xl font-semibold">Collect a gift</h1>
+        <h1 className="mt-1 text-3xl font-semibold">Orders</h1>
       </header>
 
       {/* Hidden mid-collection, like the scanner: one thing at a time. */}
       {!found && <ToDeliver initial={initialDeliveries} />}
       {!found && <ComingIn initial={initialPickups} />}
+
+      {!found && (
+        <h2 className="-mb-2 text-xl font-semibold">Someone at the counter?</h2>
+      )}
 
       {/* Hidden once a code is found: the next thing to do is confirm,
           and a second scan button would only invite rescanning. */}

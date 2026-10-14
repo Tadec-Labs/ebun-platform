@@ -35,6 +35,13 @@ const row = (over: Record<string, unknown> = {}) => ({
 const staff = { userId: 'staff-1', role: 'ebun_admin' } as never;
 const meta = { ipAddress: null, userAgent: null };
 
+const VALID_DTO = {
+  name: 'Burger meal',
+  category: 'dine',
+  basePrice: 600000,
+  deliveryType: FulfillmentType.DigitalVoucher,
+};
+
 describe('OpsGiftsService', () => {
   let sut: OpsGiftsService;
   let repository: Record<string, jest.Mock>;
@@ -51,6 +58,9 @@ describe('OpsGiftsService', () => {
           Promise.resolve(row(v)),
         ),
       update: jest.fn().mockResolvedValue(row()),
+      findSellersForOps: jest.fn().mockResolvedValue([]),
+      isReferenced: jest.fn().mockResolvedValue(false),
+      delete: jest.fn().mockResolvedValue(row()),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
     photos = {
@@ -70,6 +80,127 @@ describe('OpsGiftsService', () => {
     }).compile();
 
     sut = moduleRef.get(OpsGiftsService);
+  });
+
+  describe('who sells it, and whether senders can see it', () => {
+    const seller = (over: Record<string, unknown> = {}) => ({
+      gift_template_id: 'gift-1',
+      vendor_id: 'v1',
+      vendor_price: 540000,
+      available: true,
+      approved: true,
+      vendors: { business_name: 'Unique Catering', active: true },
+      ...over,
+    });
+
+    it('is live only when on sale AND an active partner sells it', async () => {
+      repository.findAllForOps.mockResolvedValue([
+        row({ id: 'gift-1', available: true }),
+        row({ id: 'gift-2', available: true }),
+        row({ id: 'gift-3', available: false }),
+      ]);
+      repository.findSellersForOps.mockResolvedValue([seller()]);
+
+      const list = await sut.list();
+
+      expect(list.map((g) => [g.id, g.live, g.notLiveBecause])).toEqual([
+        ['gift-1', true, null],
+        // "On sale" with nobody to make it is hidden from /send — and now says so.
+        ['gift-2', false, 'no_partner'],
+        ['gift-3', false, 'off_sale'],
+      ]);
+      expect(list[0].sellers).toEqual([
+        {
+          vendorId: 'v1',
+          vendorName: 'Unique Catering',
+          vendorPrice: 540000,
+          availableZones: [],
+          available: true,
+          approved: true,
+          vendorActive: true,
+        },
+      ]);
+    });
+
+    it('names the reason when the only partner is paused, unapproved or switched off', async () => {
+      repository.findAllForOps.mockResolvedValue([
+        row({ id: 'gift-1', available: true }),
+      ]);
+
+      repository.findSellersForOps.mockResolvedValue([
+        seller({ available: false }),
+      ]);
+      expect((await sut.list())[0].notLiveBecause).toBe('partner_paused');
+
+      repository.findSellersForOps.mockResolvedValue([
+        seller({ approved: false }),
+      ]);
+      expect((await sut.list())[0].notLiveBecause).toBe('partner_not_approved');
+
+      repository.findSellersForOps.mockResolvedValue([
+        seller({ vendors: { business_name: 'X', active: false } }),
+      ]);
+      expect((await sut.list())[0].notLiveBecause).toBe('no_partner');
+    });
+  });
+
+  describe('one gift per thing sold', () => {
+    it('refuses a second gift with the same name, whatever the spacing or case', async () => {
+      repository.findAllForOps.mockResolvedValue([
+        row({ id: 'g1', name: 'Ofada Rice' }),
+      ]);
+
+      await expect(
+        sut.create(
+          { ...VALID_DTO, name: '  ofada   RICE ' } as never,
+          staff,
+          meta,
+        ),
+      ).rejects.toThrow('A gift called "Ofada Rice" already exists');
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses renaming a gift onto another one’s name', async () => {
+      repository.findById.mockResolvedValue(row({ id: 'g2', name: 'Jollof' }));
+      repository.findAllForOps.mockResolvedValue([
+        row({ id: 'g1', name: 'Ofada Rice' }),
+        row({ id: 'g2', name: 'Jollof' }),
+      ]);
+
+      await expect(
+        sut.update('g2', { name: 'Ofada Rice' }, staff, meta),
+      ).rejects.toThrow('already exists');
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('deletes an unbought gift and its photo, and audits it', async () => {
+      repository.findById.mockResolvedValue(
+        row({ id: 'g1', image_url: 'https://pub-abc.r2.dev/gifts/a.jpg' }),
+      );
+
+      await sut.remove('g1', staff, meta);
+
+      expect(repository.delete).toHaveBeenCalledWith('g1');
+      expect(photos.deleteIfOurs).toHaveBeenCalledWith(
+        'https://pub-abc.r2.dev/gifts/a.jpg',
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'GIFT_TEMPLATE_DELETED',
+          newState: 'deleted',
+        }),
+      );
+    });
+
+    it('keeps a gift that has orders — history stays, take it off sale instead', async () => {
+      repository.findById.mockResolvedValue(row({ id: 'g1' }));
+      repository.isReferenced.mockResolvedValue(true);
+
+      await expect(sut.remove('g1', staff, meta)).rejects.toThrow(
+        'Take it off sale instead',
+      );
+      expect(repository.delete).not.toHaveBeenCalled();
+    });
   });
 
   it('replaces a photo: saves the new one, points the gift at it, then deletes the old one', async () => {
@@ -298,6 +429,7 @@ describe('ops gift routes over HTTP', () => {
       get: jest.fn().mockResolvedValue({ id: UUID }),
       create: jest.fn().mockResolvedValue({ id: UUID }),
       update: jest.fn().mockResolvedValue({ id: UUID }),
+      remove: jest.fn().mockResolvedValue(undefined),
     };
     auth = { verifyAccessToken: jest.fn() };
     users = { findStaffByAuthId: jest.fn() };
@@ -446,14 +578,31 @@ describe('ops gift routes over HTTP', () => {
     expect(dto.name).toBe('Burger meal');
   });
 
-  it('offers no way to delete a gift', async () => {
-    // Orders reference gift_template_id forever; taking one off sale is
-    // the supported path.
+  it('deletes only through the service, which refuses any gift with orders', async () => {
+    // Orders reference gift_template_id forever, so a bought gift is kept
+    // (OpsGiftsService.remove 409s); this exists to clear duplicates and
+    // mistakes nobody has paid for.
     asRole('ebun_admin');
     await request(app.getHttpServer())
       .delete(`/ops/gifts/${UUID}`)
       .set('Authorization', 'Bearer good')
-      .expect(404);
+      .expect(204);
+    expect(gifts.remove).toHaveBeenCalledWith(
+      UUID,
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('403s deletion for roles that may not change the catalogue', async () => {
+    for (const role of ['ebun_support', 'ebun_finance']) {
+      asRole(role);
+      await request(app.getHttpServer())
+        .delete(`/ops/gifts/${UUID}`)
+        .set('Authorization', 'Bearer good')
+        .expect(403);
+    }
+    expect(gifts.remove).not.toHaveBeenCalled();
   });
 
   it('never caches a catalogue response', async () => {

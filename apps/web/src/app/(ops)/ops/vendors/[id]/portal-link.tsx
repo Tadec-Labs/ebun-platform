@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useConfirm } from "@/components/ui/feedback";
 import { whatsappChatUrl } from "@/lib/whatsapp-share";
 import { rotateVendorPortalTokenAction } from "../../actions";
 
@@ -31,6 +32,7 @@ export function PortalLink({
   const [notice, setNotice] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
+  const [ask, askDialog] = useConfirm();
 
   // Built in the browser so it matches wherever this is actually
   // served, rather than hardcoding a domain that would be wrong in
@@ -84,14 +86,14 @@ export function PortalLink({
         <button
           type="button"
           disabled={pending}
-          onClick={() => {
-            if (
-              !window.confirm(
-                "Issue a new link? Their current one stops working immediately and they'll need the new one to collect anything.",
-              )
-            ) {
-              return;
-            }
+          onClick={async () => {
+            const ok = await ask({
+              title: "Issue a new link?",
+              body: "Their current link stops working immediately. They'll need the new one to see orders, collect or deliver anything.",
+              confirmLabel: "Issue new link",
+              tone: "danger",
+            });
+            if (!ok) return;
             setErrors([]);
             setNotice(null);
             startTransition(async () => {
@@ -127,6 +129,7 @@ export function PortalLink({
           ))}
         </ul>
       )}
+      {askDialog}
     </section>
   );
 }

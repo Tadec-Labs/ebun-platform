@@ -266,6 +266,9 @@ export async function saveOfferingAction(input: SaveOfferingInput): Promise<Acti
 
   revalidatePath(`/ops/vendors/${input.vendorId}`);
   revalidatePath("/ops/vendors");
+  // The gift side shows who sells it, and whether that makes it live.
+  revalidatePath("/ops/gifts");
+  revalidatePath(`/ops/gifts/${input.giftTemplateId}`);
   return { ok: true, message: "Offering saved." };
 }
 
@@ -280,6 +283,8 @@ export async function removeOfferingAction(vendorId: string, giftTemplateId: str
 
   revalidatePath(`/ops/vendors/${vendorId}`);
   revalidatePath("/ops/vendors");
+  revalidatePath("/ops/gifts");
+  revalidatePath(`/ops/gifts/${giftTemplateId}`);
   return { ok: true };
 }
 
@@ -433,11 +438,16 @@ export async function saveGiftAction(formData: FormData): Promise<ActionResult> 
     basePrice,
     sortOrder,
     requiresAddress: false,
-    available: formData.get("available") === "on",
+    // Create only. On a gift that exists, "on sale" is its own instant
+    // switch: a form re-sending what it showed at page load would undo a
+    // toggle made since (the same stale-value trap as the photo below).
+    available: isUpdate ? undefined : formData.get("available") === "on",
     featured: formData.get("featured") === "on",
     description: optional("description"),
     deliveryWindow: optional("deliveryWindow"),
-    imageUrl: optional("imageUrl"),
+    // Never sent from this form. The photo is set by upload only: an
+    // edit form carrying the URL it saw at page load used to erase a
+    // photo uploaded since, the moment anything else was saved.
     // Always sent: unticking every box must clear the tags, not leave them.
     occasions: formData.getAll("occasions").map(String),
     bookingStyle: text(formData, "bookingStyle") || "pickup",
@@ -456,9 +466,23 @@ export async function saveGiftAction(formData: FormData): Promise<ActionResult> 
   }
 
   revalidatePath("/ops/gifts");
-  if (createdId) redirect(`/ops/gifts/${createdId}?created=1`);
+  // No redirect on create: the form still has the photo to upload and the
+  // partner to link, and shows progress while it does. It navigates when
+  // everything is done.
+  if (createdId) return { ok: true, id: createdId, message: "Gift added." };
   revalidatePath(`/ops/gifts/${id}`);
   return { ok: true, message: "Saved." };
+}
+
+/** Only succeeds for a gift nobody has bought — the API refuses otherwise and says why. */
+export async function deleteGiftAction(id: string): Promise<ActionResult> {
+  try {
+    await opsFetch(`/ops/gifts/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (error) {
+    return asFailure(error);
+  }
+  revalidatePath("/ops/gifts");
+  return { ok: true, message: "Gift deleted." };
 }
 
 /** The one-tap control for the thing ops changes most: on sale or not. */

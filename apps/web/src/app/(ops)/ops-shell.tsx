@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Spinner, ToastProvider } from "@/components/ui/feedback";
 import type { OpsCounts } from "@/lib/ops/types";
 import { getOpsCountsAction, logoutAction } from "./ops/actions";
 
@@ -148,7 +149,7 @@ export function OpsShell({ children }: { children: React.ReactNode }) {
                 }`}
               >
                 {item.label}
-                {n > 0 && <Badge n={n} urgent={item.urgent} />}
+                <PendingOr>{n > 0 && <Badge n={n} urgent={item.urgent} />}</PendingOr>
               </Link>
             );
           })}
@@ -156,7 +157,9 @@ export function OpsShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <main className="min-w-0 flex-1">
-        <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">{children}</div>
+        <ToastProvider>
+          <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">{children}</div>
+        </ToastProvider>
       </main>
     </div>
   );
@@ -175,9 +178,18 @@ function NavLink({ item, active, counts }: { item: NavItem; active: boolean; cou
       {active && <span className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full bg-[#C9A84C]" aria-hidden="true" />}
       {item.icon}
       <span className="flex-1">{item.label}</span>
-      {n > 0 && <Badge n={n} urgent={item.urgent} />}
+      <PendingOr>{n > 0 && <Badge n={n} urgent={item.urgent} />}</PendingOr>
     </Link>
   );
+}
+
+/**
+ * Inside a <Link>: a spinner while that link's page is loading, so a tap
+ * on a slow connection visibly did something; otherwise its children.
+ */
+function PendingOr({ children }: { children: React.ReactNode }) {
+  const { pending } = useLinkStatus();
+  return pending ? <Spinner className="h-3.5 w-3.5 text-zinc-400" /> : <>{children}</>;
 }
 
 function Badge({ n, urgent }: { n: number; urgent?: boolean }) {

@@ -25,6 +25,17 @@ export interface GiftTemplateRow {
   [key: string]: unknown;
 }
 
+/** One vendor's offering of a gift, with the vendor's name and switch. */
+export interface GiftSellerRow {
+  gift_template_id: string;
+  vendor_id: string;
+  vendor_price: number;
+  available_zones: string[] | null;
+  available: boolean;
+  approved: boolean;
+  vendors: { business_name: string; active: boolean } | null;
+}
+
 @Injectable()
 export class GiftTemplatesRepository {
   constructor(
@@ -144,6 +155,63 @@ export class GiftTemplatesRepository {
    * for the same reason as VendorsRepository.listCollectionPoints: the
    * set is small and embed-filter semantics are easy to get wrong.
    */
+  /**
+   * Who sells which gift, for ops. One query for the whole catalogue (or
+   * one gift): the catalogue is tens of rows, and ops needs to see, per
+   * gift, exactly why it is or isn't reaching senders.
+   */
+  async findSellersForOps(giftTemplateId?: string): Promise<GiftSellerRow[]> {
+    let query = this.supabase
+      .from('vendor_gift_offerings')
+      .select(
+        'gift_template_id, vendor_id, vendor_price, available_zones, available, approved, vendors(business_name, active)',
+      );
+    if (giftTemplateId) query = query.eq('gift_template_id', giftTemplateId);
+    const response = (await query) as {
+      data: GiftSellerRow[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? [];
+  }
+
+  /** True when any order or group gift points at this template — it then can't be deleted, only taken off sale. */
+  async isReferenced(id: string): Promise<boolean> {
+    const [orders, swapped, groups] = await Promise.all([
+      this.supabase
+        .from('orders')
+        .select('id', { count: 'exact', head: true })
+        .eq('gift_template_id', id),
+      this.supabase
+        .from('orders')
+        .select('id', { count: 'exact', head: true })
+        .eq('swapped_to_template_id', id),
+      this.supabase
+        .from('group_gifts')
+        .select('id', { count: 'exact', head: true })
+        .eq('gift_template_id', id),
+    ]);
+    for (const r of [orders, swapped, groups]) {
+      if (r.error) throw r.error;
+    }
+    return (orders.count ?? 0) + (swapped.count ?? 0) + (groups.count ?? 0) > 0;
+  }
+
+  /** Offerings go with it (ON DELETE CASCADE). Null when no such row. */
+  async delete(id: string): Promise<GiftTemplateRow | null> {
+    const response = (await this.supabase
+      .from('gift_templates')
+      .delete()
+      .eq('id', id)
+      .select()
+      .maybeSingle()) as {
+      data: GiftTemplateRow | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? null;
+  }
+
   async findTemplateIdsWithAvailableVendor(): Promise<Set<string>> {
     const response = (await this.supabase
       .from('vendor_gift_offerings')

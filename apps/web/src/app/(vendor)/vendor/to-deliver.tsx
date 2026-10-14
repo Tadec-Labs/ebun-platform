@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { useConfirm } from "@/components/ui/feedback";
 import { formatNaira } from "@/lib/format-money";
 import type { VendorDelivery } from "@/lib/vendor/api";
 import { deliveryStepAction, listDeliveriesAction } from "./actions";
@@ -24,6 +25,7 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
   const [riderName, setRiderName] = useState("");
   const [riderPhone, setRiderPhone] = useState("");
   const [pending, startTransition] = useTransition();
+  const [ask, askDialog] = useConfirm();
 
   useEffect(() => {
     const refresh = async () => {
@@ -41,8 +43,16 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
 
   if (items.length === 0) return null;
 
-  function step(orderId: string, which: "ack" | "dispatch" | "delivered") {
-    if (which === "delivered" && !window.confirm("Mark this as delivered to the recipient?")) return;
+  async function step(orderId: string, which: "ack" | "dispatch" | "delivered") {
+    if (
+      which === "delivered" &&
+      !(await ask({
+        title: "Delivered to the recipient?",
+        body: "Only tap this once it's in their hands. You're credited for it straight away.",
+        confirmLabel: "Yes, delivered",
+      }))
+    )
+      return;
     setError(null);
     startTransition(async () => {
       const result = await deliveryStepAction(
@@ -82,6 +92,7 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
           {error}
         </p>
       )}
+      {askDialog}
       <ul className="flex flex-col gap-3">
         {items.map((d) => (
           <li
@@ -159,7 +170,7 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => step(d.orderId, "dispatch")}
+                    onClick={() => void step(d.orderId, "dispatch")}
                     className="rounded-lg bg-zinc-900 py-3 text-base font-semibold text-white disabled:opacity-50"
                   >
                     Send it out
@@ -179,7 +190,7 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => step(d.orderId, "ack")}
+                    onClick={() => void step(d.orderId, "ack")}
                     className="col-span-2 rounded-lg bg-zinc-900 py-4 text-lg font-semibold text-white disabled:opacity-50"
                   >
                     Got it
@@ -199,7 +210,7 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => step(d.orderId, "delivered")}
+                    onClick={() => void step(d.orderId, "delivered")}
                     className={`rounded-lg py-3 text-base font-semibold disabled:opacity-50 ${
                       d.stage === "on_the_way"
                         ? "col-span-2 bg-emerald-600 text-white"

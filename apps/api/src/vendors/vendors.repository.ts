@@ -47,6 +47,7 @@ export type VendorSummaryRow = Pick<
   | 'active'
   | 'verified'
   | 'total_orders'
+  | 'commission_rate'
   | 'created_at'
 >;
 
@@ -99,7 +100,7 @@ export interface CollectionPointRow {
 }
 
 const SUMMARY_COLUMNS =
-  'id, business_name, owner_name, whatsapp_number, category, service_areas, delivery_zones, active, verified, total_orders, created_at';
+  'id, business_name, owner_name, whatsapp_number, category, service_areas, delivery_zones, active, verified, total_orders, commission_rate, created_at';
 
 const OFFERING_COLUMNS =
   'vendor_id, gift_template_id, vendor_price, available_zones, available, approved, gift_templates(name, base_price)';

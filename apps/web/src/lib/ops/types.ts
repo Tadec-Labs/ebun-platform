@@ -24,6 +24,8 @@ export interface VendorSummary {
   active: boolean;
   verified: boolean;
   totalOrders: number;
+  /** The partner's share, 0.90 = they receive 90%. */
+  commissionRate: number;
   offeringsCount: number;
   /** Items the vendor asked to sell from their counter link, waiting on ops. */
   awaitingApprovalCount: number;
@@ -77,7 +79,7 @@ export interface Offering {
 
 /** What every ops server action returns instead of throwing — errors are shown inline, not as a crash page. */
 export type ActionResult =
-  | { ok: true; message?: string }
+  | { ok: true; message?: string; /** Set when something was created. */ id?: string }
   | { ok: false; errors: string[] };
 
 /** One list, shared with the API and /send, so a category can't exist in one place and not another. */
@@ -119,6 +121,26 @@ export interface RedemptionLookup {
   eligibleVendors: { id: string; name: string }[];
 }
 
+export interface GiftSeller {
+  vendorId: string;
+  vendorName: string;
+  /** kobo — what SendEbun pays the partner per gift. */
+  vendorPrice: number;
+  availableZones: string[];
+  /** The partner's own "sold out today" switch. */
+  available: boolean;
+  approved: boolean;
+  vendorActive: boolean;
+}
+
+/** Why a gift isn't on /send, in ops' words. */
+export const NOT_LIVE_REASON: Record<NonNullable<GiftTemplate["notLiveBecause"]>, string> = {
+  off_sale: "Off sale",
+  no_partner: "No partner sells it",
+  partner_not_approved: "Partner waiting for approval",
+  partner_paused: "Partner marked it sold out",
+};
+
 /** Mirrors apps/api/src/gifts/ops-gifts.service.ts's GiftTemplateView. */
 export type GiftDeliveryType = "digital_voucher" | "physical" | "vtu";
 
@@ -137,6 +159,11 @@ export interface GiftTemplate {
   occasions: Occasion[];
   bookingStyle: BookingStyle;
   sortOrder: number;
+  /** Partners that sell this gift. */
+  sellers: GiftSeller[];
+  /** True exactly when senders can see and buy it on /send. */
+  live: boolean;
+  notLiveBecause: null | "off_sale" | "no_partner" | "partner_not_approved" | "partner_paused";
   createdAt: string;
   updatedAt: string;
 }
@@ -168,7 +195,7 @@ export const GIFT_DELIVERY_TYPES: { value: GiftDeliveryType; label: string; hint
   {
     value: "physical",
     label: "Delivered to their door",
-    hint: "Hampers, groceries, cakes, flowers. They give their address after opening it; the vendor delivers. The delivery fee (DELIVERY_FEE_KOBO, ₦1,500 by default) is added at checkout and goes to the vendor.",
+    hint: "Hampers, groceries, cakes, flowers. They give their address after opening it; the vendor delivers. A delivery fee (₦1,500) is added at checkout and goes to the vendor.",
   },
   {
     value: "vtu",

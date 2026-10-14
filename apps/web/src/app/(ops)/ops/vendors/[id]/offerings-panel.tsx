@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useConfirm } from "@/components/ui/feedback";
 import Link from "next/link";
 import { formatNaira, parseNairaToKobo } from "@/lib/format-money";
 import type { Offering } from "@/lib/ops/types";
@@ -32,6 +33,7 @@ export function OfferingsPanel({
   const [errors, setErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [ask, askDialog] = useConfirm();
 
   const selectedGift = catalog.find((g) => g.id === giftTemplateId);
   const priceKobo = parseNairaToKobo(priceNaira);
@@ -148,8 +150,14 @@ export function OfferingsPanel({
                     <button
                       type="button"
                       disabled={pending}
-                      onClick={() => {
-                        if (!window.confirm(`Remove "${o.giftName}" from this vendor?`)) return;
+                      onClick={async () => {
+                        const ok = await ask({
+                          title: `Remove “${o.giftName}”?`,
+                          body: "This partner stops getting new orders for it. Orders already placed are unaffected.",
+                          confirmLabel: "Remove",
+                          tone: "danger",
+                        });
+                        if (!ok) return;
                         setErrors([]);
                         setNotice(null);
                         startTransition(async () => {
@@ -276,6 +284,7 @@ export function OfferingsPanel({
           </button>
         </div>
       </form>
+      {askDialog}
     </section>
   );
 }

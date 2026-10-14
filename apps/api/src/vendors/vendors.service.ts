@@ -34,6 +34,8 @@ export interface VendorSummaryView {
   active: boolean;
   verified: boolean;
   totalOrders: number;
+  /** The partner's share (0.90 = they receive 90%) — used to suggest what to pay them for a gift. */
+  commissionRate: number;
   offeringsCount: number;
   /** Items this vendor asked to sell from their counter link, waiting on ops. */
   awaitingApprovalCount: number;
@@ -163,6 +165,7 @@ function toSummaryView(
     active: row.active,
     verified: row.verified,
     totalOrders: row.total_orders,
+    commissionRate: Number(row.commission_rate),
     offeringsCount,
     awaitingApprovalCount,
     createdAt: row.created_at,
