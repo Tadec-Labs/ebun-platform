@@ -7,8 +7,7 @@ import { RedemptionsModule } from '../redemptions/redemptions.module';
 import { VendorsModule } from '../vendors/vendors.module';
 import { DeliveriesModule } from '../deliveries/deliveries.module';
 import { AlertsModule } from '../alerts/alerts.module';
-import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
-import { UnimplementedMediaUrlResolver } from '../media/unimplemented-media-url-resolver.service';
+import { MediaModule } from '../media/media.module';
 import { RevealController } from './reveal.controller';
 import { RevealService } from './reveal.service';
 
@@ -22,11 +21,9 @@ import { RevealService } from './reveal.service';
     DeliveriesModule,
     AlertsModule,
     AuditModule,
+    MediaModule,
   ],
   controllers: [RevealController],
-  providers: [
-    { provide: MEDIA_URL_RESOLVER, useClass: UnimplementedMediaUrlResolver },
-    RevealService,
-  ],
+  providers: [RevealService],
 })
 export class RevealModule {}

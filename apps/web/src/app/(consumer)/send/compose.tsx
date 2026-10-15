@@ -54,6 +54,7 @@ export function Compose({
   onChangeOccasion,
   onChangeGift,
   allowScheduling,
+  allowRecordings,
   onContinue,
 }: {
   gift: GiftCatalogItem;
@@ -63,6 +64,7 @@ export function Compose({
   onChangeOccasion: (occasion: OccasionId | null) => void;
   onChangeGift: () => void;
   allowScheduling: boolean;
+  allowRecordings: boolean;
   onContinue: () => void;
 }) {
   const [touchedPhone, setTouchedPhone] = useState(false);
@@ -75,12 +77,11 @@ export function Compose({
 
   const isRecordingMode =
     draft.messageType === "voice" || draft.messageType === "video";
-  // Recording works (see media-recorder-panel.tsx), but sending a
-  // recorded message doesn't — CreateOrderService rejects any
-  // messageType besides "text" today (no R2 upload step exists yet).
-  // Blocking here rather than letting a real submit fail with a 400 the
-  // sender can do nothing about.
-  const readyForPayment = canContinue && !isRecordingMode;
+  // A voice/video message needs its recording before payment: the file
+  // travels with the order (see lib/orders/create-order.ts). If the tabs
+  // are switched off mid-draft, recording mode can't be reached anyway.
+  const readyForPayment =
+    canContinue && (!isRecordingMode || (allowRecordings && draft.recordedMedia !== null));
 
   return (
     <>
@@ -206,16 +207,20 @@ export function Compose({
               active={draft.messageType === "text"}
               onClick={() => set("messageType", "text")}
             />
-            <Tab
-              label="Voice"
-              active={draft.messageType === "voice"}
-              onClick={() => set("messageType", "voice")}
-            />
-            <Tab
-              label="Video"
-              active={draft.messageType === "video"}
-              onClick={() => set("messageType", "video")}
-            />
+            {allowRecordings && (
+              <>
+                <Tab
+                  label="Voice"
+                  active={draft.messageType === "voice"}
+                  onClick={() => onChangeDraft({ ...draft, messageType: "voice", recordedMedia: null })}
+                />
+                <Tab
+                  label="Video"
+                  active={draft.messageType === "video"}
+                  onClick={() => onChangeDraft({ ...draft, messageType: "video", recordedMedia: null })}
+                />
+              </>
+            )}
           </div>
 
           {draft.messageType === "text" && (

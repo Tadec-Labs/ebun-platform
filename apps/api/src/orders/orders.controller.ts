@@ -6,9 +6,15 @@ import {
   Param,
   Post,
   Req,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
+import { MAX_MEDIA_BYTES } from '../media/message-media.service';
+import type { UploadedMedia } from '../media/message-media.service';
 import { CreateOrderService } from './create-order.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrdersService } from './orders.service';
@@ -21,11 +27,30 @@ export class OrdersController {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * JSON for a written message; multipart (same fields, plus the
+   * recording as `media`) for voice or video. Multer caps the file at the
+   * video limit before any of it reaches a handler; the per-kind limit
+   * and the real file type are checked in MessageMediaService.
+   *
+   * Tighter than the global throttle: each request may carry a 15 MB
+   * upload, and this is a public route.
+   */
   @Post()
-  async create(@Body() dto: CreateOrderDto, @Req() request: Request) {
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @UseInterceptors(
+    FileInterceptor('media', {
+      limits: { fileSize: MAX_MEDIA_BYTES.video, files: 1 },
+    }),
+  )
+  async create(
+    @Body() dto: CreateOrderDto,
+    @Req() request: Request,
+    @UploadedFile() media?: UploadedMedia,
+  ) {
     // request.ip, not any client-supplied field — see CreateOrderDto's
     // comment on why senderIp isn't part of the request body.
-    return this.createOrderService.execute(dto, request.ip);
+    return this.createOrderService.execute(dto, request.ip, media);
   }
 
   /**

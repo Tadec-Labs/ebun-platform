@@ -5,6 +5,12 @@ import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { PaystackClientService } from '../paystack/paystack-client.service';
 import { PricingService } from '../pricing/pricing.service';
+import {
+  MAX_MEDIA_SECONDS,
+  MessageMediaKind,
+  MessageMediaService,
+  UploadedMedia,
+} from '../media/message-media.service';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 
@@ -22,23 +28,107 @@ export class CreateOrderService {
     private readonly ordersService: OrdersService,
     private readonly paystackClient: PaystackClientService,
     private readonly pricing: PricingService,
+    private readonly media: MessageMediaService,
   ) {}
 
   async execute(
     dto: CreateOrderDto,
     senderIp: string | undefined,
+    recording?: UploadedMedia,
   ): Promise<CreateOrderResult> {
-    // Only text messages are supported at creation right now — voice/video need a Cloudflare R2 presigned-upload step that isn't built yet. Checked FIRST, before the gift lookup: this is a pure, local check with no I/O, so a request that's going to be rejected regardless of the gift template shouldn't cost a DB round-trip first. (Found via a live HTTP test against a running server — originally this ran after the gift lookup, which meant an unreachable/slow DB turned an instant 400 into a delayed 500.)
-    if (dto.messageType && dto.messageType !== 'text') {
-      throw new BadRequestException(
-        `messageType "${dto.messageType}" is not yet supported — only "text" messages can be attached at order creation for now.`,
-      );
-    }
+    // Checked FIRST, before the gift lookup: pure, local checks with no
+    // I/O, so a request that's going to be rejected regardless of the
+    // gift template shouldn't cost a DB round-trip first. (Found via a
+    // live HTTP test — when this ran after the gift lookup, an
+    // unreachable DB turned an instant 400 into a delayed 500.)
+    const mediaKind = this.checkMessage(dto, recording);
 
     const giftTemplate = await this.giftsService.findAvailableById(
       dto.giftTemplateId,
     );
 
+    // Stored before the order exists, so the row is written once with its
+    // message. If anything below fails before the order is inserted, the
+    // recording is deleted again rather than left with nothing pointing
+    // at it.
+    const messageKey =
+      mediaKind && recording
+        ? await this.media.store(mediaKind, recording)
+        : null;
+    const progress = { orderInserted: false };
+    try {
+      return await this.createWithMessage(
+        dto,
+        senderIp,
+        giftTemplate,
+        mediaKind,
+        messageKey,
+        progress,
+      );
+    } catch (err) {
+      // Once the order row exists it points at the recording, so the
+      // recording stays (a failed Paystack call leaves a draft order,
+      // the same known gap as before; see below).
+      if (messageKey && !progress.orderInserted) {
+        await this.media.delete(messageKey);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * What kind of message this is, and whether what came with it fits.
+   * Text: no file. Voice/video: exactly one recording, within the
+   * Brief's length limits, and only while storage is switched on.
+   */
+  private checkMessage(
+    dto: CreateOrderDto,
+    recording: UploadedMedia | undefined,
+  ): MessageMediaKind | null {
+    const type = dto.messageType ?? 'text';
+    if (type === 'text') {
+      if (recording) {
+        throw new BadRequestException(
+          'A recording was attached to a written message. Choose voice or video, or remove the recording.',
+        );
+      }
+      return null;
+    }
+
+    const kind = type as MessageMediaKind;
+    if (!this.media.isEnabled()) {
+      throw new BadRequestException(
+        "Voice and video messages aren't available just now. Please write your message instead.",
+      );
+    }
+    if (!recording || recording.size === 0) {
+      throw new BadRequestException(
+        kind === 'voice'
+          ? 'Record your voice note before paying.'
+          : 'Record your video before paying.',
+      );
+    }
+    if (
+      dto.messageDurationSecs !== undefined &&
+      dto.messageDurationSecs > MAX_MEDIA_SECONDS[kind]
+    ) {
+      throw new BadRequestException(
+        kind === 'voice'
+          ? 'Voice notes can be up to 60 seconds.'
+          : 'Videos can be up to 30 seconds.',
+      );
+    }
+    return kind;
+  }
+
+  private async createWithMessage(
+    dto: CreateOrderDto,
+    senderIp: string | undefined,
+    giftTemplate: Awaited<ReturnType<GiftsService['findAvailableById']>>,
+    mediaKind: MessageMediaKind | null,
+    messageKey: string | null,
+    progress: { orderInserted: boolean },
+  ): Promise<CreateOrderResult> {
     const sender = await this.usersService.findOrCreateGuestSender({
       email: dto.senderEmail,
       phone: dto.senderPhone,
@@ -70,7 +160,9 @@ export class CreateOrderService {
       recipientName: dto.recipientName,
       recipientPhone: dto.recipientPhone,
       senderMessage: dto.senderMessage,
-      messageType: dto.messageType,
+      messageType: mediaKind ?? dto.messageType,
+      messageUrl: messageKey,
+      messageDurationSecs: mediaKind ? (dto.messageDurationSecs ?? null) : null,
       scheduledSendAt: dto.scheduledSendAt,
       paystackReference,
       totalAmount,
@@ -83,6 +175,8 @@ export class CreateOrderService {
         dto.senderCountryCode && dto.senderCountryCode !== 'NG'
       ),
     });
+
+    progress.orderInserted = true;
 
     // Paystack call happens AFTER the order exists but BEFORE the
     // draft -> pending_payment transition. If Paystack's call fails,

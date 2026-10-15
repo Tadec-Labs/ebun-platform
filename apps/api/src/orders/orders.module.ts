@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module';
 import { GiftsModule } from '../gifts/gifts.module';
 import { UsersModule } from '../users/users.module';
 import { PaystackModule } from '../paystack/paystack.module';
+import { MediaModule } from '../media/media.module';
 import { OrderStateMachineService } from './order-state-machine.service';
 import { OrdersRepository } from './orders.repository';
 import { OrdersService } from './orders.service';
@@ -37,6 +38,7 @@ import { OpsOrdersService } from './ops-orders.service';
     AuthModule,
     AuditModule,
     PricingModule,
+    MediaModule,
   ],
   controllers: [OrdersController, OpsOrdersController],
   providers: [

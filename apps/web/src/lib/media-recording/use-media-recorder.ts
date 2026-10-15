@@ -26,10 +26,20 @@ interface UseMediaRecorderOptions {
 }
 
 function pickMimeType(kind: RecorderKind): string | undefined {
+  // MP4 (H.264/AAC) first wherever the browser can record it: it is the
+  // one format every recipient's phone plays, iPhones included. WebM is
+  // the fallback for browsers that can't record MP4 (older Android
+  // Chrome, Firefox).
   const candidates =
     kind === "video"
-      ? ["video/webm;codecs=vp9,opus", "video/webm", "video/mp4"]
-      : ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+      ? [
+          "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+          "video/mp4;codecs=avc1,mp4a.40.2",
+          "video/mp4",
+          "video/webm;codecs=vp8,opus",
+          "video/webm",
+        ]
+      : ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm;codecs=opus", "audio/webm"];
 
   if (typeof MediaRecorder === "undefined") return undefined;
   return candidates.find((type) => MediaRecorder.isTypeSupported(type));
@@ -44,10 +54,9 @@ function isRecordingSupported(): boolean {
 }
 
 /**
- * Wraps MediaRecorder for a fixed-length voice or video note. Entirely
- * client-side — the output is a local Blob + object URL, nothing is
- * uploaded anywhere. Wiring that Blob to a real upload is separate,
- * R2-dependent work (see message-composer.tsx's comment on this).
+ * Wraps MediaRecorder for a fixed-length voice or video note. The output
+ * is a local Blob + object URL; it is uploaded with the order itself
+ * (lib/orders/create-order.ts) when the sender pays.
  */
 export function useMediaRecorder({ kind, maxDurationSecs, initial }: UseMediaRecorderOptions) {
   const [status, setStatus] = useState<RecorderStatus>(() =>
@@ -91,17 +100,25 @@ export function useMediaRecorder({ kind, maxDurationSecs, initial }: UseMediaRec
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: kind === "video" ? { facingMode: "user" } : false,
+        // Phone-screen size, not camera size: a 30 s message stays a few
+        // MB, which is the recipient's data bill.
+        video:
+          kind === "video"
+            ? { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } }
+            : false,
       });
       streamRef.current = mediaStream;
       setStream(mediaStream);
 
       chunksRef.current = [];
       const mimeType = pickMimeType(kind);
-      const recorder = new MediaRecorder(
-        mediaStream,
-        mimeType ? { mimeType } : undefined,
-      );
+      // Bitrate hints keep a 60 s voice note near 0.5 MB and a 30 s video
+      // near 3.5 MB; the API refuses anything far beyond that.
+      const recorder = new MediaRecorder(mediaStream, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 64_000,
+        ...(kind === "video" ? { videoBitsPerSecond: 800_000 } : {}),
+      });
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };

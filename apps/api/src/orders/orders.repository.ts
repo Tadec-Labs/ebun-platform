@@ -70,6 +70,9 @@ export interface CreateOrderParams {
   recipientPhone: string;
   senderMessage?: string | null;
   messageType?: string | null;
+  /** Private R2 object key of a voice/video message — never a public URL. */
+  messageUrl?: string | null;
+  messageDurationSecs?: number | null;
   scheduledSendAt?: string | null;
   paystackReference: string;
   totalAmount: number;
@@ -400,6 +403,8 @@ export class OrdersRepository {
         recipient_phone: params.recipientPhone,
         sender_message: params.senderMessage ?? null,
         message_type: params.messageType ?? null,
+        message_url: params.messageUrl ?? null,
+        message_duration_secs: params.messageDurationSecs ?? null,
         scheduled_send_at: params.scheduledSendAt ?? null,
         paystack_reference: params.paystackReference,
         total_amount: params.totalAmount,

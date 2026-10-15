@@ -128,6 +128,13 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   R2_PUBLIC_BASE_URL?: string;
+
+  // PRIVATE bucket for senders' voice and video messages. Unset = voice
+  // and video are refused with a clear message; text still works. Uses
+  // the same account and keys as above (media/r2-media.config.ts).
+  @IsOptional()
+  @IsString()
+  R2_MEDIA_BUCKET?: string;
 }
 
 export function validateEnv(

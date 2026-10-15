@@ -71,14 +71,26 @@ export class PublicPhotosService {
     }
 
     const key = `${prefix}/${randomUUID()}.${type.extension}`;
-    const response = await client.fetch(this.objectUrl(config, key), {
-      method: 'PUT',
-      body: new Uint8Array(photo.buffer),
-      headers: {
-        'Content-Type': type.contentType,
-        'Cache-Control': CACHE_CONTROL,
-      },
-    });
+    let response: Response;
+    try {
+      response = await client.fetch(this.objectUrl(config, key), {
+        method: 'PUT',
+        body: new Uint8Array(photo.buffer),
+        headers: {
+          'Content-Type': type.contentType,
+          'Cache-Control': CACHE_CONTROL,
+        },
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      // Unreachable or timed out: the same "try again" as a refusal, not a 500.
+      this.logger.error(
+        `R2 upload of ${key} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw new ServiceUnavailableException(
+        "Couldn't save the photo just now. Please try again.",
+      );
+    }
     if (!response.ok) {
       this.logger.error(
         `R2 upload of ${key} failed: ${response.status} ${await response.text().catch(() => '')}`,

@@ -7,8 +7,14 @@ export interface CreateOrderPayload {
   senderName: string;
   senderEmail: string;
   senderMessage?: string;
-  messageType?: "text";
+  messageType?: "text" | "voice" | "video";
   scheduledSendAt?: string;
+}
+
+/** A voice note or video recorded on the sender's phone, sent with the order. */
+export interface OrderRecording {
+  blob: Blob;
+  durationSecs: number;
 }
 
 export interface CreateOrderResult {
@@ -41,17 +47,26 @@ export class CreateOrderError extends Error {
  */
 export async function createOrder(
   payload: CreateOrderPayload,
+  recording?: OrderRecording,
 ): Promise<CreateOrderResult> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE_URL}/orders`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      ...(recording
+        ? // Multipart: the same fields, plus the recording as `media`.
+          // The browser sets the boundary header itself.
+          { body: toFormData(payload, recording) }
+        : {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }),
     });
   } catch {
     throw new CreateOrderError(
-      "Couldn't reach the server. Check your connection and try again.",
+      recording
+        ? "Couldn't send your recording. Check your connection and try again."
+        : "Couldn't reach the server. Check your connection and try again.",
     );
   }
 
@@ -71,4 +86,15 @@ export async function createOrder(
   }
 
   return res.json();
+}
+
+function toFormData(payload: CreateOrderPayload, recording: OrderRecording): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value !== undefined && value !== null) form.set(key, String(value));
+  }
+  form.set("messageDurationSecs", String(Math.max(1, Math.round(recording.durationSecs))));
+  const extension = recording.blob.type.includes("mp4") ? "mp4" : recording.blob.type.includes("ogg") ? "ogg" : "webm";
+  form.set("media", recording.blob, `message.${extension}`);
+  return form;
 }

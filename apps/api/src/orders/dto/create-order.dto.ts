@@ -1,6 +1,8 @@
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsIn,
+  IsInt,
   IsISO8601,
   IsNotEmpty,
   IsOptional,
@@ -8,7 +10,9 @@ import {
   IsUUID,
   Length,
   Matches,
+  Max,
   MaxLength,
+  Min,
 } from 'class-validator';
 
 // Loose E.164 check — full validation (country-specific length/format) would need a library like libphonenumber-js; not pulled in for one field. Good enough to reject obviously-malformed input.
@@ -54,11 +58,28 @@ export class CreateOrderDto {
   @MaxLength(2000)
   senderMessage?: string;
 
-  // Only 'text' is actually accepted right now — see CreateOrderService.
-  // 'voice'/'video' are declared here (matching the schema's check constraint) so a client sending them gets a clear rejection message rather than a generic validation error, since Cloudflare R2 presigned upload (needed for actual media) isn't built yet.
+  // 'voice'/'video' arrive as multipart with the recording in a `media`
+  // file field; 'text' (or nothing) as plain JSON. See OrdersController.
   @IsOptional()
   @IsIn(['text', 'voice', 'video'])
   messageType?: string;
+
+  /**
+   * Length of the recording in seconds, as the phone measured it. Shown
+   * to the recipient on the player; checked against the Brief's limits
+   * (60 s voice, 30 s video) in CreateOrderService. Not a security
+   * boundary — the size cap is.
+   */
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && /^\d+$/.test(value.trim())
+      ? Number(value.trim())
+      : value,
+  )
+  @IsInt()
+  @Min(1)
+  @Max(600)
+  messageDurationSecs?: number;
 
   @IsOptional()
   @IsISO8601()

@@ -411,7 +411,8 @@ export class RevealService {
         text: order.sender_message, // optional caption alongside voice/video, if the sender added one
         durationSecs: order.message_duration_secs,
         playbackUrl: order.message_url
-          ? await this.mediaResolver.resolvePlaybackUrl(order.message_url)
+          ? ((await this.mediaResolver.resolvePlaybackUrl(order.message_url)) ??
+            undefined)
           : undefined,
       };
     }

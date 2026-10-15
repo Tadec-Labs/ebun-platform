@@ -42,20 +42,30 @@ export function ReviewAndPay({
     setSubmitting(true);
     setError(null);
 
+    const recorded =
+      (message.messageType === "voice" || message.messageType === "video") && message.recordedMedia
+        ? message.recordedMedia
+        : null;
+
     try {
-      const result = await createOrder({
-        giftTemplateId: gift.id,
-        recipientName: message.recipientName.trim(),
-        recipientPhone: message.recipientPhone.trim(),
-        senderName: senderName.trim(),
-        senderEmail: senderEmail.trim(),
-        senderMessage: message.text.trim() || undefined,
-        messageType: "text",
-        scheduledSendAt:
-          message.sendTiming === "scheduled" && message.scheduledFor
-            ? new Date(message.scheduledFor).toISOString()
-            : undefined,
-      });
+      const result = await createOrder(
+        {
+          giftTemplateId: gift.id,
+          recipientName: message.recipientName.trim(),
+          recipientPhone: message.recipientPhone.trim(),
+          senderName: senderName.trim(),
+          senderEmail: senderEmail.trim(),
+          // Text left over from the Write tab isn't sent with a recording:
+          // the sender never saw it as part of that message.
+          senderMessage: recorded ? undefined : message.text.trim() || undefined,
+          messageType: recorded ? (message.messageType as "voice" | "video") : "text",
+          scheduledSendAt:
+            message.sendTiming === "scheduled" && message.scheduledFor
+              ? new Date(message.scheduledFor).toISOString()
+              : undefined,
+        },
+        recorded ? { blob: recorded.blob, durationSecs: recorded.durationSecs } : undefined,
+      );
       // Real redirect to Paystack's hosted checkout — this is the
       // actual payment, not a mock. Nothing to do after this beyond
       // leaving the page; Paystack returns the sender to
@@ -219,7 +229,11 @@ export function ReviewAndPay({
             className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
             style={{ background: "var(--action)", color: "var(--ink)" }}
           >
-            {submitting ? "Redirecting to Paystack…" : `Pay ${formatNaira(gift.totalPrice)}`}
+            {submitting
+              ? message.recordedMedia && message.messageType !== "text"
+                ? "Sending your recording…"
+                : "Redirecting to Paystack…"
+              : `Pay ${formatNaira(gift.totalPrice)}`}
           </button>
         </div>
       </div>

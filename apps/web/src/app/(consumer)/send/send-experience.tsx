@@ -55,11 +55,14 @@ export function SendExperience({
   catalog,
   catalogReachable,
   allowScheduling,
+  allowRecordings,
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
   /** "Send later" only exists while Ebun delivers the message itself. */
   allowScheduling: boolean;
+  /** Voice and video tabs — off until media storage is live (MEDIA_MESSAGES). */
+  allowRecordings: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>("gift");
   const [draft, setDraft] = useState<SendDraft>({
@@ -140,6 +143,7 @@ export function SendExperience({
           onChangeOccasion={(occasion) => setDraft((prev) => ({ ...prev, occasion }))}
           onChangeGift={() => setPhase("gift")}
           allowScheduling={allowScheduling}
+          allowRecordings={allowRecordings}
           onContinue={() => setPhase("pay")}
         />
       )}

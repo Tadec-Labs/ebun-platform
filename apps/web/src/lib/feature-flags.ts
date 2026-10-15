@@ -24,3 +24,14 @@
 export function whatsappAutoDeliveryEnabled(): boolean {
   return process.env.WHATSAPP_AUTO_DELIVERY === "true";
 }
+
+/**
+ * true  → senders can record a voice note or video (the API's private R2
+ *         bucket, R2_MEDIA_BUCKET, must be set too).
+ * unset → the Voice and Video tabs are hidden; writing a message is the
+ *         only option. Keep this off until a recording has been sent and
+ *         played back once on production.
+ */
+export function mediaMessagesEnabled(): boolean {
+  return process.env.MEDIA_MESSAGES === "true";
+}
