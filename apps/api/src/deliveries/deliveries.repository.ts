@@ -15,8 +15,13 @@ export interface DeliveryFulfillmentRow {
   rider_phone: string | null;
   rider_dispatched_at: string | null;
   delivered_at: string | null;
+  /** Wrong-or-right codes the vendor has tried; locked at 5. The code itself is never selected here. */
+  handover_code_attempts: number;
   created_at: string;
 }
+
+/** What one vendor attempt at the recipient's handover code came to. See try_handover_code(). */
+export type HandoverCodeResult = 'ok' | 'wrong' | 'locked' | 'not_found';
 
 /** An order as delivery needs it: who, where, and for how much. */
 export interface DeliveryOrderRow {
@@ -63,7 +68,7 @@ export interface DeliveryCandidateRow {
 }
 
 const FULFILLMENT_COLUMNS =
-  'order_id, vendor_id, status, vendor_notified_at, vendor_accepted_at, rider_name, rider_phone, rider_dispatched_at, delivered_at, created_at';
+  'order_id, vendor_id, status, vendor_notified_at, vendor_accepted_at, rider_name, rider_phone, rider_dispatched_at, delivered_at, handover_code_attempts, created_at';
 
 // orders links to gift_templates twice (swapped_to_template_id too), so
 // the embed names its foreign key or PostgREST refuses it as ambiguous.
@@ -196,9 +201,40 @@ export class DeliveriesRepository {
     );
   }
 
+  /**
+   * The recipient's handover code — for the recipient's own gift page
+   * only. Deliberately not in FULFILLMENT_COLUMNS, so it can't reach the
+   * vendor's or ops' lists by accident.
+   */
+  async handoverCode(orderId: string): Promise<string | null> {
+    const response = (await this.supabase
+      .from('gift_fulfillments')
+      .select('handover_code')
+      .eq('order_id', orderId)
+      .eq('fulfillment_type', FulfillmentType.Physical)
+      .maybeSingle()) as Result<{ handover_code: string }>;
+    if (response.error) throw response.error;
+    return response.data?.handover_code ?? null;
+  }
+
+  /** One counted attempt, compared in the database under a lock — see try_handover_code(). */
+  async tryHandoverCode(
+    orderId: string,
+    vendorId: string,
+    code: string,
+  ): Promise<HandoverCodeResult> {
+    const response = (await this.supabase.rpc('try_handover_code', {
+      p_order_id: orderId,
+      p_vendor_id: vendorId,
+      p_code: code,
+    })) as Result<HandoverCodeResult>;
+    if (response.error) throw response.error;
+    return response.data ?? 'not_found';
+  }
+
   async markDelivered(
     orderId: string,
-    confirmedBy: 'vendor' | 'ops',
+    confirmedBy: 'code' | 'recipient' | 'ops',
   ): Promise<boolean> {
     return this.updateOpen(orderId, {
       status: FulfillmentStatus.Delivered,

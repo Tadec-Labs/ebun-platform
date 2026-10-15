@@ -265,12 +265,19 @@ export async function listDeliveriesAction(): Promise<
 export async function deliveryStepAction(
   orderId: string,
   step: "ack" | "dispatch" | "delivered",
-  rider?: { riderName?: string; riderPhone?: string },
+  extra?: { riderName?: string; riderPhone?: string; code?: string },
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  const body =
+    step === "dispatch"
+      ? { riderName: extra?.riderName, riderPhone: extra?.riderPhone }
+      : step === "delivered"
+        ? // The recipient's 4-digit handover code: the proof that pays the shop.
+          { code: (extra?.code ?? "").replace(/\s/g, "") }
+        : undefined;
   try {
     await vendorFetch<{ ok: true }>(
       `/vendor/deliveries/${encodeURIComponent(orderId)}/${step}`,
-      { method: "POST", body: step === "dispatch" ? (rider ?? {}) : undefined },
+      { method: "POST", body },
     );
     if (step === "delivered") revalidatePath("/vendor/earnings");
     return { ok: true };

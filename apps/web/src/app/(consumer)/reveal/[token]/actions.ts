@@ -170,3 +170,40 @@ export async function refreshRevealAction(token: string): Promise<RevealPayload 
   const result = await getRevealView(token);
   return result.kind === "ok" ? result.payload : null;
 }
+
+/**
+ * "I've received it" — POST /reveal/:token/received. The recipient's own
+ * word completes a doorstep delivery (and pays the shop), for when the
+ * rider didn't ask for the code. Returns the refreshed view, which is now
+ * "arrived".
+ */
+export async function confirmReceivedAction(token: string): Promise<SetDeliveryResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/reveal/${encodeURIComponent(token)}/received`, {
+      method: "POST",
+      cache: "no-store",
+    });
+  } catch {
+    return { ok: false, message: "Couldn't reach SendEbun just then. Check your connection and try again." };
+  }
+  if (res.status === 429) {
+    return { ok: false, message: "That was a lot of taps — give it a moment and try again." };
+  }
+  if (!res.ok) {
+    let message = "Couldn't confirm that just now. Try again in a moment.";
+    try {
+      const body = (await res.json()) as { message?: unknown };
+      if (typeof body.message === "string") message = body.message;
+    } catch {
+      // keep the generic message
+    }
+    return { ok: false, message };
+  }
+  try {
+    const view = (await res.json()) as Parameters<typeof toPayload>[0];
+    return { ok: true, payload: await toPayload(view) };
+  } catch {
+    return { ok: false, message: "Confirmed, but couldn't refresh the page. Reload to see it." };
+  }
+}

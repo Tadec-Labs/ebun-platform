@@ -120,6 +120,10 @@ export interface DeliveryDetails {
   deliveredAt: string | null;
   window: string | null;
   canChangeAddress: boolean;
+  /** The 4-digit code the recipient gives the rider at the door. Only ever on their own page. */
+  handoverCode: string | null;
+  /** They can tap "I've received it" themselves. */
+  canConfirmReceived: boolean;
 }
 
 /**

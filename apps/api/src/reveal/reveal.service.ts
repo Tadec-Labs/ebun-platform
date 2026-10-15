@@ -351,6 +351,16 @@ export class RevealService {
     return this.view(revealToken);
   }
 
+  /** The recipient confirms their doorstep gift arrived — completes it and credits the vendor. */
+  async confirmReceived(revealToken: string): Promise<RevealView> {
+    const order = await this.ordersService.findByRevealToken(revealToken);
+    if (!order) {
+      throw new NotFoundException('No gift found for this link.');
+    }
+    await this.deliveries.markDelivered({ kind: 'recipient' }, order.id);
+    return this.view(revealToken);
+  }
+
   private async buildView(
     order: OrderRow,
     viewState: RevealView['viewState'],

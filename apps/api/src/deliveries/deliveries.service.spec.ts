@@ -55,6 +55,7 @@ function fulfillment(
     rider_phone: null,
     rider_dispatched_at: null,
     delivered_at: null,
+    handover_code_attempts: 0,
     created_at: '2026-10-14T09:00:00.000Z',
     ...overrides,
   };
@@ -145,6 +146,8 @@ describe('DeliveriesService', () => {
       vendorName: jest.fn().mockResolvedValue('Mama Put Hampers'),
       recordVendorCredit: jest.fn().mockResolvedValue(undefined),
       listOpen: jest.fn().mockResolvedValue([]),
+      handoverCode: jest.fn().mockResolvedValue('4821'),
+      tryHandoverCode: jest.fn().mockResolvedValue('ok'),
     };
     orders = { transitionNormal: jest.fn().mockResolvedValue(undefined) };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
@@ -250,6 +253,13 @@ describe('DeliveriesService', () => {
       await sut.markDelivered(
         { kind: 'vendor', vendorId: 'vendor-1' },
         'order-1',
+        '4821',
+      );
+
+      expect(repo.tryHandoverCode).toHaveBeenCalledWith(
+        'order-1',
+        'vendor-1',
+        '4821',
       );
 
       expect(orders.transitionNormal).toHaveBeenNthCalledWith(
@@ -266,7 +276,7 @@ describe('DeliveriesService', () => {
         OrderStatus.Delivered,
         { type: 'vendor' },
       );
-      expect(repo.markDelivered).toHaveBeenCalledWith('order-1', 'vendor');
+      expect(repo.markDelivered).toHaveBeenCalledWith('order-1', 'code');
       // The share is of what the sender paid for this order, not today's price.
       expect(repo.vendorPayout).toHaveBeenCalledWith(
         'vendor-1',
@@ -306,6 +316,87 @@ describe('DeliveriesService', () => {
         sut.markDelivered({ kind: 'staff', userId: 'staff-1' }, 'order-1'),
       ).rejects.toThrow(ConflictException);
       expect(repo.recordVendorCredit).not.toHaveBeenCalled();
+    });
+
+    it("won't let a vendor mark it delivered without the recipient's code", async () => {
+      await expect(
+        sut.markDelivered({ kind: 'vendor', vendorId: 'vendor-1' }, 'order-1'),
+      ).rejects.toThrow(/4-digit code/);
+      expect(repo.tryHandoverCode).not.toHaveBeenCalled();
+      expect(orders.transitionNormal).not.toHaveBeenCalled();
+      expect(repo.recordVendorCredit).not.toHaveBeenCalled();
+    });
+
+    it('refuses a wrong code, says how many tries are left, and credits nothing', async () => {
+      repo.tryHandoverCode.mockResolvedValue('wrong');
+      repo.findFulfillment
+        .mockResolvedValueOnce(fulfillment({ vendor_id: 'vendor-1' }))
+        .mockResolvedValueOnce(
+          fulfillment({ vendor_id: 'vendor-1', handover_code_attempts: 2 }),
+        );
+
+      await expect(
+        sut.markDelivered(
+          { kind: 'vendor', vendorId: 'vendor-1' },
+          'order-1',
+          '0000',
+        ),
+      ).rejects.toThrow(/3 tries left/);
+      expect(orders.transitionNormal).not.toHaveBeenCalled();
+      expect(repo.recordVendorCredit).not.toHaveBeenCalled();
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'order.handover_code_wrong' }),
+      );
+    });
+
+    it('stops at five tries and points to the recipient or SendEbun', async () => {
+      repo.tryHandoverCode.mockResolvedValue('locked');
+
+      await expect(
+        sut.markDelivered(
+          { kind: 'vendor', vendorId: 'vendor-1' },
+          'order-1',
+          '4821',
+        ),
+      ).rejects.toThrow(ConflictException);
+      expect(repo.recordVendorCredit).not.toHaveBeenCalled();
+    });
+
+    it('lets the recipient confirm it themselves, with no code, and credits the vendor', async () => {
+      await sut.markDelivered({ kind: 'recipient' }, 'order-1');
+
+      expect(repo.tryHandoverCode).not.toHaveBeenCalled();
+      expect(orders.transitionNormal).toHaveBeenLastCalledWith(
+        'order-1',
+        OrderStatus.Dispatched,
+        OrderStatus.Delivered,
+        { type: 'user' },
+      );
+      expect(repo.markDelivered).toHaveBeenCalledWith('order-1', 'recipient');
+      expect(repo.recordVendorCredit).toHaveBeenCalled();
+    });
+
+    it('lets staff confirm by hand, recorded as ops', async () => {
+      await sut.markDelivered({ kind: 'staff', userId: 'staff-1' }, 'order-1');
+
+      expect(repo.tryHandoverCode).not.toHaveBeenCalled();
+      expect(repo.markDelivered).toHaveBeenCalledWith('order-1', 'ops');
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'order.delivered',
+          actorId: 'staff-1',
+          metadata: expect.objectContaining({ confirmedBy: 'ops' }) as unknown,
+        }),
+      );
+    });
+
+    it("won't take a recipient's confirmation before there's an address", async () => {
+      repo.findOrder.mockResolvedValue(order());
+
+      await expect(
+        sut.markDelivered({ kind: 'recipient' }, 'order-1'),
+      ).rejects.toThrow(/address/);
+      expect(orders.transitionNormal).not.toHaveBeenCalled();
     });
 
     it('says so when it is already delivered', async () => {
@@ -358,7 +449,49 @@ describe('DeliveriesService', () => {
         address: '12 Admiralty Way',
         stage: 'new',
         youReceive: 2_150_000,
+        codeLocked: false,
       }),
     ]);
+    // The vendor never sees the recipient's handover code.
+    expect(JSON.stringify(list)).not.toContain('4821');
+    expect(repo.handoverCode).not.toHaveBeenCalled();
+  });
+
+  describe("the recipient's view", () => {
+    it('shows the handover code only once there is an address and a shop', async () => {
+      repo.findOrder.mockResolvedValue(order());
+      repo.findFulfillment.mockResolvedValue(fulfillment());
+      const before = await sut.forRecipient(
+        'order-1',
+        OrderStatus.FulfillmentInProgress,
+      );
+      expect(before?.handoverCode).toBeNull();
+      expect(before?.canConfirmReceived).toBe(false);
+
+      repo.findOrder.mockResolvedValue(
+        order({ delivery_address: '12 Admiralty Way' }),
+      );
+      repo.findFulfillment.mockResolvedValue(
+        fulfillment({ vendor_id: 'vendor-1' }),
+      );
+      const after = await sut.forRecipient(
+        'order-1',
+        OrderStatus.FulfillmentInProgress,
+      );
+      expect(after?.handoverCode).toBe('4821');
+      expect(after?.canConfirmReceived).toBe(true);
+    });
+
+    it('stops showing the code once it has been delivered', async () => {
+      repo.findOrder.mockResolvedValue(
+        order({ delivery_address: '12 Admiralty Way' }),
+      );
+      repo.findFulfillment.mockResolvedValue(
+        fulfillment({ vendor_id: 'vendor-1', delivered_at: 't' }),
+      );
+      const view = await sut.forRecipient('order-1', OrderStatus.Delivered);
+      expect(view?.handoverCode).toBeNull();
+      expect(view?.canConfirmReceived).toBe(false);
+    });
   });
 });

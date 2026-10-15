@@ -26,9 +26,9 @@ export function DeliveryActions({
     if (
       step === "delivered" &&
       !(await ask({
-        title: "Mark as delivered?",
-        body: `${delivery.giftName} for ${delivery.recipientName}. The partner is credited for it, and the recipient's message unlocks.`,
-        confirmLabel: "Mark delivered",
+        title: "Confirmed with the recipient?",
+        body: `Only after ${delivery.recipientName} has told you ${delivery.giftName} is in their hands. This skips the delivery code: the partner is credited, the message unlocks, and it's recorded as confirmed by SendEbun.`,
+        confirmLabel: "Yes, they have it",
       }))
     )
       return;

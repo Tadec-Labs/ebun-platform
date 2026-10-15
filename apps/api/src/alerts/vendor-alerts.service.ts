@@ -71,7 +71,7 @@ export class VendorAlertsService {
           order.delivery_note ? `Note: ${order.delivery_note}` : null,
           `Order: ${order.order_number ?? orderId}`,
           '',
-          `Open your SendEbun link and tap "Got it", then "Out for delivery" and "Delivered" as you go. You're credited when it's delivered.`,
+          `Open your SendEbun link and tap "Got it", then "Out for delivery". At the door, the rider asks the recipient for their 4-digit delivery code — enter it under "Delivered" and you're credited.`,
           '',
           `Can't find your link? Reply to this email and we'll send it again.`,
         ]

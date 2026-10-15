@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { LockGlyph } from "@/components/icons";
 import type { DeliveryDetails, RevealPayload } from "@/lib/reveal/types";
-import { setDeliveryAction } from "../actions";
+import { confirmReceivedAction, setDeliveryAction } from "../actions";
 import { StatusLine } from "./status-line";
 
 const field =
@@ -152,20 +152,37 @@ export function AddressScreen({
  * and keeps the sender's message visibly waiting.
  */
 export function TransitScreen({
+  token,
   giftName,
   senderName,
   delivery,
   messageLocked,
   onChangeAddress,
+  onReceived,
 }: {
+  token: string;
   giftName?: string;
   senderName?: string | null;
   delivery: DeliveryDetails | null;
   messageLocked: boolean;
   onChangeAddress: () => void;
+  /** The server now says it has arrived — move on to the unwrap. */
+  onReceived: (payload: RevealPayload) => void;
 }) {
   const onTheWay = delivery?.stage === "on_the_way";
   const sender = senderName ? `${senderName}'s` : "Their";
+  const [confirming, setConfirming] = useState(false);
+  const [receivedError, setReceivedError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function confirmReceived() {
+    setReceivedError(null);
+    startTransition(async () => {
+      const result = await confirmReceivedAction(token);
+      if (result.ok) onReceived(result.payload);
+      else setReceivedError(result.message);
+    });
+  }
 
   return (
     <div className="flex flex-1 flex-col justify-center gap-9 py-6">
@@ -213,6 +230,25 @@ export function TransitScreen({
         </div>
       )}
 
+      {delivery?.handoverCode && (
+        // The proof of delivery. Only this page has it; the shop can't
+        // mark the gift delivered without it.
+        <div
+          className="flex flex-col items-center gap-1.5 border px-4 py-4 text-center"
+          style={{ borderColor: "var(--gold-dim)", background: "var(--panel-raised)" }}
+        >
+          <p className="text-[10px] tracking-[0.16em] uppercase" style={{ color: "var(--gold-dim)" }}>
+            Your delivery code
+          </p>
+          <p className="font-display text-4xl tracking-[0.35em]" style={{ color: "var(--gold-light)" }}>
+            {delivery.handoverCode}
+          </p>
+          <p className="text-xs leading-snug" style={{ color: "var(--cream-dim)" }}>
+            Give it to the rider only when the gift is in your hands.
+          </p>
+        </div>
+      )}
+
       {delivery?.address && (
         <div className="flex flex-col gap-1 border-l-2 pl-4" style={{ borderColor: "var(--gold-dim)" }}>
           <p className="text-[10px] tracking-[0.16em] uppercase" style={{ color: "var(--gold-dim)" }}>
@@ -246,6 +282,50 @@ export function TransitScreen({
           <p className="text-xs leading-snug" style={{ color: "var(--cream-dim)" }}>
             {sender} message opens with it, the moment it arrives. Keep this page — it updates by itself.
           </p>
+        </div>
+      )}
+
+      {delivery?.canConfirmReceived && (
+        <div className="flex flex-col items-center gap-2">
+          {!confirming ? (
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              className="border-b pb-0.5 text-xs"
+              style={{ borderColor: "var(--gold-dim)", color: "var(--gold-light)" }}
+            >
+              Already got it? Tap here
+            </button>
+          ) : (
+            <div className="flex w-full flex-col gap-2">
+              <p className="text-center text-xs" style={{ color: "var(--cream-dim)" }}>
+                Only if {giftName ?? "the gift"} is in your hands — this tells the shop it arrived.
+              </p>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={confirmReceived}
+                className="w-full py-3 text-sm font-medium tracking-wide disabled:opacity-50"
+                style={{ background: "var(--action)", color: "var(--ink)" }}
+              >
+                {pending ? "Confirming…" : "Yes, I've received it"}
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setConfirming(false)}
+                className="text-xs"
+                style={{ color: "var(--cream-dim)" }}
+              >
+                Not yet
+              </button>
+            </div>
+          )}
+          {receivedError && (
+            <p className="text-center text-xs" style={{ color: "var(--error)" }}>
+              {receivedError}
+            </p>
+          )}
         </div>
       )}
     </div>

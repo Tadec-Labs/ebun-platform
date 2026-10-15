@@ -41,6 +41,14 @@ export interface RecipientDeliveryView {
   window: string | null;
   /** True until a rider has it — the address can still be changed. */
   canChangeAddress: boolean;
+  /**
+   * The 4-digit code the recipient gives the rider at the door. Only on
+   * the recipient's own page, and only once there is something to hand
+   * over (an address and a shop). Null otherwise.
+   */
+  handoverCode: string | null;
+  /** The recipient can say "I've received it" themselves. */
+  canConfirmReceived: boolean;
 }
 
 /** A delivery on the vendor's "To deliver" list. Everything a rider needs, nothing more. */
@@ -58,6 +66,8 @@ export interface VendorDeliveryView {
   /** kobo — item price plus the delivery fee, credited when it's delivered. */
   youReceive: number | null;
   assignedAt: string | null;
+  /** Five wrong codes: only the recipient or SendEbun can complete it now. */
+  codeLocked: boolean;
 }
 
 /** One open delivery as ops sees it, with what (if anything) it is waiting on. */
@@ -102,7 +112,12 @@ export interface DeliveryDetailsInput {
 }
 
 type DeliveryActor =
-  { kind: 'vendor'; vendorId: string } | { kind: 'staff'; userId: string };
+  | { kind: 'vendor'; vendorId: string }
+  | { kind: 'staff'; userId: string }
+  | { kind: 'recipient' };
+
+/** Codes a vendor can try per delivery before only the recipient or ops can finish it. */
+export const MAX_HANDOVER_ATTEMPTS = 5;
 
 /**
  * Doorstep delivery for physical gifts.
@@ -110,7 +125,11 @@ type DeliveryActor =
  *   recipient gives an address  ->  a vendor is assigned
  *   vendor: "Got it"            ->  (acknowledged; nothing changes for the order)
  *   vendor: "Out for delivery"  ->  fulfillment_in_progress -> dispatched
- *   vendor/ops: "Delivered"     ->  dispatched -> delivered, vendor credited
+ *   "Delivered", proven by one of:
+ *     vendor enters the recipient's 4-digit handover code
+ *     recipient taps "I've received it"
+ *     ops, after speaking to the recipient
+ *                               ->  dispatched -> delivered, vendor credited
  *   recipient unwraps message   ->  delivered -> fulfilled
  *
  * Every order-status change goes through OrdersService.transitionNormal
@@ -153,9 +172,14 @@ export class DeliveriesService {
       ? await this.repository.vendorName(fulfillment.vendor_id)
       : null;
     const dispatched = Boolean(fulfillment?.rider_dispatched_at);
+    const stage = recipientStage(orderStatus, order, fulfillment);
+    const handoverOpen =
+      (stage === 'preparing' || stage === 'on_the_way') &&
+      Boolean(order.delivery_address) &&
+      Boolean(fulfillment?.vendor_id);
 
     return {
-      stage: recipientStage(orderStatus, order, fulfillment),
+      stage,
       address: order.delivery_address,
       area: order.delivery_zone,
       phone: order.delivery_phone ?? order.recipient_phone,
@@ -168,6 +192,10 @@ export class DeliveriesService {
       window: order.gift_templates?.delivery_window ?? null,
       canChangeAddress:
         orderStatus === OrderStatus.FulfillmentInProgress && !dispatched,
+      handoverCode: handoverOpen
+        ? await this.repository.handoverCode(orderId)
+        : null,
+      canConfirmReceived: handoverOpen,
     };
   }
 
@@ -278,6 +306,7 @@ export class DeliveriesService {
             : 'new',
         youReceive: price === null ? null : price + (order.delivery_fee ?? 0),
         assignedAt: row.vendor_notified_at,
+        codeLocked: row.handover_code_attempts >= MAX_HANDOVER_ATTEMPTS,
       });
     }
     return views;
@@ -325,9 +354,38 @@ export class DeliveriesService {
    * Handed over at the door. Also accepted straight from "preparing" — a
    * busy shop that forgot to tap "Out for delivery" has still delivered
    * it, and making them tap twice helps nobody.
+   *
+   * Proof first, because "Delivered" is what pays the vendor:
+   *   vendor     must give the recipient's handover code (5 tries in all)
+   *   recipient  is the proof
+   *   staff      confirm by hand, after speaking to the recipient
    */
-  async markDelivered(actor: DeliveryActor, orderId: string): Promise<void> {
+  async markDelivered(
+    actor: DeliveryActor,
+    orderId: string,
+    handoverCode?: string,
+  ): Promise<void> {
     const { order, fulfillment } = await this.requireActionable(actor, orderId);
+    if (
+      order.status !== OrderStatus.FulfillmentInProgress &&
+      order.status !== OrderStatus.Dispatched
+    ) {
+      throw new BadRequestException(
+        order.status === OrderStatus.Delivered ||
+          order.status === OrderStatus.Fulfilled
+          ? 'Already marked as delivered.'
+          : "This delivery can't be marked delivered right now.",
+      );
+    }
+    if (!order.delivery_address) {
+      throw new BadRequestException(
+        "The recipient hasn't given an address yet, so there's nothing to hand over.",
+      );
+    }
+    if (actor.kind === 'vendor') {
+      await this.checkHandoverCode(actor.vendorId, order.id, handoverCode);
+    }
+
     if (order.status === OrderStatus.FulfillmentInProgress) {
       await this.toDispatched(actor, order, { name: null, phone: null });
       order.status = OrderStatus.Dispatched;
@@ -347,10 +405,13 @@ export class DeliveriesService {
       OrderStatus.Dispatched,
       OrderStatus.Delivered,
     );
-    await this.repository.markDelivered(
-      order.id,
-      actor.kind === 'vendor' ? 'vendor' : 'ops',
-    );
+    const confirmation =
+      actor.kind === 'vendor'
+        ? 'code'
+        : actor.kind === 'recipient'
+          ? 'recipient'
+          : 'ops';
+    await this.repository.markDelivered(order.id, confirmation);
 
     const vendorId = fulfillment.vendor_id as string;
     const price = await this.repository.vendorPayout(
@@ -380,9 +441,59 @@ export class DeliveriesService {
       resourceId: order.id,
       metadata: {
         vendorId,
+        confirmedBy: confirmation,
         credited: price === null ? null : price + (order.delivery_fee ?? 0),
       },
     });
+  }
+
+  /**
+   * The vendor's proof of handover. Counted and compared in the database
+   * (try_handover_code), so parallel guesses can't beat the limit. The
+   * messages say how many tries are left, so a rider who misheard a
+   * digit knows to ask again rather than guess.
+   */
+  private async checkHandoverCode(
+    vendorId: string,
+    orderId: string,
+    code: string | undefined,
+  ): Promise<void> {
+    if (!code || !/^[0-9]{4}$/.test(code)) {
+      throw new BadRequestException(
+        "Enter the 4-digit code from the recipient's gift page. The rider asks for it at the door.",
+      );
+    }
+    const result = await this.repository.tryHandoverCode(
+      orderId,
+      vendorId,
+      code,
+    );
+    if (result === 'ok') return;
+
+    await this.audit.record({
+      eventType: 'order.handover_code_wrong',
+      actorId: null,
+      actorType: 'vendor',
+      resourceType: 'order',
+      resourceId: orderId,
+      metadata: { vendorId, locked: result === 'locked' },
+    });
+    if (result === 'not_found') {
+      throw new NotFoundException('No delivery like that for your shop.');
+    }
+    if (result === 'locked') {
+      throw new ConflictException(
+        'Too many wrong codes. Ask the recipient to tap "I\'ve received it" on their gift page, or call SendEbun.',
+      );
+    }
+    const fresh = await this.repository.findFulfillment(orderId);
+    const left = Math.max(
+      0,
+      MAX_HANDOVER_ATTEMPTS - (fresh?.handover_code_attempts ?? 0),
+    );
+    throw new BadRequestException(
+      `That code doesn't match. Check it with the recipient — ${left} ${left === 1 ? 'try' : 'tries'} left.`,
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -488,7 +599,9 @@ export class DeliveriesService {
     const transitionActor: TransitionActor =
       actor.kind === 'vendor'
         ? { type: 'vendor' }
-        : { type: 'admin', id: actor.userId };
+        : actor.kind === 'recipient'
+          ? { type: 'user' }
+          : { type: 'admin', id: actor.userId };
     try {
       await this.orders.transitionNormal(orderId, from, to, transitionActor);
     } catch (err) {
@@ -513,8 +626,9 @@ export class DeliveriesService {
       this.repository.findOrder(orderId),
       this.repository.findFulfillment(orderId),
     ]);
+    // The recipient reaches this only through their own gift link.
     const mine =
-      actor.kind === 'staff' || fulfillment?.vendor_id === actor.vendorId;
+      actor.kind !== 'vendor' || fulfillment?.vendor_id === actor.vendorId;
     if (!order || !fulfillment || !mine) {
       // Same answer for "not yours" and "doesn't exist".
       throw new NotFoundException('No delivery like that for your shop.');
@@ -539,9 +653,13 @@ export class DeliveriesService {
   }
 
   private auditActor(actor: DeliveryActor) {
-    return actor.kind === 'vendor'
-      ? { actorId: null, actorType: 'vendor' as const }
-      : { actorId: actor.userId, actorType: 'admin' as const };
+    if (actor.kind === 'vendor') {
+      return { actorId: null, actorType: 'vendor' as const };
+    }
+    if (actor.kind === 'recipient') {
+      return { actorId: null, actorType: 'user' as const };
+    }
+    return { actorId: actor.userId, actorType: 'admin' as const };
   }
 }
 

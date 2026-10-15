@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useConfirm } from "@/components/ui/feedback";
 import { formatNaira } from "@/lib/format-money";
 import type { VendorDelivery } from "@/lib/vendor/api";
 import { deliveryStepAction, listDeliveriesAction } from "./actions";
@@ -15,7 +14,9 @@ const REFRESH_MS = 30_000;
  * Each card is everything a rider needs (name, phone, address,
  * landmark) and one obvious next button: Got it → Out for delivery →
  * Delivered. "Delivered" works from any step, because a busy shop that
- * forgot the middle tap has still delivered it. Same 30-second refresh as
+ * forgot the middle tap has still delivered it — but it needs the
+ * recipient's 4-digit code, which the rider asks for at the door. That
+ * code is what proves the handover and pays the shop. Same 30-second refresh as
  * the pickups list, so a counter phone left open shows new ones.
  */
 export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
@@ -24,8 +25,9 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
   const [riderFor, setRiderFor] = useState<string | null>(null);
   const [riderName, setRiderName] = useState("");
   const [riderPhone, setRiderPhone] = useState("");
+  const [codeFor, setCodeFor] = useState<string | null>(null);
+  const [code, setCode] = useState("");
   const [pending, startTransition] = useTransition();
-  const [ask, askDialog] = useConfirm();
 
   useEffect(() => {
     const refresh = async () => {
@@ -44,15 +46,6 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
   if (items.length === 0) return null;
 
   async function step(orderId: string, which: "ack" | "dispatch" | "delivered") {
-    if (
-      which === "delivered" &&
-      !(await ask({
-        title: "Delivered to the recipient?",
-        body: "Only tap this once it's in their hands. You're credited for it straight away.",
-        confirmLabel: "Yes, delivered",
-      }))
-    )
-      return;
     setError(null);
     startTransition(async () => {
       const result = await deliveryStepAction(
@@ -60,7 +53,9 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
         which,
         which === "dispatch"
           ? { riderName: riderName.trim() || undefined, riderPhone: riderPhone.trim() || undefined }
-          : undefined,
+          : which === "delivered"
+            ? { code }
+            : undefined,
       );
       if (!result.ok) {
         setError(result.message);
@@ -69,6 +64,8 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
       setRiderFor(null);
       setRiderName("");
       setRiderPhone("");
+      setCodeFor(null);
+      setCode("");
       setItems((all) =>
         which === "delivered"
           ? all.filter((d) => d.orderId !== orderId)
@@ -92,7 +89,6 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
           {error}
         </p>
       )}
-      {askDialog}
       <ul className="flex flex-col gap-3">
         {items.map((d) => (
           <li
@@ -148,7 +144,50 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
               )}
             </div>
 
-            {riderFor === d.orderId ? (
+            {codeFor === d.orderId ? (
+              <form
+                className="flex flex-col gap-2 rounded-lg bg-emerald-50 p-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void step(d.orderId, "delivered");
+                }}
+              >
+                <label className="flex flex-col gap-2">
+                  <span className="text-base font-medium">Delivery code from {d.recipientName.split(" ")[0]}</span>
+                  <input
+                    autoFocus
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="4 digits"
+                    className="rounded-lg border-2 border-zinc-300 bg-white px-4 py-3 text-center text-2xl font-semibold tracking-[0.5em]"
+                  />
+                  <span className="text-sm text-zinc-600">
+                    It&rsquo;s on their gift page. The rider asks for it at the door.
+                  </span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="submit"
+                    disabled={pending || code.length !== 4}
+                    className="rounded-lg bg-emerald-600 py-3 text-base font-semibold text-white disabled:opacity-50"
+                  >
+                    Confirm delivered
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCodeFor(null);
+                      setCode("");
+                    }}
+                    className="rounded-lg border-2 border-zinc-300 py-3 text-base"
+                  >
+                    Back
+                  </button>
+                </div>
+              </form>
+            ) : riderFor === d.orderId ? (
               <div className="flex flex-col gap-2 rounded-lg bg-zinc-50 p-3">
                 <p className="text-sm text-zinc-600">Rider details (optional) — the recipient gets a call button.</p>
                 <input
@@ -206,11 +245,21 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
                     Out for delivery
                   </button>
                 )}
-                {d.stage !== "new" && (
+                {d.stage !== "new" && d.codeLocked && (
+                  <p className="col-span-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    Too many wrong codes. Ask {d.recipientName.split(" ")[0]} to tap &ldquo;I&rsquo;ve received
+                    it&rdquo; on their gift page, or call SendEbun.
+                  </p>
+                )}
+                {d.stage !== "new" && !d.codeLocked && (
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => void step(d.orderId, "delivered")}
+                    onClick={() => {
+                      setError(null);
+                      setCode("");
+                      setCodeFor(d.orderId);
+                    }}
                     className={`rounded-lg py-3 text-base font-semibold disabled:opacity-50 ${
                       d.stage === "on_the_way"
                         ? "col-span-2 bg-emerald-600 text-white"

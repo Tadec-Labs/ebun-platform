@@ -34,7 +34,10 @@ import {
 import { VendorPortalService } from './vendor-portal.service';
 import { EarningsService } from './earnings.service';
 import { DeliveriesService } from '../deliveries/deliveries.service';
-import { DispatchDeliveryDto } from '../deliveries/dto/delivery.dto';
+import {
+  DispatchDeliveryDto,
+  HandoverCodeDto,
+} from '../deliveries/dto/delivery.dto';
 
 /**
  * The counter screen's API. One vendor, their own gifts, nothing else.
@@ -315,16 +318,23 @@ export class VendorPortalController {
     return { ok: true };
   }
 
-  /** Handed over at the door. Credits the vendor (item + delivery fee) on their Earnings screen. */
+  /**
+   * Handed over at the door, proven by the recipient's 4-digit code.
+   * Credits the vendor (item + delivery fee) on their Earnings screen.
+   * Five tries per delivery, counted in the database; this throttle only
+   * stops a script hammering across many deliveries.
+   */
   @Post('deliveries/:orderId/delivered')
-  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async deliveredDelivery(
     @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Body() dto: HandoverCodeDto,
     @Req() request: VendorRequest,
   ) {
     await this.deliveries.markDelivered(
       { kind: 'vendor', vendorId: vendorOf(request).vendorId },
       orderId,
+      dto.code,
     );
     return { ok: true };
   }

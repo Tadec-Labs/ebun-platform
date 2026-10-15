@@ -47,6 +47,19 @@ export class SetDeliveryDetailsDto {
   note?: string;
 }
 
+/** "Delivered", from the vendor's link: the recipient's 4-digit code is the proof. */
+export class HandoverCodeDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.replace(/\s/g, '') : value,
+  )
+  // No @IsString: a missing code should get this one message, not two.
+  @Matches(/^[0-9]{4}$/, {
+    message:
+      "Enter the 4-digit code from the recipient's gift page. The rider asks for it at the door.",
+  })
+  code!: string;
+}
+
 /** "Out for delivery" — the rider's details are optional, but shown to the recipient when given. */
 export class DispatchDeliveryDto {
   @Transform(blankToUndefined)

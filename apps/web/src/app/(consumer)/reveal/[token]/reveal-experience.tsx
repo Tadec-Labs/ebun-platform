@@ -183,11 +183,16 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
 
         {phase === "transit" && (
           <TransitScreen
+            token={token}
             giftName={initial.giftName}
             senderName={initial.senderName}
             delivery={live.delivery ?? null}
             messageLocked={Boolean(live.messageLocked)}
             onChangeAddress={() => setPhase("address")}
+            onReceived={(payload) => {
+              setLive(payload);
+              setPhase(payload.screenState === "fulfilled" ? "fulfilled" : "arrival-lock");
+            }}
           />
         )}
 

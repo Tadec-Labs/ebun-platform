@@ -1357,5 +1357,28 @@ describe('vendor portal over HTTP', () => {
         .expect(400);
       expect(deliveries.dispatch).not.toHaveBeenCalled();
     });
+
+    it("needs the recipient's 4-digit code to mark delivered, and passes it on", async () => {
+      asVendor();
+      const url =
+        '/vendor/deliveries/22222222-2222-4222-8222-222222222222/delivered';
+      const server = app.getHttpServer();
+
+      for (const body of [{}, { code: '12' }, { code: 'abcd' }]) {
+        await request(server).post(url).set(auth).send(body).expect(400);
+      }
+      expect(deliveries.markDelivered).not.toHaveBeenCalled();
+
+      await request(server)
+        .post(url)
+        .set(auth)
+        .send({ code: '48 21' })
+        .expect(201);
+      expect(deliveries.markDelivered).toHaveBeenCalledWith(
+        { kind: 'vendor', vendorId: 'vendor-1' },
+        '22222222-2222-4222-8222-222222222222',
+        '4821',
+      );
+    });
   });
 });

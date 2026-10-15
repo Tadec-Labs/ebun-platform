@@ -50,6 +50,16 @@ export class RevealController {
     return this.reveal.bookPickup(token, body.vendorId, body.pickupAt);
   }
 
+  /**
+   * Doorstep gifts: "I've received it". The recipient's own word is proof
+   * of delivery — for when the rider didn't ask for the code.
+   */
+  @Post(':token/received')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async received(@Param('token', new ParseUUIDPipe()) token: string) {
+    return this.reveal.confirmReceived(token);
+  }
+
   /** Doorstep gifts: where to bring it. Repeatable until it's on its way. */
   @Post(':token/delivery')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })

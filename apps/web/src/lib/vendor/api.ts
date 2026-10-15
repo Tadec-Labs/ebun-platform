@@ -58,6 +58,8 @@ export interface VendorDelivery {
   /** kobo — item plus delivery fee, credited when delivered. */
   youReceive: number | null;
   assignedAt: string | null;
+  /** Five wrong codes: only the recipient or SendEbun can complete it now. */
+  codeLocked: boolean;
 }
 
 /** Mirrors the API's EarningsView. Amounts in kobo. */
