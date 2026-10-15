@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -13,10 +14,12 @@ import {
 } from './dto/vendor.dto';
 import {
   OfferingRow,
+  PriceChangeRefusedError,
   VendorRow,
   VendorSummaryRow,
   VendorsRepository,
 } from './vendors.repository';
+import { vendorShareOf } from './vendor-portal.service';
 
 export interface RequestMeta {
   ipAddress: string | null;
@@ -39,6 +42,8 @@ export interface VendorSummaryView {
   offeringsCount: number;
   /** Items this vendor asked to sell from their counter link, waiting on ops. */
   awaitingApprovalCount: number;
+  /** New prices this vendor asked for, waiting on ops. */
+  priceRequestCount: number;
   createdAt: string;
 }
 
@@ -108,6 +113,18 @@ export interface OfferingView {
   availableZones: string[];
   available: boolean;
   approved: boolean;
+  /** The gift is switched on sale in the catalogue. */
+  giftOnSale: boolean;
+  /** The gift has a photo — wanted before it goes on sale. */
+  giftHasPhoto: boolean;
+  /**
+   * A new IN-STORE price (kobo) the vendor asked for from their link.
+   * Senders keep paying senderPrice until ops approves. Null = none.
+   */
+  proposedPrice: number | null;
+  /** kobo — what the vendor would receive at the proposed price (their agreed share). */
+  proposedVendorPrice: number | null;
+  priceProposedAt: string | null;
 }
 
 const FIELD_MAP: Record<string, string> = {
@@ -153,6 +170,7 @@ function toSummaryView(
   row: VendorSummaryRow,
   offeringsCount: number,
   awaitingApprovalCount: number,
+  priceRequestCount: number,
 ): VendorSummaryView {
   return {
     id: row.id,
@@ -168,6 +186,7 @@ function toSummaryView(
     commissionRate: Number(row.commission_rate),
     offeringsCount,
     awaitingApprovalCount,
+    priceRequestCount,
     createdAt: row.created_at,
   };
 }
@@ -203,9 +222,10 @@ function toView(row: VendorRow): VendorView {
   };
 }
 
-function toOfferingView(row: OfferingRow): OfferingView {
+function toOfferingView(row: OfferingRow, vendorShare: number): OfferingView {
   const senderPrice = row.gift_templates?.base_price ?? 0;
   const ebunMargin = senderPrice - row.vendor_price;
+  const proposedPrice = row.proposed_price ?? null;
   return {
     giftTemplateId: row.gift_template_id,
     giftName: row.gift_templates?.name ?? 'Unknown gift',
@@ -217,8 +237,36 @@ function toOfferingView(row: OfferingRow): OfferingView {
     availableZones: row.available_zones ?? [],
     available: row.available,
     approved: row.approved,
+    giftOnSale: row.gift_templates?.available ?? false,
+    giftHasPhoto: Boolean(row.gift_templates?.image_url),
+    proposedPrice,
+    proposedVendorPrice:
+      proposedPrice === null ? null : vendorShareOf(proposedPrice, vendorShare),
+    priceProposedAt: row.price_proposed_at ?? null,
   };
 }
+
+const PRICE_CHANGE_REFUSAL: Record<
+  PriceChangeRefusedError['reason'],
+  () => Error
+> = {
+  not_found: () =>
+    new NotFoundException(
+      'There is no price request for that gift any more. Reload the page.',
+    ),
+  stale: () =>
+    new ConflictException(
+      'The partner has asked for a different price since you loaded this page. Reload and check the new one.',
+    ),
+  shared_gift: () =>
+    new ConflictException(
+      'Other partners sell this gift too, so its price applies to all of them. Change it on the gift page instead, and decline this request.',
+    ),
+  invalid_share: () =>
+    new BadRequestException(
+      "This partner's share can't be worked out at that price. Check their share on the Details form.",
+    ),
+};
 
 const formatNaira = (kobo: number) =>
   `₦${(kobo / 100).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
@@ -242,13 +290,19 @@ export class VendorsService {
   ) {}
 
   async list(): Promise<VendorSummaryView[]> {
-    const [vendors, counts, awaiting] = await Promise.all([
+    const [vendors, counts, awaiting, priceRequests] = await Promise.all([
       this.repository.list(),
       this.repository.countOfferingsByVendor(),
       this.repository.countAwaitingApprovalByVendor(),
+      this.repository.countPriceRequestsByVendor(),
     ]);
     return vendors.map((v) =>
-      toSummaryView(v, counts[v.id] ?? 0, awaiting[v.id] ?? 0),
+      toSummaryView(
+        v,
+        counts[v.id] ?? 0,
+        awaiting[v.id] ?? 0,
+        priceRequests[v.id] ?? 0,
+      ),
     );
   }
 
@@ -416,9 +470,9 @@ export class VendorsService {
   }
 
   async listOfferings(vendorId: string): Promise<OfferingView[]> {
-    await this.requireVendor(vendorId);
+    const vendor = await this.requireVendor(vendorId);
     const rows = await this.repository.listOfferings(vendorId);
-    return rows.map(toOfferingView);
+    return rows.map((row) => toOfferingView(row, vendor.commission_rate));
   }
 
   /**
@@ -433,7 +487,7 @@ export class VendorsService {
     staff: StaffContext,
     meta: RequestMeta,
   ): Promise<OfferingView> {
-    await this.requireVendor(vendorId);
+    const vendor = await this.requireVendor(vendorId);
     const gift = await this.gifts.findById(giftTemplateId); // 404s if unknown
 
     // Catches the classic naira-vs-kobo typo (and any price that would
@@ -469,7 +523,7 @@ export class VendorsService {
       ...meta,
     });
 
-    return toOfferingView(row);
+    return toOfferingView(row, vendor.commission_rate);
   }
 
   async removeOffering(
@@ -479,6 +533,19 @@ export class VendorsService {
     meta: RequestMeta,
   ): Promise<void> {
     await this.requireVendor(vendorId);
+
+    // Same rule as the vendor's own Remove (VendorPortalService.removeItem):
+    // deleting an offering a paid gift still needs leaves that gift with
+    // no counter that will accept it and no payout to record.
+    const relying = await this.repository.ordersStillRelyingOn(
+      vendorId,
+      giftTemplateId,
+    );
+    if (relying > 0) {
+      throw new ConflictException(
+        `${relying} paid ${relying === 1 ? 'gift still needs' : 'gifts still need'} this partner to hand it over. Pause it (untick Available) instead, and remove it once ${relying === 1 ? "it's" : "they're"} collected, delivered or refunded.`,
+      );
+    }
 
     const removed = await this.repository.deleteOffering(
       vendorId,
@@ -497,6 +564,191 @@ export class VendorsService {
       metadata: { giftTemplateId },
       ...meta,
     });
+  }
+
+  /**
+   * Approves an item the vendor asked to sell, and optionally puts its
+   * gift on sale in the same step — what used to be two screens. The
+   * offering keeps the price, zones and switch it already has: this is
+   * a yes, not an edit.
+   *
+   * Two writes, approve first. If putting it on sale fails, the item is
+   * approved and still off sale — a safe state that a retry finishes.
+   */
+  async approveOffering(
+    vendorId: string,
+    giftTemplateId: string,
+    putOnSale: boolean,
+    staff: StaffContext,
+    meta: RequestMeta,
+  ): Promise<OfferingView> {
+    const vendor = await this.requireVendor(vendorId);
+    const existing = await this.repository.findOffering(
+      vendorId,
+      giftTemplateId,
+    );
+    if (!existing) {
+      throw new NotFoundException('This vendor has no offering for that gift.');
+    }
+    const gift = await this.gifts.findById(giftTemplateId);
+    if (existing.vendor_price >= gift.base_price) {
+      throw new BadRequestException(
+        `This partner would be paid ${formatNaira(existing.vendor_price)} on a ${formatNaira(gift.base_price)} gift. Fix the price before approving.`,
+      );
+    }
+
+    let row = existing;
+    if (!existing.approved) {
+      const approved = await this.repository.approveOffering(
+        vendorId,
+        giftTemplateId,
+      );
+      if (!approved) {
+        throw new NotFoundException(
+          'This vendor has no offering for that gift.',
+        );
+      }
+      row = approved;
+      await this.audit.record({
+        eventType: 'vendor_offering.approved',
+        actorId: staff.userId,
+        actorType: 'admin',
+        resourceType: 'vendor',
+        resourceId: vendorId,
+        previousState: 'awaiting_approval',
+        newState: 'approved',
+        metadata: {
+          giftTemplateId,
+          giftName: gift.name,
+          vendorPrice: row.vendor_price,
+          basePrice: gift.base_price,
+        },
+        ...meta,
+      });
+    }
+
+    if (putOnSale && !gift.available) {
+      const before = await this.gifts.putOnSale(giftTemplateId);
+      if (before && !before.available) {
+        await this.audit.record({
+          eventType: 'GIFT_TEMPLATE_UPDATED',
+          actorId: staff.userId,
+          actorType: 'admin',
+          resourceType: 'gift_template',
+          resourceId: giftTemplateId,
+          previousState: 'withheld',
+          newState: 'available',
+          metadata: {
+            changedFields: ['available'],
+            via: 'approve_and_put_on_sale',
+            vendorId,
+          },
+          ...meta,
+        });
+      }
+      const refreshed = await this.repository.findOffering(
+        vendorId,
+        giftTemplateId,
+      );
+      if (refreshed) row = refreshed;
+    }
+
+    return toOfferingView(row, vendor.commission_rate);
+  }
+
+  /**
+   * Approves the vendor's new shop price: the gift's price and their
+   * share change together, atomically. `expectedPrice` is the request
+   * ops saw — if the vendor has asked for something else since, nothing
+   * changes and ops is told to look again.
+   *
+   * Gifts already bought are unaffected: they were charged the old
+   * price, and the payout at hand-over is the vendor's share of what the
+   * sender paid (vendorPayoutForOrder).
+   */
+  async approvePriceChange(
+    vendorId: string,
+    giftTemplateId: string,
+    expectedPrice: number,
+    staff: StaffContext,
+    meta: RequestMeta,
+  ): Promise<OfferingView> {
+    const vendor = await this.requireVendor(vendorId);
+    const vendorPrice = vendorShareOf(expectedPrice, vendor.commission_rate);
+
+    let result: Awaited<ReturnType<VendorsRepository['approvePriceChange']>>;
+    try {
+      result = await this.repository.approvePriceChange({
+        vendorId,
+        giftTemplateId,
+        expectedPrice,
+        vendorPrice,
+      });
+    } catch (err) {
+      if (err instanceof PriceChangeRefusedError) {
+        throw PRICE_CHANGE_REFUSAL[err.reason]();
+      }
+      throw err;
+    }
+
+    await this.audit.record({
+      eventType: 'vendor_offering.price_change_approved',
+      actorId: staff.userId,
+      actorType: 'admin',
+      resourceType: 'vendor',
+      resourceId: vendorId,
+      metadata: {
+        giftTemplateId,
+        basePriceFrom: result.old_base_price,
+        basePriceTo: result.new_base_price,
+        vendorPriceFrom: result.old_vendor_price,
+        vendorPriceTo: result.new_vendor_price,
+      },
+      ...meta,
+    });
+
+    const row = await this.repository.findOffering(vendorId, giftTemplateId);
+    if (!row) {
+      throw new NotFoundException('This vendor has no offering for that gift.');
+    }
+    return toOfferingView(row, vendor.commission_rate);
+  }
+
+  /** Says no to a vendor's new price. The current price stays; the vendor sees the request gone. */
+  async declinePriceChange(
+    vendorId: string,
+    giftTemplateId: string,
+    staff: StaffContext,
+    meta: RequestMeta,
+  ): Promise<OfferingView> {
+    const vendor = await this.requireVendor(vendorId);
+    const existing = await this.repository.findOffering(
+      vendorId,
+      giftTemplateId,
+    );
+    if (!existing || existing.proposed_price === null) {
+      throw new NotFoundException('There is no price request for that gift.');
+    }
+
+    await this.repository.setProposedPrice(vendorId, giftTemplateId, null);
+    await this.audit.record({
+      eventType: 'vendor_offering.price_change_declined',
+      actorId: staff.userId,
+      actorType: 'admin',
+      resourceType: 'vendor',
+      resourceId: vendorId,
+      metadata: {
+        giftTemplateId,
+        declinedPrice: existing.proposed_price,
+        basePrice: existing.gift_templates?.base_price ?? null,
+      },
+      ...meta,
+    });
+
+    return toOfferingView(
+      { ...existing, proposed_price: null, price_proposed_at: null },
+      vendor.commission_rate,
+    );
   }
 
   private async requireVendor(id: string): Promise<VendorRow> {

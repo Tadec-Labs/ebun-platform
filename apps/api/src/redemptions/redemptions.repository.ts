@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { OrderStatus, RedemptionStatus } from '@ebun/types';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
+import { vendorPayoutForOrder } from '../pricing/vendor-payout';
 
 export interface RedemptionRow {
   id: string;
@@ -243,10 +244,12 @@ export class RedemptionsRepository {
 
   /**
    * What Ebun owes `vendorId` for handing over this order's gift: their
-   * agreed vendor_price on the offering, read at the moment of
-   * collection. Null when there is no offering — which the redemption
-   * paths already refuse before getting here, so null means a row
-   * changed underneath us, not a normal case.
+   * agreed share, read at the moment of collection, applied to what the
+   * sender paid (see vendorPayoutForOrder — a price approved after the
+   * purchase must not change what this order pays out). Null when there
+   * is no offering — which the redemption paths already refuse before
+   * getting here, so null means a row changed underneath us, not a
+   * normal case.
    *
    * Read at collection rather than at purchase because the recipient
    * chooses where to collect: until then nobody knows which vendor is
@@ -258,10 +261,10 @@ export class RedemptionsRepository {
   ): Promise<number | null> {
     const order = (await this.supabase
       .from('orders')
-      .select('gift_template_id')
+      .select('gift_template_id, gift_value')
       .eq('id', orderId)
       .maybeSingle()) as {
-      data: { gift_template_id: string } | null;
+      data: { gift_template_id: string; gift_value: number } | null;
       error: PostgrestError | null;
     };
     if (order.error) throw order.error;
@@ -269,15 +272,25 @@ export class RedemptionsRepository {
 
     const offering = (await this.supabase
       .from('vendor_gift_offerings')
-      .select('vendor_price')
+      .select('vendor_price, gift_templates(base_price)')
       .eq('vendor_id', vendorId)
       .eq('gift_template_id', order.data.gift_template_id)
       .maybeSingle()) as {
-      data: { vendor_price: number } | null;
+      data: {
+        vendor_price: number;
+        gift_templates: { base_price: number } | null;
+      } | null;
       error: PostgrestError | null;
     };
     if (offering.error) throw offering.error;
-    return offering.data?.vendor_price ?? null;
+    if (!offering.data) return null;
+
+    return vendorPayoutForOrder({
+      vendorPrice: offering.data.vendor_price,
+      currentBasePrice:
+        offering.data.gift_templates?.base_price ?? order.data.gift_value,
+      paidGiftValue: order.data.gift_value,
+    });
   }
 
   /**

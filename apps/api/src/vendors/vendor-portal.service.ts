@@ -1,17 +1,21 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 import { AuditService } from '../audit/audit.service';
 import { GiftsService } from '../gifts/gifts.service';
 import { OrdersService } from '../orders/orders.service';
+import { vendorPayoutForOrder } from '../pricing/vendor-payout';
 import { PublicPhotosService } from '../storage/public-photos.service';
 import type { UploadedPhoto } from '../storage/public-photos.service';
 import { RequestVendorItemDto, UpdateVendorProfileDto } from './dto/vendor.dto';
 import type { VendorContext } from './vendor-portal.guard';
 import {
   PortalOfferingRow,
+  PriceChangeRefusedError,
   VendorRow,
   VendorsRepository,
 } from './vendors.repository';
@@ -37,6 +41,13 @@ export interface PortalOfferingView {
   /** The vendor's own switch: false = sold out today. */
   available: boolean;
   status: PortalOfferingStatus;
+  /** kobo — a new shop price the vendor asked for, waiting on SendEbun. Null = none. */
+  proposedPrice: number | null;
+  /**
+   * False when another shop sells the same gift: one gift has one
+   * price, so its price is SendEbun's to change, not one vendor's.
+   */
+  canChangePrice: boolean;
 }
 
 export interface PickupView {
@@ -80,6 +91,7 @@ export class VendorPortalService {
     private readonly audit: AuditService,
     private readonly orders: OrdersService,
     private readonly photos: PublicPhotosService,
+    private readonly alerts: VendorAlertsService,
   ) {}
 
   /**
@@ -99,11 +111,11 @@ export class VendorPortalService {
       ),
       this.vendors.listPortalOfferings(vendorId),
     ]);
-    const priceOf = new Map(
-      offerings.map((o) => [o.gift_template_id, o.vendor_price]),
-    );
+    const offeringOf = new Map(offerings.map((o) => [o.gift_template_id, o]));
     return rows.map((row) => ({
-      youReceive: priceOf.get(row.gift_template_id) ?? null,
+      // The same figure they'll be credited: their share of what the
+      // sender paid, even if the price has changed since.
+      youReceive: youReceiveFor(offeringOf.get(row.gift_template_id), row),
       orderId: row.id,
       giftName: row.gift_templates?.name ?? 'Gift',
       recipientFirstName:
@@ -139,8 +151,12 @@ export class VendorPortalService {
 
   async listOfferings(vendorId: string): Promise<PortalOfferingView[]> {
     const rows = await this.vendors.listPortalOfferings(vendorId);
+    const shared = await this.vendors.giftsSoldByOthers(
+      vendorId,
+      rows.map((row) => row.gift_template_id),
+    );
     return rows
-      .map(toPortalView)
+      .map((row) => toPortalView(row, shared.has(row.gift_template_id)))
       .sort(
         (a, b) =>
           STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
@@ -186,7 +202,7 @@ export class VendorPortalService {
       ...meta,
     });
 
-    return toPortalView(row);
+    return this.viewOf(vendor.vendorId, row);
   }
 
   /**
@@ -271,6 +287,16 @@ export class VendorPortalService {
       ...meta,
     });
 
+    // Never throws; email is a second channel to the /ops queue.
+    await this.alerts.vendorItemRequested({
+      vendorId: vendor.vendorId,
+      vendorName: record.business_name,
+      giftTemplateId: template.id,
+      giftName: template.name,
+      inStorePrice: dto.inStorePrice,
+      withPhoto: imageUrl !== null,
+    });
+
     return {
       giftTemplateId: template.id,
       name: template.name,
@@ -279,7 +305,258 @@ export class VendorPortalService {
       youReceive: vendorPrice,
       available: true,
       status: 'awaiting_approval',
+      proposedPrice: null,
+      canChangePrice: true,
     };
+  }
+
+  /**
+   * A new shop price for one of the vendor's items.
+   *
+   * For an item SendEbun has already approved, this is a REQUEST: it is
+   * held on the offering, senders keep paying the current price, and ops
+   * approves or declines it. The price is what senders are promised and
+   * what they check against the counter, so it never changes on one
+   * person's say-so.
+   *
+   * For an item still waiting for approval, nothing is selling at it
+   * yet, so the vendor just corrects it — ops checks it when they
+   * approve the item anyway.
+   *
+   * Sending the current price withdraws a pending request.
+   */
+  async requestPriceChange(
+    vendor: VendorContext,
+    giftTemplateId: string,
+    inStorePrice: number,
+    meta: RequestMeta,
+  ): Promise<PortalOfferingView> {
+    const row = await this.ownOffering(vendor.vendorId, giftTemplateId);
+    const giftName = row.gift_templates?.name ?? null;
+    const currentPrice = row.gift_templates?.base_price ?? 0;
+
+    const shared = await this.vendors.giftsSoldByOthers(vendor.vendorId, [
+      giftTemplateId,
+    ]);
+    if (shared.size > 0) {
+      throw new BadRequestException(
+        'Other shops sell this gift at the same price, so SendEbun changes it for everyone. Message us on WhatsApp.',
+      );
+    }
+
+    if (inStorePrice === currentPrice) {
+      if (row.proposed_price === null) {
+        throw new BadRequestException("That's already the price.");
+      }
+      const withdrawn = await this.vendors.setProposedPrice(
+        vendor.vendorId,
+        giftTemplateId,
+        null,
+      );
+      if (!withdrawn) throw new NotFoundException(NOT_YOURS);
+      await this.audit.record({
+        eventType: 'vendor_offering.price_change_withdrawn',
+        actorId: null,
+        actorType: 'vendor',
+        resourceType: 'vendor',
+        resourceId: vendor.vendorId,
+        metadata: {
+          giftTemplateId,
+          giftName,
+          withdrawnPrice: row.proposed_price,
+          via: 'vendor_portal',
+        },
+        ...meta,
+      });
+      return toPortalView(withdrawn, false);
+    }
+
+    if (inStorePrice === row.proposed_price) {
+      return toPortalView(row, false); // asked for this already
+    }
+
+    const record = await this.vendors.findById(vendor.vendorId);
+    if (!record) throw new NotFoundException('Vendor not found.');
+    const vendorPrice = vendorShareOf(inStorePrice, record.commission_rate);
+    if (vendorPrice < 1 || vendorPrice >= inStorePrice) {
+      throw new BadRequestException(
+        "We couldn't price this item. Please ask SendEbun to check your account.",
+      );
+    }
+
+    const proposed = await this.vendors.setProposedPrice(
+      vendor.vendorId,
+      giftTemplateId,
+      inStorePrice,
+    );
+    if (!proposed) throw new NotFoundException(NOT_YOURS);
+
+    if (!row.approved) {
+      // Not selling yet: apply it now, through the same atomic path ops
+      // uses, so the gift's price and the vendor's share move together.
+      try {
+        await this.vendors.approvePriceChange({
+          vendorId: vendor.vendorId,
+          giftTemplateId,
+          expectedPrice: inStorePrice,
+          vendorPrice,
+        });
+      } catch (err) {
+        if (err instanceof PriceChangeRefusedError) {
+          throw new ConflictException(
+            "We couldn't change that price just now. Please try again.",
+          );
+        }
+        throw err;
+      }
+      await this.audit.record({
+        eventType: 'vendor_offering.price_changed',
+        actorId: null,
+        actorType: 'vendor',
+        resourceType: 'vendor',
+        resourceId: vendor.vendorId,
+        metadata: {
+          giftTemplateId,
+          giftName,
+          inStorePriceFrom: currentPrice,
+          inStorePriceTo: inStorePrice,
+          vendorPrice,
+          stillAwaitingApproval: true,
+          via: 'vendor_portal',
+        },
+        ...meta,
+      });
+      return this.viewOf(
+        vendor.vendorId,
+        await this.ownOffering(vendor.vendorId, giftTemplateId),
+      );
+    }
+
+    await this.audit.record({
+      eventType: 'vendor_offering.price_change_requested',
+      actorId: null,
+      actorType: 'vendor',
+      resourceType: 'vendor',
+      resourceId: vendor.vendorId,
+      newState: 'price_change_pending',
+      metadata: {
+        giftTemplateId,
+        giftName,
+        inStorePriceNow: currentPrice,
+        inStorePriceAsked: inStorePrice,
+        via: 'vendor_portal',
+      },
+      ...meta,
+    });
+
+    await this.alerts.vendorPriceChangeRequested({
+      vendorId: vendor.vendorId,
+      vendorName: record.business_name,
+      giftTemplateId,
+      giftName: giftName ?? 'an item',
+      currentPrice,
+      proposedPrice: inStorePrice,
+      proposedAt: proposed.price_proposed_at ?? new Date().toISOString(),
+    });
+
+    return toPortalView(proposed, false);
+  }
+
+  /**
+   * The vendor stops selling an item.
+   *
+   * Refused while a paid gift still needs this vendor: its code would be
+   * turned away at the counter (sellsGift reads the offering) and the
+   * payout lookup would find nothing — a recipient holding a gift
+   * SendEbun took money for, and nowhere to collect it. "Sold out"
+   * already stops new sales; that is what to use until those are done.
+   *
+   * An item SendEbun never approved also takes its draft gift with it
+   * (if nobody else sells it and nobody bought it): it existed only as
+   * this vendor's request, and leaving it would clutter the ops
+   * catalogue and keep its name taken. An approved item's gift stays —
+   * whether it lives on with another partner is ops' call.
+   *
+   * Residual gap, accepted: a sender already at the Paystack page when
+   * the item is removed can still complete payment. Same as "sold out";
+   * ops sees that order with no partner.
+   */
+  async removeItem(
+    vendor: VendorContext,
+    giftTemplateId: string,
+    meta: RequestMeta,
+  ): Promise<{ removed: true }> {
+    const row = await this.ownOffering(vendor.vendorId, giftTemplateId);
+
+    const relying = await this.vendors.ordersStillRelyingOn(
+      vendor.vendorId,
+      giftTemplateId,
+    );
+    if (relying > 0) {
+      throw new ConflictException(
+        `${relying} paid ${relying === 1 ? 'gift is' : 'gifts are'} still waiting to be collected or delivered here. Switch this item to Sold out for now — you can remove it once ${relying === 1 ? "it's" : "they're"} done.`,
+      );
+    }
+
+    const shared = await this.vendors.giftsSoldByOthers(vendor.vendorId, [
+      giftTemplateId,
+    ]);
+
+    const removed = await this.vendors.deleteOffering(
+      vendor.vendorId,
+      giftTemplateId,
+    );
+    if (!removed) throw new NotFoundException(NOT_YOURS);
+
+    let draftDeleted = false;
+    if (!row.approved && shared.size === 0 && !row.gift_templates?.available) {
+      const draft = await this.gifts.deleteVendorDraft(giftTemplateId);
+      if (draft) {
+        draftDeleted = true;
+        await this.photos.deleteIfOurs(draft.image_url);
+      }
+    }
+
+    await this.audit.record({
+      eventType: 'vendor_offering.removed',
+      actorId: null,
+      actorType: 'vendor',
+      resourceType: 'vendor',
+      resourceId: vendor.vendorId,
+      metadata: {
+        giftTemplateId,
+        giftName: row.gift_templates?.name ?? null,
+        wasApproved: row.approved,
+        draftDeleted,
+        via: 'vendor_portal',
+      },
+      ...meta,
+    });
+
+    return { removed: true };
+  }
+
+  /** The vendor's own offering for this gift, or the same 404 as a gift they don't sell. */
+  private async ownOffering(
+    vendorId: string,
+    giftTemplateId: string,
+  ): Promise<PortalOfferingRow> {
+    const row = (await this.vendors.listPortalOfferings(vendorId)).find(
+      (offering) => offering.gift_template_id === giftTemplateId,
+    );
+    if (!row) throw new NotFoundException(NOT_YOURS);
+    return row;
+  }
+
+  /** One row's view, with whether someone else sells the same gift. */
+  private async viewOf(
+    vendorId: string,
+    row: PortalOfferingRow,
+  ): Promise<PortalOfferingView> {
+    const shared = await this.vendors.giftsSoldByOthers(vendorId, [
+      row.gift_template_id,
+    ]);
+    return toPortalView(row, shared.size > 0);
   }
 
   /**
@@ -320,7 +597,7 @@ export class VendorPortalService {
       ...meta,
     });
 
-    return toPortalView({
+    return this.viewOf(vendor.vendorId, {
       ...row,
       gift_templates: row.gift_templates
         ? { ...row.gift_templates, image_url: imageUrl }
@@ -435,6 +712,20 @@ function toProfileView(row: VendorRow): VendorProfileView {
   };
 }
 
+const NOT_YOURS = "You don't sell that gift on SendEbun.";
+
+function youReceiveFor(
+  offering: PortalOfferingRow | undefined,
+  order: { gift_value: number },
+): number | null {
+  if (!offering) return null;
+  return vendorPayoutForOrder({
+    vendorPrice: offering.vendor_price,
+    currentBasePrice: offering.gift_templates?.base_price ?? order.gift_value,
+    paidGiftValue: order.gift_value,
+  });
+}
+
 const STATUS_ORDER: Record<PortalOfferingStatus, number> = {
   live: 0,
   not_on_sale: 1,
@@ -451,7 +742,10 @@ export function vendorShareOf(inStorePrice: number, share: number): number {
   return Math.floor(Math.round(inStorePrice * share) / 100) * 100;
 }
 
-function toPortalView(row: PortalOfferingRow): PortalOfferingView {
+function toPortalView(
+  row: PortalOfferingRow,
+  soldByOthers: boolean,
+): PortalOfferingView {
   const gift = row.gift_templates;
   const status: PortalOfferingStatus = !row.approved
     ? 'awaiting_approval'
@@ -466,5 +760,7 @@ function toPortalView(row: PortalOfferingRow): PortalOfferingView {
     youReceive: row.vendor_price,
     available: row.available,
     status,
+    proposedPrice: row.proposed_price ?? null,
+    canChangePrice: !soldByOthers,
   };
 }

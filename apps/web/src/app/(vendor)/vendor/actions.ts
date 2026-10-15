@@ -155,6 +155,47 @@ export async function addItemPhotoAction(
   }
 }
 
+/**
+ * A new shop price. For a live item SendEbun approves it first and the
+ * current price keeps selling until then; for one still waiting for
+ * approval it's simply corrected. Sending the current price cancels a
+ * pending request.
+ */
+export async function requestPriceChangeAction(
+  giftTemplateId: string,
+  priceNaira: string,
+): Promise<VendorItemResult> {
+  const inStorePrice = parseNairaToKobo(priceNaira);
+  if (inStorePrice === null || inStorePrice < 1) {
+    return { ok: false, message: "Enter the price you charge in your shop, in naira." };
+  }
+  try {
+    const offering = await vendorFetch<VendorOffering>(
+      `/vendor/offerings/${encodeURIComponent(giftTemplateId)}/price`,
+      { method: "PATCH", body: { inStorePrice } },
+    );
+    revalidatePath("/vendor/gifts");
+    return { ok: true, offering };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+/** Stop selling an item. The API refuses while a paid gift still needs this shop. */
+export async function removeItemAction(
+  giftTemplateId: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await vendorFetch<{ removed: true }>(`/vendor/offerings/${encodeURIComponent(giftTemplateId)}`, {
+      method: "DELETE",
+    });
+    revalidatePath("/vendor/gifts");
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
 export type VendorProfileInput = {
   ownerName: string;
   pickupAddress: string;

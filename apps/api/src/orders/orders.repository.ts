@@ -58,6 +58,8 @@ export interface UpcomingPickupRow {
   recipient_name: string;
   pickup_at: string;
   pickup_confirmed_at: string | null;
+  /** kobo — what the sender paid for the gift; the vendor's share is of this. */
+  gift_value: number;
   gift_templates: { name: string } | null;
 }
 
@@ -259,7 +261,7 @@ export class OrdersRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, gift_template_id, recipient_name, pickup_at, pickup_confirmed_at, gift_templates!gift_template_id(name)',
+        'id, gift_template_id, recipient_name, pickup_at, pickup_confirmed_at, gift_value, gift_templates!gift_template_id(name)',
       )
       .eq('pickup_vendor_id', vendorId)
       .eq('status', OrderStatus.RevealOpened)

@@ -418,6 +418,40 @@ export class RequestVendorItemDto {
 }
 
 /**
+ * A vendor asking for a new shop price on one of their items. Same range
+ * as when they first listed it. Sending the current price withdraws a
+ * pending request.
+ */
+export class RequestPriceChangeDto {
+  /** KOBO, the vendor's new in-store price. */
+  @IsInt()
+  @Min(10_000)
+  @Max(50_000_000)
+  inStorePrice!: number;
+}
+
+/** Ops approving an item a vendor asked to sell. */
+export class ApproveOfferingDto {
+  /** Also switch the gift on sale, in the same step. */
+  @IsOptional()
+  @IsBoolean()
+  putOnSale?: boolean;
+}
+
+/**
+ * Ops approving a vendor's new price. Carries the price ops saw, so a
+ * request that changed in the meantime is refused rather than approved
+ * unseen.
+ */
+export class ApprovePriceChangeDto {
+  /** KOBO — the in-store price shown on screen when ops clicked Approve. */
+  @IsInt()
+  @Min(1)
+  @Max(50_000_000)
+  inStorePrice!: number;
+}
+
+/**
  * A vendor completing their own profile from their counter link.
  *
  * Bank details are accepted only ONCE — when none are on file. After

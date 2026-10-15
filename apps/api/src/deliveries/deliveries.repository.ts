@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { FulfillmentStatus, FulfillmentType, OrderStatus } from '@ebun/types';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
+import { vendorPayoutForOrder } from '../pricing/vendor-payout';
 
 /** The delivery half of a physical gift's gift_fulfillments row. */
 export interface DeliveryFulfillmentRow {
@@ -23,6 +24,8 @@ export interface DeliveryOrderRow {
   status: OrderStatus;
   order_number: string | null;
   gift_template_id: string;
+  /** kobo — what the sender paid for the gift itself; the vendor's share is of this. */
+  gift_value: number;
   delivery_fee: number;
   recipient_name: string;
   recipient_phone: string;
@@ -65,7 +68,7 @@ const FULFILLMENT_COLUMNS =
 // orders links to gift_templates twice (swapped_to_template_id too), so
 // the embed names its foreign key or PostgREST refuses it as ambiguous.
 const ORDER_COLUMNS =
-  'id, status, order_number, gift_template_id, delivery_fee, recipient_name, recipient_phone, delivery_address, delivery_zone, delivery_phone, delivery_note, delivery_details_at, created_at, gift_templates!gift_template_id(name, delivery_type, delivery_window)';
+  'id, status, order_number, gift_template_id, gift_value, delivery_fee, recipient_name, recipient_phone, delivery_address, delivery_zone, delivery_phone, delivery_note, delivery_details_at, created_at, gift_templates!gift_template_id(name, delivery_type, delivery_window)';
 
 type Result<T> = { data: T | null; error: PostgrestError | null };
 
@@ -220,18 +223,33 @@ export class DeliveriesRepository {
     return response.data ?? [];
   }
 
-  async vendorPrice(
+  /**
+   * The vendor's share of what the sender paid for this order's gift
+   * (vendorPayoutForOrder), excluding the delivery fee. Null when the
+   * vendor has no offering for the gift.
+   */
+  async vendorPayout(
     vendorId: string,
     giftTemplateId: string,
+    paidGiftValue: number,
   ): Promise<number | null> {
     const response = (await this.supabase
       .from('vendor_gift_offerings')
-      .select('vendor_price')
+      .select('vendor_price, gift_templates(base_price)')
       .eq('vendor_id', vendorId)
       .eq('gift_template_id', giftTemplateId)
-      .maybeSingle()) as Result<{ vendor_price: number }>;
+      .maybeSingle()) as Result<{
+      vendor_price: number;
+      gift_templates: { base_price: number } | null;
+    }>;
     if (response.error) throw response.error;
-    return response.data?.vendor_price ?? null;
+    if (!response.data) return null;
+    return vendorPayoutForOrder({
+      vendorPrice: response.data.vendor_price,
+      currentBasePrice:
+        response.data.gift_templates?.base_price ?? paidGiftValue,
+      paidGiftValue,
+    });
   }
 
   async vendorName(vendorId: string): Promise<string | null> {

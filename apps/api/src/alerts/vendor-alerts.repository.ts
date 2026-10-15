@@ -141,7 +141,8 @@ export class VendorAlertsRepository {
    * twice.
    */
   async claim(params: {
-    orderId: string;
+    /** Null for alerts about a vendor rather than an order (a new item, a price request). */
+    orderId: string | null;
     recipientType: 'vendor' | 'admin';
     email: string;
     notificationType: string;

@@ -123,6 +123,81 @@ export class VendorAlertsService {
   }
 
   /**
+   * A vendor asked to sell something new from their link. Tells ops so
+   * the request doesn't sit unseen until someone opens /ops.
+   */
+  async vendorItemRequested(input: {
+    vendorId: string;
+    vendorName: string;
+    giftTemplateId: string;
+    giftName: string;
+    inStorePrice: number;
+    withPhoto: boolean;
+  }): Promise<void> {
+    await this.safely(`item request ${input.giftTemplateId}`, async () => {
+      const opsEmail = this.opsEmail();
+      if (!opsEmail || !this.email.isConfigured()) return;
+      await this.send({
+        orderId: null,
+        recipientType: 'admin',
+        to: opsEmail,
+        notificationType: 'OPS_VENDOR_REQUEST',
+        idempotencyKey: `ops-item-request:${input.giftTemplateId}`,
+        subject: `${input.vendorName} wants to sell ${input.giftName} (${naira(input.inStorePrice)})`,
+        text: [
+          `${input.vendorName} asked to sell a new item from their SendEbun link.`,
+          '',
+          `Item: ${input.giftName}`,
+          `Their shop price: ${naira(input.inStorePrice)}`,
+          `Photo: ${input.withPhoto ? 'yes' : 'not yet'}`,
+          '',
+          `It's off sale until you approve it. Check the price against their counter, then approve:`,
+          this.opsLink(input.vendorId),
+        ].join('\n'),
+      });
+    });
+  }
+
+  /**
+   * A vendor asked for a new price. The old price keeps selling until
+   * ops approves, so a request nobody sees is a vendor selling at a price
+   * they no longer charge.
+   */
+  async vendorPriceChangeRequested(input: {
+    vendorId: string;
+    vendorName: string;
+    giftTemplateId: string;
+    giftName: string;
+    currentPrice: number;
+    proposedPrice: number;
+    proposedAt: string;
+  }): Promise<void> {
+    await this.safely(`price request ${input.giftTemplateId}`, async () => {
+      const opsEmail = this.opsEmail();
+      if (!opsEmail || !this.email.isConfigured()) return;
+      await this.send({
+        orderId: null,
+        recipientType: 'admin',
+        to: opsEmail,
+        notificationType: 'OPS_VENDOR_REQUEST',
+        // One email per request: asking again (a corrected number) is a new request.
+        idempotencyKey: `ops-price-request:${input.vendorId}:${input.giftTemplateId}:${input.proposedAt}`,
+        subject: `${input.vendorName}: ${input.giftName} ${naira(input.currentPrice)} → ${naira(input.proposedPrice)}`,
+        text: [
+          `${input.vendorName} asked to change a price.`,
+          '',
+          `Item: ${input.giftName}`,
+          `Now: ${naira(input.currentPrice)}`,
+          `Asked for: ${naira(input.proposedPrice)}`,
+          '',
+          `Senders keep paying ${naira(input.currentPrice)} until you approve or decline:`,
+          this.opsLink(input.vendorId),
+        ].join('\n'),
+      });
+    });
+  }
+
+  /**
    * The safety net. Every few minutes: anything a vendor hasn't
    * acknowledged within VENDOR_ACK_MINUTES gets one reminder to the
    * vendor and one email to ops. Once each per assignment/booking —
@@ -235,7 +310,7 @@ export class VendorAlertsService {
   }
 
   private async send(input: {
-    orderId: string;
+    orderId: string | null;
     recipientType: 'vendor' | 'admin';
     to: string;
     notificationType: string;
@@ -281,10 +356,27 @@ export class VendorAlertsService {
     }
   }
 
+  private opsEmail(): string | undefined {
+    return this.config.get<string>('OPS_ALERT_EMAIL')?.trim() || undefined;
+  }
+
+  /** Where ops acts on a vendor's request. Staff sign in; the link carries no credential. */
+  private opsLink(vendorId: string): string {
+    const base = (this.config.get<string>('WEB_APP_BASE_URL') ?? '').replace(
+      /\/+$/,
+      '',
+    );
+    return `${base}/ops/vendors/${vendorId}`;
+  }
+
   private ackMinutes(): number {
     const raw = Number(this.config.get<string>('VENDOR_ACK_MINUTES'));
     return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_ACK_MINUTES;
   }
+}
+
+function naira(kobo: number): string {
+  return `₦${(kobo / 100).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
 }
 
 function lagosTime(iso: string): string {

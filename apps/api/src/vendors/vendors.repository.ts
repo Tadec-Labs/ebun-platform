@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
+import { OrderStatus } from '@ebun/types';
 import type { GiftCategory } from '@ebun/types';
 
 export interface VendorRow {
@@ -66,7 +67,15 @@ export interface OfferingRow {
   available_zones: string[] | null;
   available: boolean;
   approved: boolean;
-  gift_templates: { name: string; base_price: number } | null;
+  /** In-store price (kobo) the vendor has asked to change to; null = no request. */
+  proposed_price: number | null;
+  price_proposed_at: string | null;
+  gift_templates: {
+    name: string;
+    base_price: number;
+    available: boolean;
+    image_url: string | null;
+  } | null;
 }
 
 /**
@@ -79,6 +88,8 @@ export interface PortalOfferingRow {
   vendor_price: number; // kobo
   available: boolean;
   approved: boolean;
+  proposed_price: number | null;
+  price_proposed_at: string | null;
   gift_templates: {
     name: string;
     base_price: number;
@@ -103,10 +114,48 @@ const SUMMARY_COLUMNS =
   'id, business_name, owner_name, whatsapp_number, category, service_areas, delivery_zones, active, verified, total_orders, commission_rate, created_at';
 
 const OFFERING_COLUMNS =
-  'vendor_id, gift_template_id, vendor_price, available_zones, available, approved, gift_templates(name, base_price)';
+  'vendor_id, gift_template_id, vendor_price, available_zones, available, approved, proposed_price, price_proposed_at, gift_templates(name, base_price, available, image_url)';
 
 const PORTAL_OFFERING_COLUMNS =
-  'gift_template_id, vendor_price, available, approved, gift_templates(name, base_price, image_url, available)';
+  'gift_template_id, vendor_price, available, approved, proposed_price, price_proposed_at, gift_templates(name, base_price, image_url, available)';
+
+/**
+ * Paid for and not yet handed over — a gift that still needs a vendor to
+ * accept its code or deliver it. Unpaid checkouts (draft,
+ * pending_payment) are left out: an abandoned checkout would otherwise
+ * block a removal forever. Finished and failed orders are history.
+ */
+const STILL_TO_HAND_OVER: OrderStatus[] = [
+  OrderStatus.Paid,
+  OrderStatus.Processing,
+  OrderStatus.VendorNotified,
+  OrderStatus.VendorAccepted,
+  OrderStatus.VendorDeclined,
+  OrderStatus.VendorTimeout,
+  OrderStatus.FulfillmentInProgress,
+  OrderStatus.Dispatched,
+  OrderStatus.VoucherIssued,
+  OrderStatus.ReadyForRedemption,
+  OrderStatus.RevealOpened,
+];
+
+/** Why approve_offering_price_change() refused, in the API's terms. */
+export type PriceChangeRefusal =
+  'not_found' | 'stale' | 'shared_gift' | 'invalid_share';
+
+export class PriceChangeRefusedError extends Error {
+  constructor(public readonly reason: PriceChangeRefusal) {
+    super(`Price change refused: ${reason}`);
+    this.name = 'PriceChangeRefusedError';
+  }
+}
+
+export interface PriceChangeResult {
+  old_base_price: number;
+  new_base_price: number;
+  old_vendor_price: number;
+  new_vendor_price: number;
+}
 
 @Injectable()
 export class VendorsRepository {
@@ -416,5 +465,189 @@ export class VendorsRepository {
     };
     if (response.error) throw response.error;
     return response.count ?? 0;
+  }
+
+  /** vendor_id -> price changes they've asked for, waiting on ops. */
+  async countPriceRequestsByVendor(): Promise<Record<string, number>> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('vendor_id')
+      .not('proposed_price', 'is', null)) as {
+      data: { vendor_id: string }[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+
+    const counts: Record<string, number> = {};
+    for (const row of response.data ?? []) {
+      counts[row.vendor_id] = (counts[row.vendor_id] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /**
+   * Of these gifts, the ones some OTHER vendor also sells. A gift has one
+   * price for every seller, so only a gift's sole seller may ask to
+   * change it.
+   */
+  async giftsSoldByOthers(
+    vendorId: string,
+    giftTemplateIds: string[],
+  ): Promise<Set<string>> {
+    if (giftTemplateIds.length === 0) return new Set();
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('gift_template_id')
+      .in('gift_template_id', giftTemplateIds)
+      .neq('vendor_id', vendorId)) as {
+      data: { gift_template_id: string }[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return new Set((response.data ?? []).map((row) => row.gift_template_id));
+  }
+
+  /**
+   * Records (or, with null, withdraws) a vendor's price request. Scoped
+   * by vendor_id so one vendor's link can never touch another's row.
+   * Null when this vendor has no such offering.
+   */
+  async setProposedPrice(
+    vendorId: string,
+    giftTemplateId: string,
+    proposedPrice: number | null,
+  ): Promise<PortalOfferingRow | null> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .update({
+        proposed_price: proposedPrice,
+        price_proposed_at:
+          proposedPrice === null ? null : new Date().toISOString(),
+      })
+      .eq('vendor_id', vendorId)
+      .eq('gift_template_id', giftTemplateId)
+      .select(PORTAL_OFFERING_COLUMNS)
+      .maybeSingle()) as {
+      data: PortalOfferingRow | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? null;
+  }
+
+  /**
+   * The gift's new price and the vendor's new share, in one transaction
+   * — see approve_offering_price_change() in
+   * 20261015090000_vendor_price_requests.sql. `expectedPrice` is the
+   * request ops saw; if it has changed since, nothing is written.
+   */
+  async approvePriceChange(params: {
+    vendorId: string;
+    giftTemplateId: string;
+    expectedPrice: number;
+    vendorPrice: number;
+  }): Promise<PriceChangeResult> {
+    const response = (await this.supabase.rpc('approve_offering_price_change', {
+      p_vendor_id: params.vendorId,
+      p_gift_template_id: params.giftTemplateId,
+      p_expected_price: params.expectedPrice,
+      p_vendor_price: params.vendorPrice,
+    })) as { data: PriceChangeResult[] | null; error: PostgrestError | null };
+
+    if (response.error) {
+      const message = response.error.message ?? '';
+      for (const reason of [
+        'not_found',
+        'stale',
+        'shared_gift',
+        'invalid_share',
+      ] as const) {
+        if (message.includes(`price_change_${reason}`)) {
+          throw new PriceChangeRefusedError(reason);
+        }
+      }
+      throw response.error;
+    }
+    const row = response.data?.[0];
+    if (!row) throw new Error('approve_offering_price_change returned no row');
+    return {
+      old_base_price: Number(row.old_base_price),
+      new_base_price: Number(row.new_base_price),
+      old_vendor_price: Number(row.old_vendor_price),
+      new_vendor_price: Number(row.new_vendor_price),
+    };
+  }
+
+  /**
+   * Approves an offering the vendor asked for, leaving its price, zones
+   * and "sold out" switch as they are. Null when there is no such
+   * offering.
+   */
+  async approveOffering(
+    vendorId: string,
+    giftTemplateId: string,
+  ): Promise<OfferingRow | null> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .update({ approved: true })
+      .eq('vendor_id', vendorId)
+      .eq('gift_template_id', giftTemplateId)
+      .select(OFFERING_COLUMNS)
+      .maybeSingle()) as {
+      data: OfferingRow | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? null;
+  }
+
+  /**
+   * Paid gifts that would be stranded if this vendor stopped selling
+   * this gift: their code would be refused at the counter (sellsGift
+   * reads the offering) and the payout lookup would find nothing.
+   *
+   * When another vendor also sells the gift, a voucher can still be
+   * collected there — so only orders tied to THIS vendor count: a
+   * booked pickup here, or a delivery assigned here. When nobody else
+   * sells it, every open order for the gift counts.
+   */
+  async ordersStillRelyingOn(
+    vendorId: string,
+    giftTemplateId: string,
+  ): Promise<number> {
+    const open = (await this.supabase
+      .from('orders')
+      .select('id, pickup_vendor_id')
+      .eq('gift_template_id', giftTemplateId)
+      .in('status', STILL_TO_HAND_OVER)
+      .limit(1000)) as {
+      data: { id: string; pickup_vendor_id: string | null }[] | null;
+      error: PostgrestError | null;
+    };
+    if (open.error) throw open.error;
+    const orders = open.data ?? [];
+    if (orders.length === 0) return 0;
+
+    const others = await this.giftsSoldByOthers(vendorId, [giftTemplateId]);
+    if (others.size === 0) return orders.length;
+
+    const assigned = (await this.supabase
+      .from('gift_fulfillments')
+      .select('order_id')
+      .eq('vendor_id', vendorId)
+      .in(
+        'order_id',
+        orders.map((order) => order.id),
+      )) as {
+      data: { order_id: string }[] | null;
+      error: PostgrestError | null;
+    };
+    if (assigned.error) throw assigned.error;
+
+    const tied = new Set((assigned.data ?? []).map((row) => row.order_id));
+    for (const order of orders) {
+      if (order.pickup_vendor_id === vendorId) tied.add(order.id);
+    }
+    return tied.size;
   }
 }

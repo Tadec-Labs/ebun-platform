@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   InternalServerErrorException,
   Param,
@@ -25,6 +26,7 @@ import { VendorPortalGuard } from './vendor-portal.guard';
 import type { VendorContext, VendorRequest } from './vendor-portal.guard';
 import { VendorsRepository } from './vendors.repository';
 import {
+  RequestPriceChangeDto,
   RequestVendorItemDto,
   SetOfferingAvailabilityDto,
   UpdateVendorProfileDto,
@@ -176,6 +178,40 @@ export class VendorPortalController {
       body,
       metaOf(request),
       photo,
+    );
+  }
+
+  /**
+   * A new shop price. For a live item this is a request — the current
+   * price keeps selling until SendEbun approves. Sending the current
+   * price withdraws one.
+   */
+  @Patch('offerings/:giftTemplateId/price')
+  @Throttle({ default: { limit: 10, ttl: 60 * 60_000 } })
+  requestPriceChange(
+    @Param('giftTemplateId', ParseUUIDPipe) giftTemplateId: string,
+    @Body() body: RequestPriceChangeDto,
+    @Req() request: VendorRequest,
+  ) {
+    return this.portal.requestPriceChange(
+      vendorOf(request),
+      giftTemplateId,
+      body.inStorePrice,
+      metaOf(request),
+    );
+  }
+
+  /** Stop selling an item. Refused while a paid gift still needs this shop. */
+  @Delete('offerings/:giftTemplateId')
+  @Throttle({ default: { limit: 10, ttl: 60 * 60_000 } })
+  removeItem(
+    @Param('giftTemplateId', ParseUUIDPipe) giftTemplateId: string,
+    @Req() request: VendorRequest,
+  ) {
+    return this.portal.removeItem(
+      vendorOf(request),
+      giftTemplateId,
+      metaOf(request),
     );
   }
 

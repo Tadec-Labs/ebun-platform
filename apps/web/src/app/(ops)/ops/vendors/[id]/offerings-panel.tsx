@@ -4,8 +4,14 @@ import { useState, useTransition } from "react";
 import { useConfirm } from "@/components/ui/feedback";
 import Link from "next/link";
 import { formatNaira, parseNairaToKobo } from "@/lib/format-money";
-import type { Offering } from "@/lib/ops/types";
-import { removeOfferingAction, saveOfferingAction } from "../../actions";
+import type { ActionResult, Offering } from "@/lib/ops/types";
+import {
+  approveOfferingAction,
+  approvePriceChangeAction,
+  declinePriceChangeAction,
+  removeOfferingAction,
+  saveOfferingAction,
+} from "../../actions";
 
 const input = "rounded border border-zinc-300 bg-white px-3 py-2 w-full";
 
@@ -46,6 +52,16 @@ export function OfferingsPanel({
           pct: Math.round(((selectedGift.basePrice - priceKobo) / selectedGift.basePrice) * 1000) / 10,
         }
       : null;
+
+  function run(action: () => Promise<ActionResult>, done: string) {
+    setErrors([]);
+    setNotice(null);
+    startTransition(async () => {
+      const result = await action();
+      if (result.ok) setNotice(done);
+      else setErrors(result.errors);
+    });
+  }
 
   function resetForm() {
     setGiftTemplateId("");
@@ -103,43 +119,99 @@ export function OfferingsPanel({
                       // in-store price against the counter before approving:
                       // senders are promised that price.
                       <span className="font-medium text-amber-800">
-                        Asked for by the vendor — check the price, then approve
+                        Asked for by the vendor — check the price
+                        {o.giftHasPhoto ? "" : " and add a photo on the gift page"}, then approve
                       </span>
                     ) : o.available ? (
                       "Available"
                     ) : (
                       "Sold out / paused — still honours gifts already bought"
                     )}
+                    {o.proposedPrice !== null && (
+                      <span className="mt-1 block font-medium text-amber-800">
+                        Wants {formatNaira(o.proposedPrice)}
+                        {o.proposedVendorPrice !== null ? ` (gets ${formatNaira(o.proposedVendorPrice)})` : ""} — senders
+                        pay {formatNaira(o.senderPrice)} until you decide
+                      </span>
+                    )}
                   </td>
                   <td className="space-x-3 whitespace-nowrap px-4 py-3 text-right">
-                    {!o.approved && (
-                      <button
-                        type="button"
-                        disabled={pending}
-                        onClick={() => {
-                          setErrors([]);
-                          setNotice(null);
-                          startTransition(async () => {
-                            // Same endpoint and validation as Edit → Save,
-                            // which always approves; this just skips the form.
-                            const result = await saveOfferingAction({
-                              vendorId,
-                              giftTemplateId: o.giftTemplateId,
-                              priceNaira: String(o.vendorPrice / 100),
-                              zones: o.availableZones.join(", "),
-                              available: o.available,
-                            });
-                            if (result.ok) {
-                              setNotice(`Approved. Put "${o.giftName}" on sale in Gifts when it has a photo.`);
-                            } else {
-                              setErrors(result.errors);
+                    {!o.approved &&
+                      (o.giftHasPhoto && !o.giftOnSale ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={pending}
+                            onClick={() =>
+                              run(
+                                () => approveOfferingAction(vendorId, o.giftTemplateId, true),
+                                `Approved — "${o.giftName}" is on sale.`,
+                              )
                             }
-                          });
-                        }}
-                        className="font-medium text-emerald-700 underline disabled:opacity-50"
-                      >
-                        Approve
-                      </button>
+                            className="font-medium text-emerald-700 underline disabled:opacity-50"
+                          >
+                            Approve &amp; put on sale
+                          </button>
+                          <button
+                            type="button"
+                            disabled={pending}
+                            onClick={() =>
+                              run(
+                                () => approveOfferingAction(vendorId, o.giftTemplateId, false),
+                                `Approved. "${o.giftName}" is still off sale.`,
+                              )
+                            }
+                            className="text-zinc-700 underline disabled:opacity-50"
+                          >
+                            Approve only
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() =>
+                            run(
+                              () => approveOfferingAction(vendorId, o.giftTemplateId, false),
+                              o.giftOnSale
+                                ? "Approved."
+                                : `Approved. Add a photo to "${o.giftName}", then put it on sale from its gift page.`,
+                            )
+                          }
+                          className="font-medium text-emerald-700 underline disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                      ))}
+                    {o.proposedPrice !== null && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() =>
+                            run(
+                              () => approvePriceChangeAction(vendorId, o.giftTemplateId, o.proposedPrice as number),
+                              `"${o.giftName}" is now ${formatNaira(o.proposedPrice as number)}.`,
+                            )
+                          }
+                          className="font-medium text-emerald-700 underline disabled:opacity-50"
+                        >
+                          Approve {formatNaira(o.proposedPrice)}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() =>
+                            run(
+                              () => declinePriceChangeAction(vendorId, o.giftTemplateId),
+                              `Kept "${o.giftName}" at ${formatNaira(o.senderPrice)}. Let the partner know why.`,
+                            )
+                          }
+                          className="text-zinc-700 underline disabled:opacity-50"
+                        >
+                          Decline
+                        </button>
+                      </>
                     )}
                     <Link href={`/ops/gifts/${o.giftTemplateId}`} className="text-zinc-700 underline">
                       Gift
@@ -153,7 +225,8 @@ export function OfferingsPanel({
                       onClick={async () => {
                         const ok = await ask({
                           title: `Remove “${o.giftName}”?`,
-                          body: "This partner stops getting new orders for it. Orders already placed are unaffected.",
+                          body:
+                            "This partner stops getting new orders for it. If paid gifts still need them to hand it over, this is refused — untick Available to pause it instead.",
                           confirmLabel: "Remove",
                           tone: "danger",
                         });

@@ -87,6 +87,7 @@ export class OverviewService {
       deliveries,
       pickups,
       approvals,
+      priceRequests,
       readiness,
       recent,
     ] = await Promise.all([
@@ -109,6 +110,7 @@ export class OverviewService {
         [],
       ),
       settle(this.repository.awaitingApprovalByVendor(), []),
+      settle(this.repository.priceRequestsByVendor(), []),
       settle(this.repository.vendorReadiness(), []),
       settle(this.repository.recentOrders(8), []),
     ]);
@@ -170,6 +172,19 @@ export class OverviewService {
       });
     }
 
+    for (const p of priceRequests) {
+      attention.push({
+        kind: 'approval',
+        // The old price keeps selling until someone decides, so this is
+        // a vendor charging senders a price they no longer charge.
+        urgency: 2,
+        title: `${p.name} asked to change ${p.count === 1 ? 'a price' : `${p.count} prices`}`,
+        detail: 'The old price keeps selling until you approve or decline.',
+        href: `/ops/vendors/${p.vendorId}`,
+        since: null,
+      });
+    }
+
     for (const v of readiness) {
       const missing = [
         v.pickup_address?.trim() ? null : 'shop address',
@@ -204,7 +219,10 @@ export class OverviewService {
       counts: {
         attention: attention.filter((a) => a.urgency < 3).length,
         deliveries: deliveriesNeedingAction,
-        approvals: approvals.length,
+        // Partners with anything waiting on ops: a new item or a new price.
+        approvals: new Set(
+          [...approvals, ...priceRequests].map((a) => a.vendorId),
+        ).size,
         payouts: owedPartners.size,
       },
       attention: attention.slice(0, 30),

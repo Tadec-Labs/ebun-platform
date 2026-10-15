@@ -54,6 +54,9 @@ describe('ops routes over HTTP', () => {
       listOfferings: jest.fn().mockResolvedValue([]),
       upsertOffering: jest.fn().mockResolvedValue({}),
       removeOffering: jest.fn().mockResolvedValue(undefined),
+      approveOffering: jest.fn().mockResolvedValue({}),
+      approvePriceChange: jest.fn().mockResolvedValue({}),
+      declinePriceChange: jest.fn().mockResolvedValue({}),
     };
     earnings = {
       forOps: jest.fn().mockResolvedValue({ owedNow: 0 }),
@@ -101,6 +104,17 @@ describe('ops routes over HTTP', () => {
         .expect(401);
       await request(server)
         .delete(`/ops/vendors/${UUID}/offerings/${UUID}`)
+        .expect(401);
+      await request(server)
+        .post(`/ops/vendors/${UUID}/offerings/${UUID}/approve`)
+        .send({ putOnSale: true })
+        .expect(401);
+      await request(server)
+        .post(`/ops/vendors/${UUID}/offerings/${UUID}/price-change/approve`)
+        .send({ inStorePrice: 1000000 })
+        .expect(401);
+      await request(server)
+        .post(`/ops/vendors/${UUID}/offerings/${UUID}/price-change/decline`)
         .expect(401);
 
       for (const fn of Object.values(vendorsService)) {
@@ -226,6 +240,56 @@ describe('ops routes over HTTP', () => {
         .expect(400);
       expect(vendorsService.get).not.toHaveBeenCalled();
       expect(vendorsService.update).not.toHaveBeenCalled();
+    });
+
+    it('approves an item, putting it on sale only when asked', async () => {
+      const server = app.getHttpServer();
+      await authed(
+        request(server).post(`/ops/vendors/${UUID}/offerings/${UUID}/approve`),
+      )
+        .send({ putOnSale: true })
+        .expect(201);
+      await authed(
+        request(server).post(`/ops/vendors/${UUID}/offerings/${UUID}/approve`),
+      )
+        .send({})
+        .expect(201);
+
+      expect(
+        (vendorsService.approveOffering.mock.calls as unknown[][]).map(
+          (c) => c[2],
+        ),
+      ).toEqual([true, false]);
+      expect(
+        (vendorsService.approveOffering.mock.calls as unknown[][])[0][3],
+      ).toMatchObject({
+        userId: 'staff-1',
+      });
+    });
+
+    it('approves a price only with the exact price ops saw, as a whole number of kobo', async () => {
+      const server = app.getHttpServer();
+      const url = `/ops/vendors/${UUID}/offerings/${UUID}/price-change/approve`;
+
+      for (const body of [
+        {},
+        { inStorePrice: '1000000' },
+        { inStorePrice: 1000000.5 },
+      ]) {
+        await authed(request(server).post(url)).send(body).expect(400);
+      }
+      expect(vendorsService.approvePriceChange).not.toHaveBeenCalled();
+
+      await authed(request(server).post(url))
+        .send({ inStorePrice: 1000000 })
+        .expect(201);
+      expect(vendorsService.approvePriceChange).toHaveBeenCalledWith(
+        UUID,
+        UUID,
+        1000000,
+        expect.objectContaining({ userId: 'staff-1' }),
+        expect.anything(),
+      );
     });
 
     it('removes an offering', async () => {

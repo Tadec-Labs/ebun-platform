@@ -148,6 +148,30 @@ export class OverviewRepository {
     return [...byVendor].map(([vendorId, v]) => ({ vendorId, ...v }));
   }
 
+  /** vendor id -> new prices they've asked for that are waiting on ops. */
+  async priceRequestsByVendor(): Promise<
+    { vendorId: string; name: string; count: number }[]
+  > {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select('vendor_id, vendors(business_name)')
+      .not('proposed_price', 'is', null)
+      .limit(1000)) as Result<
+      { vendor_id: string; vendors: { business_name: string } | null }[]
+    >;
+    if (response.error) throw response.error;
+    const byVendor = new Map<string, { name: string; count: number }>();
+    for (const row of response.data ?? []) {
+      const entry = byVendor.get(row.vendor_id) ?? {
+        name: row.vendors?.business_name ?? 'A vendor',
+        count: 0,
+      };
+      entry.count += 1;
+      byVendor.set(row.vendor_id, entry);
+    }
+    return [...byVendor].map(([vendorId, v]) => ({ vendorId, ...v }));
+  }
+
   async vendorReadiness(): Promise<VendorReadinessRow[]> {
     const response = (await this.supabase
       .from('vendors')

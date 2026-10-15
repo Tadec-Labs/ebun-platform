@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { RedemptionStatus } from '@ebun/types';
+import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 import { AuditService } from '../audit/audit.service';
 import { GiftsService } from '../gifts/gifts.service';
 import { OrdersService } from '../orders/orders.service';
@@ -31,7 +32,15 @@ describe('vendor portal over HTTP', () => {
   let redemptions: Record<string, jest.Mock>;
   let vendors: Record<string, jest.Mock>;
   let audit: { record: jest.Mock };
-  let gifts: { createRequestedByVendor: jest.Mock; setImageUrl: jest.Mock };
+  let gifts: {
+    createRequestedByVendor: jest.Mock;
+    setImageUrl: jest.Mock;
+    deleteVendorDraft: jest.Mock;
+  };
+  let alerts: {
+    vendorItemRequested: jest.Mock;
+    vendorPriceChangeRequested: jest.Mock;
+  };
   let orders: { findUpcomingPickups: jest.Mock; confirmPickup: jest.Mock };
   let photos: { upload: jest.Mock; deleteIfOurs: jest.Mock };
   let payouts: { listCollections: jest.Mock; listPayouts: jest.Mock };
@@ -75,11 +84,21 @@ describe('vendor portal over HTTP', () => {
       countAwaitingApproval: jest.fn().mockResolvedValue(0),
       findById: jest.fn().mockResolvedValue({
         id: 'vendor-1',
+        business_name: 'Mama Cass Kitchen',
         category: 'dine',
         commission_rate: 0.9,
       }),
       upsertOffering: jest.fn().mockResolvedValue({}),
       update: jest.fn(),
+      giftsSoldByOthers: jest.fn().mockResolvedValue(new Set()),
+      setProposedPrice: jest.fn(),
+      approvePriceChange: jest.fn(),
+      ordersStillRelyingOn: jest.fn().mockResolvedValue(0),
+      deleteOffering: jest.fn().mockResolvedValue(true),
+    };
+    alerts = {
+      vendorItemRequested: jest.fn().mockResolvedValue(undefined),
+      vendorPriceChangeRequested: jest.fn().mockResolvedValue(undefined),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
     payouts = {
@@ -97,6 +116,7 @@ describe('vendor portal over HTTP', () => {
       confirmPickup: jest.fn().mockResolvedValue(null),
     };
     gifts = {
+      deleteVendorDraft: jest.fn().mockResolvedValue(null),
       setImageUrl: jest.fn().mockResolvedValue(null),
       createRequestedByVendor: jest.fn().mockResolvedValue({
         id: GIFT_ID,
@@ -122,6 +142,7 @@ describe('vendor portal over HTTP', () => {
         { provide: VendorsRepository, useValue: vendors },
         { provide: AuditService, useValue: audit },
         { provide: DeliveriesService, useValue: deliveries },
+        { provide: VendorAlertsService, useValue: alerts },
       ],
     }).compile();
 
@@ -457,12 +478,19 @@ describe('vendor portal over HTTP', () => {
         },
       ]);
 
+      // Another shop also sells the pizza: its price isn't this vendor's to change.
+      vendors.giftsSoldByOthers.mockResolvedValue(new Set(['a']));
+
       const response = await request(app.getHttpServer())
         .get('/vendor/offerings')
         .set(auth)
         .expect(200);
 
       expect(vendors.listPortalOfferings).toHaveBeenCalledWith('vendor-1');
+      expect(vendors.giftsSoldByOthers).toHaveBeenCalledWith('vendor-1', [
+        'b',
+        'a',
+      ]);
       expect(response.body).toEqual([
         {
           giftTemplateId: 'a',
@@ -472,6 +500,8 @@ describe('vendor portal over HTTP', () => {
           youReceive: 720000,
           available: false,
           status: 'live',
+          proposedPrice: null,
+          canChangePrice: false,
         },
         {
           giftTemplateId: 'b',
@@ -481,6 +511,8 @@ describe('vendor portal over HTTP', () => {
           youReceive: 405000,
           available: true,
           status: 'awaiting_approval',
+          proposedPrice: null,
+          canChangePrice: true,
         },
       ]);
     });
@@ -621,6 +653,268 @@ describe('vendor portal over HTTP', () => {
         .expect(400);
       expect(gifts.createRequestedByVendor).not.toHaveBeenCalled();
     });
+
+    it('tells ops by email when a vendor asks to sell something', async () => {
+      asVendor();
+
+      await request(app.getHttpServer())
+        .post('/vendor/offerings')
+        .set(auth)
+        .send({ name: 'Jollof & Chicken', inStorePrice: 450000 })
+        .expect(201);
+
+      expect(alerts.vendorItemRequested).toHaveBeenCalledWith({
+        vendorId: 'vendor-1',
+        vendorName: 'Mama Cass Kitchen',
+        giftTemplateId: GIFT_ID,
+        giftName: 'Jollof & Chicken',
+        inStorePrice: 450000,
+        withPhoto: false,
+      });
+    });
+  });
+
+  describe('changing a price and removing an item', () => {
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+
+    /** One of this vendor's items as the repository returns it. */
+    const item = (over: Record<string, unknown> = {}) => ({
+      gift_template_id: GIFT_ID,
+      vendor_price: 720000,
+      available: true,
+      approved: true,
+      proposed_price: null,
+      price_proposed_at: null,
+      gift_templates: {
+        name: 'Pizza',
+        base_price: 800000,
+        image_url: 'https://pub-abc.r2.dev/gifts/pizza.webp',
+        available: true,
+      },
+      ...over,
+    });
+
+    it('401s the new item routes with no token', async () => {
+      const server = app.getHttpServer();
+      await request(server)
+        .patch(`/vendor/offerings/${GIFT_ID}/price`)
+        .send({ inStorePrice: 900000 })
+        .expect(401);
+      await request(server).delete(`/vendor/offerings/${GIFT_ID}`).expect(401);
+      expect(vendors.setProposedPrice).not.toHaveBeenCalled();
+      expect(vendors.deleteOffering).not.toHaveBeenCalled();
+    });
+
+    it('holds a new price on a live item for SendEbun to approve — the old price keeps selling', async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([item()]);
+      vendors.setProposedPrice.mockResolvedValue(
+        item({
+          proposed_price: 900000,
+          price_proposed_at: '2026-10-15T08:00:00.000Z',
+        }),
+      );
+
+      const response = await request(app.getHttpServer())
+        .patch(`/vendor/offerings/${GIFT_ID}/price`)
+        .set(auth)
+        // Not the vendor's to set — dropped by the whitelist.
+        .send({ inStorePrice: 900000, vendorPrice: 899900 })
+        .expect(200);
+
+      expect(vendors.setProposedPrice).toHaveBeenCalledWith(
+        'vendor-1',
+        GIFT_ID,
+        900000,
+      );
+      expect(vendors.approvePriceChange).not.toHaveBeenCalled();
+      expect(response.body).toMatchObject({
+        inStorePrice: 800000,
+        youReceive: 720000,
+        proposedPrice: 900000,
+        status: 'live',
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'vendor_offering.price_change_requested',
+          actorType: 'vendor',
+          resourceId: 'vendor-1',
+        }),
+      );
+      expect(alerts.vendorPriceChangeRequested).toHaveBeenCalledWith({
+        vendorId: 'vendor-1',
+        vendorName: 'Mama Cass Kitchen',
+        giftTemplateId: GIFT_ID,
+        giftName: 'Pizza',
+        currentPrice: 800000,
+        proposedPrice: 900000,
+        proposedAt: '2026-10-15T08:00:00.000Z',
+      });
+    });
+
+    it('refuses a price change on a gift another shop also sells — one gift, one price', async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([item()]);
+      vendors.giftsSoldByOthers.mockResolvedValue(new Set([GIFT_ID]));
+
+      await request(app.getHttpServer())
+        .patch(`/vendor/offerings/${GIFT_ID}/price`)
+        .set(auth)
+        .send({ inStorePrice: 900000 })
+        .expect(400);
+      expect(vendors.setProposedPrice).not.toHaveBeenCalled();
+    });
+
+    it('withdraws a pending request when the vendor sends the current price', async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([
+        item({ proposed_price: 900000, price_proposed_at: 'x' }),
+      ]);
+      vendors.setProposedPrice.mockResolvedValue(item());
+
+      const response = await request(app.getHttpServer())
+        .patch(`/vendor/offerings/${GIFT_ID}/price`)
+        .set(auth)
+        .send({ inStorePrice: 800000 })
+        .expect(200);
+
+      expect(vendors.setProposedPrice).toHaveBeenCalledWith(
+        'vendor-1',
+        GIFT_ID,
+        null,
+      );
+      expect(
+        (response.body as { proposedPrice: unknown }).proposedPrice,
+      ).toBeNull();
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'vendor_offering.price_change_withdrawn',
+        }),
+      );
+      expect(alerts.vendorPriceChangeRequested).not.toHaveBeenCalled();
+    });
+
+    it('applies a corrected price straight away on an item still waiting for approval', async () => {
+      asVendor();
+      const waiting = item({
+        approved: false,
+        gift_templates: {
+          name: 'Cake',
+          base_price: 450000,
+          image_url: null,
+          available: false,
+        },
+      });
+      vendors.listPortalOfferings.mockResolvedValue([waiting]);
+      vendors.setProposedPrice.mockResolvedValue(waiting);
+      vendors.approvePriceChange.mockResolvedValue({});
+
+      await request(app.getHttpServer())
+        .patch(`/vendor/offerings/${GIFT_ID}/price`)
+        .set(auth)
+        .send({ inStorePrice: 500000 })
+        .expect(200);
+
+      // Through the same atomic path ops uses, at their 90% share.
+      expect(vendors.approvePriceChange).toHaveBeenCalledWith({
+        vendorId: 'vendor-1',
+        giftTemplateId: GIFT_ID,
+        expectedPrice: 500000,
+        vendorPrice: 450000,
+      });
+      expect(alerts.vendorPriceChangeRequested).not.toHaveBeenCalled();
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'vendor_offering.price_changed' }),
+      );
+    });
+
+    it('400s a price that is clearly a typo, and 404s an item that is not theirs', async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([]);
+      const server = app.getHttpServer();
+
+      await request(server)
+        .patch(`/vendor/offerings/${GIFT_ID}/price`)
+        .set(auth)
+        .send({ inStorePrice: 4500 })
+        .expect(400);
+      await request(server)
+        .patch(`/vendor/offerings/${GIFT_ID}/price`)
+        .set(auth)
+        .send({ inStorePrice: 900000 })
+        .expect(404);
+      expect(vendors.setProposedPrice).not.toHaveBeenCalled();
+    });
+
+    it('refuses to remove an item while paid gifts still need this shop', async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([item()]);
+      vendors.ordersStillRelyingOn.mockResolvedValue(2);
+
+      const response = await request(app.getHttpServer())
+        .delete(`/vendor/offerings/${GIFT_ID}`)
+        .set(auth)
+        .expect(409);
+
+      expect(vendors.ordersStillRelyingOn).toHaveBeenCalledWith(
+        'vendor-1',
+        GIFT_ID,
+      );
+      expect((response.body as { message: string }).message).toMatch(
+        /Sold out/,
+      );
+      expect(vendors.deleteOffering).not.toHaveBeenCalled();
+    });
+
+    it("removes a request SendEbun hasn't approved, with the draft gift and its photo", async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([
+        item({
+          approved: false,
+          gift_templates: {
+            name: 'Cake',
+            base_price: 450000,
+            image_url: 'https://pub-abc.r2.dev/gifts/cake.webp',
+            available: false,
+          },
+        }),
+      ]);
+      gifts.deleteVendorDraft.mockResolvedValue({
+        id: GIFT_ID,
+        image_url: 'https://pub-abc.r2.dev/gifts/cake.webp',
+      });
+
+      await request(app.getHttpServer())
+        .delete(`/vendor/offerings/${GIFT_ID}`)
+        .set(auth)
+        .expect(200, { removed: true });
+
+      expect(vendors.deleteOffering).toHaveBeenCalledWith('vendor-1', GIFT_ID);
+      expect(gifts.deleteVendorDraft).toHaveBeenCalledWith(GIFT_ID);
+      expect(photos.deleteIfOurs).toHaveBeenCalledWith(
+        'https://pub-abc.r2.dev/gifts/cake.webp',
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'vendor_offering.removed',
+          actorType: 'vendor',
+          metadata: expect.objectContaining({ draftDeleted: true }) as unknown,
+        }),
+      );
+    });
+
+    it('removes an approved item but leaves its gift for ops to decide', async () => {
+      asVendor();
+      vendors.listPortalOfferings.mockResolvedValue([item()]);
+
+      await request(app.getHttpServer())
+        .delete(`/vendor/offerings/${GIFT_ID}`)
+        .set(auth)
+        .expect(200);
+
+      expect(vendors.deleteOffering).toHaveBeenCalledWith('vendor-1', GIFT_ID);
+      expect(gifts.deleteVendorDraft).not.toHaveBeenCalled();
+    });
   });
 
   describe('who is coming to collect', () => {
@@ -640,7 +934,11 @@ describe('vendor portal over HTTP', () => {
     it("lists this vendor's bookings by first name and what they'll receive — never the collection code", async () => {
       asVendor();
       vendors.listPortalOfferings.mockResolvedValue([
-        { gift_template_id: GIFT_ID, vendor_price: 720000 },
+        {
+          gift_template_id: GIFT_ID,
+          vendor_price: 720000,
+          gift_templates: { base_price: 800000 },
+        },
       ]);
       orders.findUpcomingPickups.mockResolvedValue([
         {
@@ -649,6 +947,17 @@ describe('vendor portal over HTTP', () => {
           recipient_name: 'Adaeze Okonkwo',
           pickup_at: '2026-10-12T11:30:00.000Z',
           pickup_confirmed_at: null,
+          gift_value: 800000,
+          gift_templates: { name: 'Large Pepperoni' },
+        },
+        {
+          // Bought at ₦7,000, before the price went up to ₦8,000.
+          id: '55555555-5555-4555-8555-555555555555',
+          gift_template_id: GIFT_ID,
+          recipient_name: 'Tunde',
+          pickup_at: '2026-10-12T12:00:00.000Z',
+          pickup_confirmed_at: null,
+          gift_value: 700000,
           gift_templates: { name: 'Large Pepperoni' },
         },
       ]);
@@ -670,6 +979,15 @@ describe('vendor portal over HTTP', () => {
           pickupAt: '2026-10-12T11:30:00.000Z',
           confirmed: false,
           youReceive: 720000,
+        },
+        {
+          orderId: '55555555-5555-4555-8555-555555555555',
+          giftName: 'Large Pepperoni',
+          recipientFirstName: 'Tunde',
+          pickupAt: '2026-10-12T12:00:00.000Z',
+          confirmed: false,
+          // What they'll actually be credited: their share of ₦7,000.
+          youReceive: 630000,
         },
       ]);
       expect(JSON.stringify(response.body)).not.toMatch(/EBN-/);

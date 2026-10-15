@@ -174,6 +174,31 @@ export class GiftsService {
   }
 
   /**
+   * Puts a gift on sale — ops approving a vendor's item and publishing
+   * it in one step. Returns the row as it was before, so the caller can
+   * audit the change; null when the gift doesn't exist.
+   */
+  async putOnSale(id: string): Promise<GiftTemplateRow | null> {
+    const existing = await this.repository.findById(id);
+    if (!existing) return null;
+    if (!existing.available) {
+      await this.repository.update(id, { available: true });
+    }
+    return existing;
+  }
+
+  /**
+   * Deletes the off-sale gift a vendor's request created, when they
+   * withdraw the request. Only ever a gift nobody has bought: one with
+   * orders is history and stays. Returns the deleted row (so the caller
+   * can remove its photo), or null when it was kept or already gone.
+   */
+  async deleteVendorDraft(id: string): Promise<GiftTemplateRow | null> {
+    if (await this.repository.isReferenced(id)) return null;
+    return this.repository.delete(id);
+  }
+
+  /**
    * Deliberately does NOT check `.available` — that flag governs whether
    * a template can be selected for a NEW order, not whether an order
    * already paid for still deserves to be fulfilled. Fulfillment

@@ -9,6 +9,7 @@ import { formatNaira, parseNairaToKobo } from "@/lib/format-money";
 import { shrinkPhoto } from "@/lib/images/shrink-photo";
 import { NOT_LIVE_REASON, type GiftSeller, type GiftTemplate } from "@/lib/ops/types";
 import {
+  approveOfferingAction,
   deleteGiftAction,
   removeOfferingAction,
   saveOfferingAction,
@@ -209,13 +210,23 @@ export function GiftSellersPanel({ gift, partners }: { gift: GiftTemplate; partn
     });
   }
 
+  function approve(seller: GiftSeller, putOnSale: boolean) {
+    startTransition(async () => {
+      const result = await approveOfferingAction(seller.vendorId, gift.id, putOnSale);
+      if (result.ok) {
+        toast.success(putOnSale ? `${seller.vendorName} approved — on sale.` : `${seller.vendorName} approved.`);
+        router.refresh();
+      } else toast.error(result.errors.join(" "));
+    });
+  }
+
   async function remove(seller: GiftSeller) {
     const ok = await confirm({
       title: `Remove ${seller.vendorName}?`,
       body:
         gift.sellers.length === 1
-          ? "They're the only partner, so the gift will be hidden from senders until you add another. Orders already placed are unaffected."
-          : "They'll stop getting new orders for this gift. Orders already placed are unaffected.",
+          ? "They're the only partner, so the gift will be hidden from senders until you add another. If paid gifts still need them to hand it over, this is refused — pause them instead."
+          : "They'll stop getting new orders for this gift. If paid gifts still need them to hand it over, this is refused — pause them instead.",
       confirmLabel: "Remove",
       tone: "danger",
     });
@@ -249,6 +260,14 @@ export function GiftSellersPanel({ gift, partners }: { gift: GiftTemplate; partn
                     <p className="text-zinc-600">
                       Gets {formatNaira(seller.vendorPrice)} · SendEbun keeps {formatNaira(margin)}
                     </p>
+                    {seller.proposedPrice !== null && (
+                      <Link
+                        href={`/ops/vendors/${seller.vendorId}`}
+                        className="mt-1 block text-sm font-medium text-amber-800 hover:underline"
+                      >
+                        Asked to change the price to {formatNaira(seller.proposedPrice)} — decide on their page →
+                      </Link>
+                    )}
                   </div>
                   <div className="flex shrink-0 flex-wrap justify-end gap-1">
                     {!seller.vendorActive ? (
@@ -286,14 +305,24 @@ export function GiftSellersPanel({ gift, partners }: { gift: GiftTemplate; partn
                   </div>
                 ) : (
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                    {!seller.approved && !gift.available && gift.imageUrl && (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => approve(seller, true)}
+                        className="font-medium text-emerald-700 hover:underline"
+                      >
+                        Approve &amp; put on sale
+                      </button>
+                    )}
                     {!seller.approved && (
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() => save(seller, String(seller.vendorPrice / 100), `${seller.vendorName} approved.`)}
-                        className="font-medium text-emerald-700 hover:underline"
+                        onClick={() => approve(seller, false)}
+                        className={gift.available || !gift.imageUrl ? "font-medium text-emerald-700 hover:underline" : "text-zinc-700 hover:underline"}
                       >
-                        Approve
+                        {gift.available || !gift.imageUrl ? "Approve" : "Approve only"}
                       </button>
                     )}
                     <button

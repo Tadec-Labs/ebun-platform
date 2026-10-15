@@ -25,6 +25,10 @@ export interface VendorOffering {
   /** The vendor's own switch: false = sold out today. */
   available: boolean;
   status: "live" | "awaiting_approval" | "not_on_sale";
+  /** kobo — a new shop price they asked for, waiting on SendEbun. Null = none. */
+  proposedPrice: number | null;
+  /** False when another shop sells the same gift — its price is SendEbun's to change. */
+  canChangePrice: boolean;
 }
 
 /** Someone who booked a time to collect here. Mirrors the API's PickupView. */
@@ -115,7 +119,7 @@ export interface VendorRedemption {
  */
 export async function vendorFetch<T>(
   path: string,
-  init: { method?: "GET" | "POST" | "PATCH"; body?: unknown } = {},
+  init: { method?: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown } = {},
 ): Promise<T> {
   const token = await getVendorToken();
   if (!token) {

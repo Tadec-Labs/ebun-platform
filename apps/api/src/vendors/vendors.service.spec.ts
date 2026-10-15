@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { StaffContext } from '../auth/staff.guard';
 import { GiftsService } from '../gifts/gifts.service';
@@ -7,7 +11,11 @@ import {
   UpdateVendorDto,
   UpsertOfferingDto,
 } from './dto/vendor.dto';
-import { VendorRow, VendorsRepository } from './vendors.repository';
+import {
+  PriceChangeRefusedError,
+  VendorRow,
+  VendorsRepository,
+} from './vendors.repository';
 import { VendorsService } from './vendors.service';
 
 const STAFF: StaffContext = {
@@ -57,7 +65,7 @@ const withFields = <T extends object>(cls: new () => T, fields: Partial<T>) =>
 describe('VendorsService', () => {
   let sut: VendorsService;
   let repository: Record<keyof VendorsRepository, jest.Mock>;
-  let gifts: { findById: jest.Mock };
+  let gifts: { findById: jest.Mock; putOnSale: jest.Mock };
   let audit: { record: jest.Mock };
 
   beforeEach(() => {
@@ -78,8 +86,14 @@ describe('VendorsService', () => {
       listPortalOfferings: jest.fn(),
       setOfferingAvailability: jest.fn(),
       countAwaitingApproval: jest.fn(),
+      countPriceRequestsByVendor: jest.fn().mockResolvedValue({}),
+      giftsSoldByOthers: jest.fn().mockResolvedValue(new Set()),
+      setProposedPrice: jest.fn(),
+      approvePriceChange: jest.fn(),
+      approveOffering: jest.fn(),
+      ordersStillRelyingOn: jest.fn().mockResolvedValue(0),
     };
-    gifts = { findById: jest.fn() };
+    gifts = { findById: jest.fn(), putOnSale: jest.fn() };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
     sut = new VendorsService(
       repository as unknown as VendorsRepository,
@@ -401,6 +415,222 @@ describe('VendorsService', () => {
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ eventType: 'vendor_offering.removed' }),
       );
+    });
+
+    it('refuses to remove an offering that paid gifts still need', async () => {
+      repository.findById.mockResolvedValue(makeVendor());
+      repository.ordersStillRelyingOn.mockResolvedValue(1);
+
+      await expect(
+        sut.removeOffering('vendor-1', 'gift-1', STAFF, META),
+      ).rejects.toThrow(ConflictException);
+      expect(repository.deleteOffering).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('vendor requests', () => {
+    const offering = (over: Record<string, unknown> = {}) => ({
+      vendor_id: 'vendor-1',
+      gift_template_id: 'gift-1',
+      vendor_price: 720000,
+      available_zones: null,
+      available: true,
+      approved: false,
+      proposed_price: null,
+      price_proposed_at: null,
+      gift_templates: {
+        name: 'Meat Pie Box',
+        base_price: 800000,
+        available: false,
+        image_url: 'https://pub-abc.r2.dev/gifts/pie.webp',
+      },
+      ...over,
+    });
+
+    beforeEach(() => {
+      repository.findById.mockResolvedValue(
+        makeVendor({ commission_rate: 0.9 }),
+      );
+    });
+
+    it('approves an item and puts its gift on sale in one step, auditing both', async () => {
+      repository.findOffering.mockResolvedValueOnce(offering());
+      gifts.findById.mockResolvedValue({
+        id: 'gift-1',
+        name: 'Meat Pie Box',
+        base_price: 800000,
+        available: false,
+      });
+      repository.approveOffering.mockResolvedValue(
+        offering({ approved: true }),
+      );
+      gifts.putOnSale.mockResolvedValue({ id: 'gift-1', available: false });
+      repository.findOffering.mockResolvedValueOnce(
+        offering({
+          approved: true,
+          gift_templates: { ...offering().gift_templates, available: true },
+        }),
+      );
+
+      const view = await sut.approveOffering(
+        'vendor-1',
+        'gift-1',
+        true,
+        STAFF,
+        META,
+      );
+
+      expect(repository.approveOffering).toHaveBeenCalledWith(
+        'vendor-1',
+        'gift-1',
+      );
+      expect(gifts.putOnSale).toHaveBeenCalledWith('gift-1');
+      expect(view).toMatchObject({ approved: true, giftOnSale: true });
+      expect(
+        (audit.record.mock.calls as [{ eventType: string }][]).map(
+          ([e]) => e.eventType,
+        ),
+      ).toEqual(['vendor_offering.approved', 'GIFT_TEMPLATE_UPDATED']);
+    });
+
+    it('approves without touching the catalogue when not asked to put it on sale', async () => {
+      repository.findOffering.mockResolvedValue(offering());
+      gifts.findById.mockResolvedValue({
+        id: 'gift-1',
+        name: 'Meat Pie Box',
+        base_price: 800000,
+        available: false,
+      });
+      repository.approveOffering.mockResolvedValue(
+        offering({ approved: true }),
+      );
+
+      await sut.approveOffering('vendor-1', 'gift-1', false, STAFF, META);
+
+      expect(gifts.putOnSale).not.toHaveBeenCalled();
+    });
+
+    it("won't approve a partner who'd be paid at or above the gift's price", async () => {
+      repository.findOffering.mockResolvedValue(
+        offering({ vendor_price: 800000 }),
+      );
+      gifts.findById.mockResolvedValue({
+        id: 'gift-1',
+        name: 'Meat Pie Box',
+        base_price: 800000,
+        available: false,
+      });
+
+      await expect(
+        sut.approveOffering('vendor-1', 'gift-1', true, STAFF, META),
+      ).rejects.toThrow(BadRequestException);
+      expect(repository.approveOffering).not.toHaveBeenCalled();
+      expect(gifts.putOnSale).not.toHaveBeenCalled();
+    });
+
+    it('shows a pending price with what the partner would receive at it', async () => {
+      repository.listOfferings.mockResolvedValue([
+        offering({
+          approved: true,
+          proposed_price: 1000000,
+          price_proposed_at: '2026-10-15T08:00:00.000Z',
+        }),
+      ]);
+
+      const [view] = await sut.listOfferings('vendor-1');
+
+      expect(view).toMatchObject({
+        senderPrice: 800000,
+        proposedPrice: 1000000,
+        proposedVendorPrice: 900000,
+        giftHasPhoto: true,
+      });
+    });
+
+    it("approves a new price at the partner's share, for the exact price ops saw, and audits from/to", async () => {
+      repository.approvePriceChange.mockResolvedValue({
+        old_base_price: 800000,
+        new_base_price: 1000000,
+        old_vendor_price: 720000,
+        new_vendor_price: 900000,
+      });
+      repository.findOffering.mockResolvedValue(
+        offering({ approved: true, vendor_price: 900000 }),
+      );
+
+      await sut.approvePriceChange('vendor-1', 'gift-1', 1000000, STAFF, META);
+
+      expect(repository.approvePriceChange).toHaveBeenCalledWith({
+        vendorId: 'vendor-1',
+        giftTemplateId: 'gift-1',
+        expectedPrice: 1000000,
+        vendorPrice: 900000,
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'vendor_offering.price_change_approved',
+          actorId: 'staff-1',
+          metadata: expect.objectContaining({
+            basePriceFrom: 800000,
+            basePriceTo: 1000000,
+            vendorPriceFrom: 720000,
+            vendorPriceTo: 900000,
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('turns a request that changed since ops looked into a conflict, auditing nothing', async () => {
+      repository.approvePriceChange.mockRejectedValue(
+        new PriceChangeRefusedError('stale'),
+      );
+
+      await expect(
+        sut.approvePriceChange('vendor-1', 'gift-1', 1000000, STAFF, META),
+      ).rejects.toThrow(ConflictException);
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('declines a price request, keeping the current price', async () => {
+      repository.findOffering.mockResolvedValue(
+        offering({
+          approved: true,
+          proposed_price: 1000000,
+          price_proposed_at: 'x',
+        }),
+      );
+
+      const view = await sut.declinePriceChange(
+        'vendor-1',
+        'gift-1',
+        STAFF,
+        META,
+      );
+
+      expect(repository.setProposedPrice).toHaveBeenCalledWith(
+        'vendor-1',
+        'gift-1',
+        null,
+      );
+      expect(view).toMatchObject({ senderPrice: 800000, proposedPrice: null });
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'vendor_offering.price_change_declined',
+          metadata: expect.objectContaining({
+            declinedPrice: 1000000,
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('404s declining when there is no request', async () => {
+      repository.findOffering.mockResolvedValue(offering({ approved: true }));
+
+      await expect(
+        sut.declinePriceChange('vendor-1', 'gift-1', STAFF, META),
+      ).rejects.toThrow(NotFoundException);
+      expect(repository.setProposedPrice).not.toHaveBeenCalled();
     });
   });
 

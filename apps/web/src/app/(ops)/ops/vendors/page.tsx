@@ -23,7 +23,8 @@ export default async function PartnersPage() {
     opsFetch<PayoutRow[]>("/ops/payouts").catch(() => [] as PayoutRow[]),
   ]);
   const owedBy = new Map(payouts.map((p) => [p.vendorId, p.owed]));
-  const needsUs = (v: VendorSummary) => v.awaitingApprovalCount > 0 || (owedBy.get(v.id) ?? 0) > 0;
+  const needsUs = (v: VendorSummary) =>
+    v.awaitingApprovalCount > 0 || v.priceRequestCount > 0 || (owedBy.get(v.id) ?? 0) > 0;
   const sorted = [...vendors].sort(
     (a, b) =>
       Number(b.active) - Number(a.active) ||
@@ -87,6 +88,11 @@ export default async function PartnersPage() {
                           )}
                           {vendor.awaitingApprovalCount > 0 && (
                             <Pill tone="amber">{vendor.awaitingApprovalCount} to approve</Pill>
+                          )}
+                          {vendor.priceRequestCount > 0 && (
+                            <Pill tone="amber">
+                              {vendor.priceRequestCount} new {vendor.priceRequestCount === 1 ? "price" : "prices"}
+                            </Pill>
                           )}
                         </div>
                       </td>

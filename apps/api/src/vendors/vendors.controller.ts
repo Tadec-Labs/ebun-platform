@@ -18,6 +18,8 @@ import type { StaffContext, StaffRequest } from '../auth/staff.guard';
 import { StaffRoles } from '../auth/staff-roles.decorator';
 import { NoStoreInterceptor } from '../common/no-store.interceptor';
 import {
+  ApproveOfferingDto,
+  ApprovePriceChangeDto,
   CreateVendorDto,
   RecordPayoutDto,
   UpdateVendorDto,
@@ -115,6 +117,54 @@ export class VendorsController {
       id,
       giftTemplateId,
       dto,
+      staffOf(request),
+      metaOf(request),
+    );
+  }
+
+  /** Approve an item the vendor asked to sell; `putOnSale` publishes its gift too. */
+  @Post(':id/offerings/:giftTemplateId/approve')
+  approveOffering(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('giftTemplateId', ParseUUIDPipe) giftTemplateId: string,
+    @Body() dto: ApproveOfferingDto,
+    @Req() request: StaffRequest,
+  ) {
+    return this.vendors.approveOffering(
+      id,
+      giftTemplateId,
+      dto.putOnSale ?? false,
+      staffOf(request),
+      metaOf(request),
+    );
+  }
+
+  /** The vendor's new shop price becomes the gift's price, with their share recomputed. */
+  @Post(':id/offerings/:giftTemplateId/price-change/approve')
+  approvePriceChange(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('giftTemplateId', ParseUUIDPipe) giftTemplateId: string,
+    @Body() dto: ApprovePriceChangeDto,
+    @Req() request: StaffRequest,
+  ) {
+    return this.vendors.approvePriceChange(
+      id,
+      giftTemplateId,
+      dto.inStorePrice,
+      staffOf(request),
+      metaOf(request),
+    );
+  }
+
+  @Post(':id/offerings/:giftTemplateId/price-change/decline')
+  declinePriceChange(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('giftTemplateId', ParseUUIDPipe) giftTemplateId: string,
+    @Req() request: StaffRequest,
+  ) {
+    return this.vendors.declinePriceChange(
+      id,
+      giftTemplateId,
       staffOf(request),
       metaOf(request),
     );

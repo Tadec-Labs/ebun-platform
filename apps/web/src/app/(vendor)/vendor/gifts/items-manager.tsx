@@ -1,10 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useConfirm } from "@/components/ui/feedback";
 import { formatNaira } from "@/lib/format-money";
 import type { VendorOffering } from "@/lib/vendor/api";
 import { shrinkPhoto } from "@/lib/images/shrink-photo";
-import { addItemPhotoAction, requestItemAction, setItemAvailabilityAction } from "../actions";
+import {
+  addItemPhotoAction,
+  removeItemAction,
+  requestItemAction,
+  requestPriceChangeAction,
+  setItemAvailabilityAction,
+} from "../actions";
 
 const STATUS_NOTE: Record<VendorOffering["status"], string> = {
   live: "",
@@ -23,7 +30,59 @@ const STATUS_NOTE: Record<VendorOffering["status"], string> = {
 export function ItemsManager({ initial }: { initial: VendorOffering[] }) {
   const [items, setItems] = useState(initial);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [priceNaira, setPriceNaira] = useState("");
   const [pending, startTransition] = useTransition();
+  const [ask, askDialog] = useConfirm();
+
+  const replace = (offering: VendorOffering) =>
+    setItems((all) => all.map((i) => (i.giftTemplateId === offering.giftTemplateId ? offering : i)));
+
+  function sendPrice(item: VendorOffering, naira: string, cancelling = false) {
+    setError(null);
+    setNotice(null);
+    startTransition(async () => {
+      const result = await requestPriceChangeAction(item.giftTemplateId, naira);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      replace(result.offering);
+      setEditing(null);
+      setNotice(
+        cancelling
+          ? "Request cancelled."
+          : result.offering.proposedPrice !== null
+            ? `Sent to SendEbun. Senders keep paying ${formatNaira(result.offering.inStorePrice)} until it's approved.`
+            : "Price updated.",
+      );
+    });
+  }
+
+  async function remove(item: VendorOffering) {
+    const ok = await ask({
+      title: `Remove “${item.name}”?`,
+      body:
+        item.status === "awaiting_approval"
+          ? "This cancels your request to sell it."
+          : "Senders won't be able to buy it from you any more. Anyone who already bought it can still collect it — if some are still waiting, we'll ask you to mark it Sold out instead until they're done.",
+      confirmLabel: "Remove",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setError(null);
+    setNotice(null);
+    startTransition(async () => {
+      const result = await removeItemAction(item.giftTemplateId);
+      if (result.ok) {
+        setItems((all) => all.filter((i) => i.giftTemplateId !== item.giftTemplateId));
+        setNotice(`${item.name} removed.`);
+      } else {
+        setError(result.message);
+      }
+    });
+  }
 
   function toggle(item: VendorOffering) {
     const next = !item.available;
@@ -74,6 +133,11 @@ export function ItemsManager({ initial }: { initial: VendorOffering[] }) {
             {error}
           </p>
         )}
+        {notice && (
+          <p role="status" className="rounded-lg bg-emerald-50 px-4 py-3 text-base text-emerald-900">
+            {notice}
+          </p>
+        )}
 
         {items.length === 0 ? (
           <p className="rounded-lg border-2 border-dashed border-zinc-300 px-4 py-6 text-center text-lg text-zinc-600">
@@ -95,6 +159,12 @@ export function ItemsManager({ initial }: { initial: VendorOffering[] }) {
                     </p>
                     {item.status !== "live" && (
                       <p className="mt-1 text-sm font-medium text-amber-800">{STATUS_NOTE[item.status]}</p>
+                    )}
+                    {item.proposedPrice !== null && (
+                      <p className="mt-1 text-sm font-medium text-amber-800">
+                        You asked for {formatNaira(item.proposedPrice)} — waiting for SendEbun. Senders pay{" "}
+                        {formatNaira(item.inStorePrice)} until then.
+                      </p>
                     )}
                     {/* The API decides finally; this only hides a button that would be refused. */}
                     {(item.status === "awaiting_approval" || !item.imageUrl) && (
@@ -119,6 +189,88 @@ export function ItemsManager({ initial }: { initial: VendorOffering[] }) {
                     {item.available ? "Available" : "Sold out"}
                   </button>
                 </div>
+
+                {editing === item.giftTemplateId ? (
+                  <form
+                    className="mt-4 flex flex-col gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      sendPrice(item, priceNaira);
+                    }}
+                  >
+                    <label className="flex flex-col gap-2">
+                      <span className="text-base">New shop price (₦)</span>
+                      <input
+                        autoFocus
+                        value={priceNaira}
+                        onChange={(e) => setPriceNaira(e.target.value)}
+                        inputMode="decimal"
+                        required
+                        className="w-full rounded-lg border-2 border-zinc-300 bg-white px-4 py-3 text-lg outline-none focus:border-zinc-900"
+                      />
+                    </label>
+                    {item.status !== "awaiting_approval" && (
+                      <span className="text-sm text-zinc-500">
+                        SendEbun checks it first. Senders keep paying {formatNaira(item.inStorePrice)} until then, and
+                        gifts already bought are paid at the price they were bought at.
+                      </span>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="submit"
+                        disabled={pending}
+                        className="rounded-lg bg-zinc-900 py-3 text-base font-semibold text-white disabled:opacity-50"
+                      >
+                        {pending ? "Sending…" : item.status === "awaiting_approval" ? "Save" : "Send to SendEbun"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditing(null)}
+                        className="rounded-lg border-2 border-zinc-300 py-3 text-base"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-base">
+                    {item.canChangePrice ? (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => {
+                          setEditing(item.giftTemplateId);
+                          setPriceNaira(String((item.proposedPrice ?? item.inStorePrice) / 100));
+                          setError(null);
+                          setNotice(null);
+                        }}
+                        className="py-1 font-medium underline underline-offset-4 disabled:opacity-50"
+                      >
+                        Change price
+                      </button>
+                    ) : (
+                      <span className="py-1 text-sm text-zinc-500">Other shops sell this — SendEbun sets its price.</span>
+                    )}
+                    {item.proposedPrice !== null && (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => sendPrice(item, String(item.inStorePrice / 100), true)}
+                        className="py-1 font-medium underline underline-offset-4 disabled:opacity-50"
+                      >
+                        Cancel request
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => void remove(item)}
+                      className="py-1 font-medium text-red-700 underline underline-offset-4 disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -128,9 +280,10 @@ export function ItemsManager({ initial }: { initial: VendorOffering[] }) {
       <RequestItemForm onAdded={(offering) => setItems((all) => [...all, offering])} />
 
       <p className="text-sm leading-relaxed text-zinc-500">
-        To change a price or remove an item, message SendEbun on WhatsApp. Prices are what senders are promised, so we
-        change them with you.
+        Prices are what senders are promised, so a new price goes to SendEbun to approve first. To change the photo of a
+        live item, send it to SendEbun on WhatsApp.
       </p>
+      {askDialog}
     </div>
   );
 }

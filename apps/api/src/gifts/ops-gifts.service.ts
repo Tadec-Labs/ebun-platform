@@ -68,6 +68,8 @@ export interface GiftSellerView {
   approved: boolean;
   /** The partner account itself is switched on. */
   vendorActive: boolean;
+  /** kobo — a new in-store price this partner asked for, decided on their partner page. */
+  proposedPrice: number | null;
 }
 
 const FIELD_MAP: Record<string, string> = {
@@ -111,6 +113,7 @@ function toSellerView(row: GiftSellerRow): GiftSellerView {
     available: row.available,
     approved: row.approved,
     vendorActive: row.vendors?.active ?? false,
+    proposedPrice: row.proposed_price ?? null,
   };
 }
 

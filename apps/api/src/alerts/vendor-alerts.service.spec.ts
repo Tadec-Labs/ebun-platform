@@ -47,7 +47,10 @@ describe('VendorAlertsService', () => {
       isConfigured: jest.fn().mockReturnValue(true),
       send: jest.fn().mockResolvedValue('resend-1'),
     };
-    env = { OPS_ALERT_EMAIL: 'ops@ebun.com.ng' };
+    env = {
+      OPS_ALERT_EMAIL: 'ops@ebun.com.ng',
+      WEB_APP_BASE_URL: 'https://app.ebun.com.ng/',
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -133,5 +136,70 @@ describe('VendorAlertsService', () => {
     const opsText = sentAt(1).text;
     expect(opsText).toContain('+2348030000000');
     expect(opsText).toContain('+2348050000000');
+  });
+
+  describe('vendor requests to ops', () => {
+    const item = {
+      vendorId: 'vendor-1',
+      vendorName: 'Hamper House',
+      giftTemplateId: 'gift-1',
+      giftName: 'Small Hamper',
+      inStorePrice: 1_500_000,
+      withPhoto: false,
+    };
+
+    it("emails ops about a new item with a link to the partner's page, once per item", async () => {
+      await sut.vendorItemRequested(item);
+
+      expect(repo.claim).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderId: null,
+          recipientType: 'admin',
+          email: 'ops@ebun.com.ng',
+          notificationType: 'OPS_VENDOR_REQUEST',
+          idempotencyKey: 'ops-item-request:gift-1',
+        }),
+      );
+      const sent = sentAt(0);
+      expect(sent.to).toBe('ops@ebun.com.ng');
+      expect(sent.text).toContain('₦15,000');
+      expect(sent.text).toContain(
+        'https://app.ebun.com.ng/ops/vendors/vendor-1',
+      );
+    });
+
+    it('emails ops a price request with both prices, keyed to that request', async () => {
+      await sut.vendorPriceChangeRequested({
+        vendorId: 'vendor-1',
+        vendorName: 'Hamper House',
+        giftTemplateId: 'gift-1',
+        giftName: 'Small Hamper',
+        currentPrice: 1_500_000,
+        proposedPrice: 1_800_000,
+        proposedAt: '2026-10-15T08:00:00.000Z',
+      });
+
+      expect(repo.claim).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderId: null,
+          idempotencyKey:
+            'ops-price-request:vendor-1:gift-1:2026-10-15T08:00:00.000Z',
+        }),
+      );
+      expect(sentAt(0).text).toMatch(/Now: ₦15,000[\s\S]*Asked for: ₦18,000/);
+    });
+
+    it('sends nothing without an ops address or email set up, and never throws', async () => {
+      env.OPS_ALERT_EMAIL = undefined;
+      await sut.vendorItemRequested(item);
+      env.OPS_ALERT_EMAIL = 'ops@ebun.com.ng';
+      email.isConfigured.mockReturnValue(false);
+      await sut.vendorItemRequested(item);
+      expect(repo.claim).not.toHaveBeenCalled();
+
+      email.isConfigured.mockReturnValue(true);
+      repo.claim.mockRejectedValue(new Error('db down'));
+      await expect(sut.vendorItemRequested(item)).resolves.toBeUndefined();
+    });
   });
 });

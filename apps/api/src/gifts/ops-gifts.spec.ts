@@ -89,6 +89,7 @@ describe('OpsGiftsService', () => {
       vendor_price: 540000,
       available: true,
       approved: true,
+      proposed_price: null,
       vendors: { business_name: 'Unique Catering', active: true },
       ...over,
     });
@@ -118,6 +119,7 @@ describe('OpsGiftsService', () => {
           available: true,
           approved: true,
           vendorActive: true,
+          proposedPrice: null,
         },
       ]);
     });

@@ -288,6 +288,69 @@ export async function removeOfferingAction(vendorId: string, giftTemplateId: str
   return { ok: true };
 }
 
+function revalidateOffering(vendorId: string, giftTemplateId: string) {
+  revalidatePath(`/ops/vendors/${vendorId}`);
+  revalidatePath("/ops/vendors");
+  revalidatePath("/ops/gifts");
+  revalidatePath(`/ops/gifts/${giftTemplateId}`);
+  revalidatePath("/ops");
+}
+
+/**
+ * Approves an item a vendor asked to sell — keeping their price, zones
+ * and switch — and, when asked, puts its gift on sale in the same step.
+ */
+export async function approveOfferingAction(
+  vendorId: string,
+  giftTemplateId: string,
+  putOnSale: boolean,
+): Promise<ActionResult> {
+  try {
+    await opsFetch<Offering>(`/ops/vendors/${vendorId}/offerings/${giftTemplateId}/approve`, {
+      method: "POST",
+      body: { putOnSale },
+    });
+  } catch (error) {
+    return asFailure(error);
+  }
+  revalidateOffering(vendorId, giftTemplateId);
+  return { ok: true, message: putOnSale ? "Approved and on sale." : "Approved." };
+}
+
+/**
+ * Approves a vendor's new shop price. Sends the price ops saw, so a
+ * request the vendor changed in the meantime is refused, not approved
+ * unseen.
+ */
+export async function approvePriceChangeAction(
+  vendorId: string,
+  giftTemplateId: string,
+  inStorePrice: number,
+): Promise<ActionResult> {
+  try {
+    await opsFetch<Offering>(`/ops/vendors/${vendorId}/offerings/${giftTemplateId}/price-change/approve`, {
+      method: "POST",
+      body: { inStorePrice },
+    });
+  } catch (error) {
+    return asFailure(error);
+  }
+  revalidateOffering(vendorId, giftTemplateId);
+  return { ok: true, message: "New price approved." };
+}
+
+export async function declinePriceChangeAction(vendorId: string, giftTemplateId: string): Promise<ActionResult> {
+  try {
+    await opsFetch<Offering>(`/ops/vendors/${vendorId}/offerings/${giftTemplateId}/price-change/decline`, {
+      method: "POST",
+    });
+  } catch (error) {
+    return asFailure(error);
+  }
+  revalidateOffering(vendorId, giftTemplateId);
+  return { ok: true, message: "Price request declined." };
+}
+
 /**
  * Replaces a gift's photo with one uploaded from this device. The file
  * arrives already shrunk by the browser; the API checks its real type

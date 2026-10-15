@@ -23,6 +23,7 @@ function order(overrides: Partial<DeliveryOrderRow> = {}): DeliveryOrderRow {
     status: OrderStatus.FulfillmentInProgress,
     order_number: 'EBN-0001',
     gift_template_id: 'hamper',
+    gift_value: 2_200_000,
     delivery_fee: 150_000,
     recipient_name: 'Ada Obi',
     recipient_phone: '+2348012345678',
@@ -140,7 +141,7 @@ describe('DeliveriesService', () => {
       markDispatched: jest.fn().mockResolvedValue(true),
       markDelivered: jest.fn().mockResolvedValue(true),
       listCandidates: jest.fn().mockResolvedValue([candidate('vendor-1')]),
-      vendorPrice: jest.fn().mockResolvedValue(2_000_000),
+      vendorPayout: jest.fn().mockResolvedValue(2_000_000),
       vendorName: jest.fn().mockResolvedValue('Mama Put Hampers'),
       recordVendorCredit: jest.fn().mockResolvedValue(undefined),
       listOpen: jest.fn().mockResolvedValue([]),
@@ -266,6 +267,12 @@ describe('DeliveriesService', () => {
         { type: 'vendor' },
       );
       expect(repo.markDelivered).toHaveBeenCalledWith('order-1', 'vendor');
+      // The share is of what the sender paid for this order, not today's price.
+      expect(repo.vendorPayout).toHaveBeenCalledWith(
+        'vendor-1',
+        'hamper',
+        2_200_000,
+      );
       expect(repo.recordVendorCredit).toHaveBeenCalledWith(
         'order-1',
         'vendor-1',

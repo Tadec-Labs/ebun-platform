@@ -257,9 +257,10 @@ export class DeliveriesService {
       // Assigned but no address can only happen if ops assigned early;
       // there is nothing a rider can do with it yet.
       if (!order?.delivery_address) continue;
-      const price = await this.repository.vendorPrice(
+      const price = await this.repository.vendorPayout(
         vendorId,
         order.gift_template_id,
+        order.gift_value,
       );
       views.push({
         orderId: order.id,
@@ -352,9 +353,10 @@ export class DeliveriesService {
     );
 
     const vendorId = fulfillment.vendor_id as string;
-    const price = await this.repository.vendorPrice(
+    const price = await this.repository.vendorPayout(
       vendorId,
       order.gift_template_id,
+      order.gift_value,
     );
     if (price === null) {
       // Only possible if the offering was deleted after assignment. The

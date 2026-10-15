@@ -35,6 +35,11 @@ describe('OverviewService', () => {
       awaitingApprovalByVendor: jest
         .fn()
         .mockResolvedValue([{ vendorId: 'v3', name: 'Cake Co', count: 2 }]),
+      // Cake Co again (one partner, counted once) and a second partner.
+      priceRequestsByVendor: jest.fn().mockResolvedValue([
+        { vendorId: 'v3', name: 'Cake Co', count: 1 },
+        { vendorId: 'v5', name: 'Spa Place', count: 2 },
+      ]),
       vendorReadiness: jest.fn().mockResolvedValue([
         {
           id: 'v1',
@@ -121,14 +126,19 @@ describe('OverviewService', () => {
       'stuck_order',
       'delivery',
       'approval',
+      'approval',
+      'approval',
       'partner_details',
     ]);
-    expect(result.attention[3].title).toBe('No Bank has no bank details');
+    expect(result.attention[4].title).toBe(
+      'Spa Place asked to change 2 prices',
+    );
+    expect(result.attention[5].title).toBe('No Bank has no bank details');
     // The sidebar badge counts what needs acting on, not the tidy-ups.
     expect(result.counts).toEqual({
-      attention: 3,
+      attention: 5,
       deliveries: 1,
-      approvals: 1,
+      approvals: 2,
       payouts: 2,
     });
   });

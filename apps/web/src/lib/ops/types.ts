@@ -29,6 +29,8 @@ export interface VendorSummary {
   offeringsCount: number;
   /** Items the vendor asked to sell from their counter link, waiting on ops. */
   awaitingApprovalCount: number;
+  /** New prices the vendor asked for, waiting on ops. */
+  priceRequestCount: number;
   createdAt: string;
 }
 
@@ -75,6 +77,14 @@ export interface Offering {
   availableZones: string[];
   available: boolean;
   approved: boolean;
+  /** The gift is switched on sale in the catalogue. */
+  giftOnSale: boolean;
+  giftHasPhoto: boolean;
+  /** kobo — new in-store price the vendor asked for; senders pay senderPrice until approved. */
+  proposedPrice: number | null;
+  /** kobo — what the vendor would receive at proposedPrice. */
+  proposedVendorPrice: number | null;
+  priceProposedAt: string | null;
 }
 
 /** What every ops server action returns instead of throwing — errors are shown inline, not as a crash page. */
@@ -131,6 +141,8 @@ export interface GiftSeller {
   available: boolean;
   approved: boolean;
   vendorActive: boolean;
+  /** kobo — a new in-store price this partner asked for, decided on their partner page. */
+  proposedPrice: number | null;
 }
 
 /** Why a gift isn't on /send, in ops' words. */

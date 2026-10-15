@@ -33,6 +33,8 @@ export interface GiftSellerRow {
   available_zones: string[] | null;
   available: boolean;
   approved: boolean;
+  /** In-store price (kobo) this seller asked to change to; null = none. */
+  proposed_price: number | null;
   vendors: { business_name: string; active: boolean } | null;
 }
 
@@ -164,7 +166,7 @@ export class GiftTemplatesRepository {
     let query = this.supabase
       .from('vendor_gift_offerings')
       .select(
-        'gift_template_id, vendor_id, vendor_price, available_zones, available, approved, vendors(business_name, active)',
+        'gift_template_id, vendor_id, vendor_price, available_zones, available, approved, proposed_price, vendors(business_name, active)',
       );
     if (giftTemplateId) query = query.eq('gift_template_id', giftTemplateId);
     const response = (await query) as {
