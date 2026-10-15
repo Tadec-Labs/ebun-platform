@@ -1,3 +1,4 @@
+import { BanksService } from '../payouts/banks.service';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -45,6 +46,7 @@ describe('vendor portal over HTTP', () => {
   let photos: { upload: jest.Mock; deleteIfOurs: jest.Mock };
   let payouts: { listCollections: jest.Mock; listPayouts: jest.Mock };
   let deliveries: Record<string, jest.Mock>;
+  let banks: { list: jest.Mock };
 
   const asVendor = (over: Record<string, unknown> = {}) => {
     vendors.findByPortalToken.mockResolvedValue({
@@ -101,6 +103,9 @@ describe('vendor portal over HTTP', () => {
       vendorPriceChangeRequested: jest.fn().mockResolvedValue(undefined),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    banks = {
+      list: jest.fn().mockResolvedValue([{ name: 'GTBank', code: '058' }]),
+    };
     payouts = {
       listCollections: jest.fn().mockResolvedValue([]),
       listPayouts: jest.fn().mockResolvedValue([]),
@@ -141,6 +146,7 @@ describe('vendor portal over HTTP', () => {
         { provide: RedemptionsService, useValue: redemptions },
         { provide: VendorsRepository, useValue: vendors },
         { provide: AuditService, useValue: audit },
+        { provide: BanksService, useValue: banks },
         { provide: DeliveriesService, useValue: deliveries },
         { provide: VendorAlertsService, useValue: alerts },
       ],

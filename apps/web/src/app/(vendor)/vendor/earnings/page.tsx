@@ -64,7 +64,9 @@ export default async function VendorEarningsPage() {
           <p className="text-sm text-zinc-300">Owed to you</p>
           <p className="mt-1 text-3xl font-semibold">{formatNaira(earnings.owedNow)}</p>
           <p className="mt-1 text-sm text-zinc-300">
-            {unpaid.length} {unpaid.length === 1 ? "gift" : "gifts"} not yet paid
+            {earnings.onItsWay > 0
+              ? `${formatNaira(earnings.onItsWay)} on its way to your bank`
+              : `${unpaid.length} ${unpaid.length === 1 ? "gift" : "gifts"} not yet paid`}
           </p>
         </div>
         <div className="rounded-lg border-2 border-zinc-200 p-4">
@@ -89,6 +91,7 @@ export default async function VendorEarningsPage() {
                   <p className="text-lg font-semibold">{formatNaira(payment.amount)}</p>
                   <p className="text-sm text-zinc-600">
                     {payment.collections} {payment.collections === 1 ? "gift" : "gifts"}
+                    {payment.method === "paystack_transfer" ? " · Paid automatically" : ""}
                     {payment.reference ? ` · Ref ${payment.reference}` : ""}
                   </p>
                 </div>
@@ -119,7 +122,7 @@ export default async function VendorEarningsPage() {
                 <div className="shrink-0 text-right">
                   <p className="text-lg font-semibold">{formatNaira(collection.amount)}</p>
                   <p className={`text-sm font-medium ${collection.paid ? "text-emerald-700" : "text-amber-700"}`}>
-                    {collection.paid ? "Paid" : "Owed"}
+                    {collection.paid ? "Paid" : collection.onItsWay ? "On its way" : "Owed"}
                   </p>
                 </div>
               </li>

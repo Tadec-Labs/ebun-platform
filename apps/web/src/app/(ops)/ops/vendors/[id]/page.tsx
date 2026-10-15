@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PageHeader, Pill } from "@/components/ops/ui";
 import { notFound } from "next/navigation";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
-import type { GiftTemplate, Offering, Vendor, VendorEarnings, VendorSummary } from "@/lib/ops/types";
+import type { BankOption, GiftTemplate, Offering, Vendor, VendorEarnings, VendorSummary } from "@/lib/ops/types";
 import { EarningsPanel } from "./earnings-panel";
 import { VendorForm } from "../vendor-form";
 import { OfferingsPanel } from "./offerings-panel";
@@ -21,7 +21,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
     throw error;
   }
 
-  const [offerings, vendors, catalog, earnings] = await Promise.all([
+  const [offerings, vendors, catalog, earnings, banks] = await Promise.all([
     opsFetch<Offering[]>(`/ops/vendors/${id}/offerings`),
     opsFetch<VendorSummary[]>("/ops/vendors"),
     // The OPS catalogue, not the public one. New gifts are created off
@@ -31,6 +31,11 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
     // vendor who fulfils it, then put it on sale.
     opsFetch<GiftTemplate[]>("/ops/gifts"),
     opsFetch<VendorEarnings>(`/ops/vendors/${id}/earnings`),
+    // Only for the bank picker; the page works without it.
+    opsFetch<BankOption[]>("/ops/banks").catch((error: unknown) => {
+      if (error instanceof OpsApiError) return [] as BankOption[];
+      throw error;
+    }),
   ]);
 
   return (
@@ -93,6 +98,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
           <VendorForm
             vendor={vendor}
             backupOptions={vendors.filter((v) => v.id !== vendor.id).map((v) => ({ id: v.id, name: v.businessName }))}
+            banks={banks}
           />
         </section>
       </div>

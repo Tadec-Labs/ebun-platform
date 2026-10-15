@@ -3,6 +3,7 @@ import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { OrdersModule } from '../orders/orders.module';
 import { AlertsModule } from '../alerts/alerts.module';
+import { PayoutsModule } from '../payouts/payouts.module';
 import { DeliveriesRepository } from './deliveries.repository';
 import { DeliveriesService } from './deliveries.service';
 import { OpsDeliveriesController } from './ops-deliveries.controller';
@@ -13,7 +14,7 @@ import { OpsDeliveriesController } from './ops-deliveries.controller';
  * from either, so neither import is circular.
  */
 @Module({
-  imports: [OrdersModule, AuditModule, AuthModule, AlertsModule],
+  imports: [OrdersModule, AuditModule, AuthModule, AlertsModule, PayoutsModule],
   controllers: [OpsDeliveriesController],
   providers: [DeliveriesRepository, DeliveriesService],
   exports: [DeliveriesService],

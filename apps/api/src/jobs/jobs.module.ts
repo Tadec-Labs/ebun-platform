@@ -9,6 +9,8 @@ import { ScheduledSendJob } from './scheduled-send.job';
 import { StuckOrderJob } from './stuck-order.job';
 import { VendorEscalationJob } from './vendor-escalation.job';
 import { AlertsModule } from '../alerts/alerts.module';
+import { PayoutsModule } from '../payouts/payouts.module';
+import { AutoPayoutJob } from './auto-payout.job';
 
 /**
  * Every recurring job in one module, rather than a @Cron scattered
@@ -31,8 +33,10 @@ import { AlertsModule } from '../alerts/alerts.module';
     NotificationsModule,
     RedemptionsModule,
     AlertsModule,
+    PayoutsModule,
   ],
   providers: [
+    AutoPayoutJob,
     ScheduledSendJob,
     ExpiryJob,
     StuckOrderJob,

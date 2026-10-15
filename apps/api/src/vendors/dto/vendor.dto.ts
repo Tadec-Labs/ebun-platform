@@ -26,6 +26,8 @@ import {
 // shared module if a fourth appears).
 const PHONE_PATTERN = /^\+[1-9]\d{6,14}$/;
 const NUBAN_PATTERN = /^\d{10}$/;
+/** Paystack bank codes: digits, occasionally letters (e.g. 058, 50211, 999992). */
+const BANK_CODE_PATTERN = /^[0-9A-Za-z]{3,10}$/;
 
 export const VENDOR_CATEGORIES = GIFT_CATEGORIES;
 export type VendorCategory = (typeof VENDOR_CATEGORIES)[number];
@@ -168,6 +170,12 @@ export class CreateVendorDto {
   @MaxLength(120)
   bankName?: string;
 
+  /** Paystack bank code from the bank list — what automatic payouts need. */
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @Matches(BANK_CODE_PATTERN, { message: 'Pick the bank from the list.' })
+  bankCode?: string;
+
   @Transform(blankToUndefined)
   @IsOptional()
   @Matches(NUBAN_PATTERN, {
@@ -302,6 +310,12 @@ export class UpdateVendorDto {
   @IsString()
   @MaxLength(120)
   bankName?: string | null;
+
+  /** Paystack bank code from the bank list. Blank clears it (payouts go back to manual). */
+  @Transform(blankToNull)
+  @IsOptional()
+  @Matches(BANK_CODE_PATTERN, { message: 'Pick the bank from the list.' })
+  bankCode?: string | null;
 
   @Transform(blankToNull)
   @IsOptional()
@@ -498,6 +512,12 @@ export class UpdateVendorProfileDto {
   @IsString()
   @MaxLength(120)
   bankName?: string;
+
+  /** From the bank list on the Shop screen; set with the rest of the bank details. */
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @Matches(BANK_CODE_PATTERN, { message: 'Pick your bank from the list.' })
+  bankCode?: string;
 
   @Transform(blankToUndefined)
   @IsOptional()

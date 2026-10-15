@@ -34,6 +34,7 @@ import {
 import { VendorPortalService } from './vendor-portal.service';
 import { EarningsService } from './earnings.service';
 import { DeliveriesService } from '../deliveries/deliveries.service';
+import { BanksService } from '../payouts/banks.service';
 import {
   DispatchDeliveryDto,
   HandoverCodeDto,
@@ -67,6 +68,7 @@ export class VendorPortalController {
     private readonly portal: VendorPortalService,
     private readonly earnings: EarningsService,
     private readonly deliveries: DeliveriesService,
+    private readonly banksService: BanksService,
   ) {}
 
   /** Confirms the link works and names the business, so staff can see whose till they are on. */
@@ -236,6 +238,13 @@ export class VendorPortalController {
       photo,
       metaOf(request),
     );
+  }
+
+  /** Nigerian banks to pick from when adding bank details. Public data; no account details involved. */
+  @Get('banks')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  banks() {
+    return this.banksService.list();
   }
 
   /** The vendor's own details. Bank details come back masked. */

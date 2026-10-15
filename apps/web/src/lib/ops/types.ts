@@ -49,6 +49,10 @@ export interface Vendor {
   /** The vendor's SHARE (0.70 = vendor receives 70%, Ebun keeps 30%) — despite the column name. */
   commissionRate: number;
   bankName: string | null;
+  /** Paystack bank code — set by picking the bank from the list; needed for automatic payouts. */
+  bankCode: string | null;
+  /** Whether this partner is paid automatically after each handover, and if not, why. */
+  autoPayouts: { on: boolean; reason: string | null };
   accountNumber: string | null;
   accountName: string | null;
   active: boolean;
@@ -128,6 +132,12 @@ export const REFUND_REASON_LABEL: Record<RefundReasonCategory, string> = {
   admin_discretion: "Goodwill",
   other: "Other",
 };
+
+/** A bank from Paystack's list, for the bank picker. */
+export interface BankOption {
+  name: string;
+  code: string;
+}
 
 /** What every ops server action returns instead of throwing — errors are shown inline, not as a crash page. */
 export type ActionResult =
@@ -424,6 +434,8 @@ export const ORDER_STATUS_GROUPS: { label: string; statuses: OrderStatusValue[] 
 /** Mirrors the API's OpsEarningsView. Amounts in kobo. */
 export interface VendorEarnings {
   owedNow: number;
+  /** Part of owedNow an automatic transfer is already sending. */
+  onItsWay: number;
   paidTotal: number;
   collections: {
     orderId: string;
@@ -433,6 +445,7 @@ export interface VendorEarnings {
     collectedAt: string;
     paid: boolean;
     paidAt: string | null;
+    onItsWay: boolean;
   }[];
   payments: {
     id: string;
@@ -485,7 +498,7 @@ export const DELIVERY_STAGE_LABEL: Record<OpsDeliveryStage, string> = {
 /* ------------------------------------------------------------------ */
 
 export interface AttentionItem {
-  kind: "stuck_order" | "delivery" | "pickup" | "approval" | "partner_details" | "refund";
+  kind: "stuck_order" | "delivery" | "pickup" | "approval" | "partner_details" | "refund" | "payout";
   /** 1 = money taken and nothing happening; 3 = tidy-up. */
   urgency: 1 | 2 | 3;
   title: string;

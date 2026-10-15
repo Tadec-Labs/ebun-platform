@@ -22,6 +22,7 @@ const KIND_LABEL: Record<AttentionItem["kind"], string> = {
   approval: "Approval",
   partner_details: "Partner",
   refund: "Refund",
+  payout: "Payout",
 };
 
 /**

@@ -11,6 +11,7 @@ import { OrdersService } from '../orders/orders.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orchestrator.service';
 import { RefundsService } from '../refunds/refunds.service';
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 import { verifyPaystackSignature } from './paystack-signature.util';
 
@@ -28,6 +29,7 @@ export class PaystackWebhookService {
     private readonly config: ConfigService,
     private readonly fulfillment: FulfillmentOrchestratorService,
     private readonly refunds: RefundsService,
+    private readonly autoPayouts: AutoPayoutsService,
   ) {}
 
   async handle(
@@ -39,6 +41,17 @@ export class PaystackWebhookService {
 
     if (!verifyPaystackSignature(rawBody, signatureHeader, secretKey)) {
       throw new UnauthorizedException('Invalid Paystack webhook signature');
+    }
+
+    if (payload.event.startsWith('transfer.')) {
+      // An automatic vendor payout settling. Idempotent by design.
+      await this.autoPayouts.applyTransferEvent(
+        payload.event,
+        payload.data.reference,
+        payload.data.transfer_code,
+        payload.data.reason,
+      );
+      return;
     }
 
     if (payload.event.startsWith('refund.')) {

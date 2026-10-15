@@ -1,3 +1,4 @@
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -70,6 +71,7 @@ describe('RedemptionsService — collection by fallback code', () => {
         RedemptionsService,
         { provide: RedemptionsRepository, useValue: repository },
         { provide: OrdersService, useValue: ordersService },
+        { provide: AutoPayoutsService, useValue: { payVendorSoon: jest.fn() } },
       ],
     }).compile();
 

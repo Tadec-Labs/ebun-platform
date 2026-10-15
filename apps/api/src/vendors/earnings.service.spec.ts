@@ -92,3 +92,46 @@ describe('EarningsService.recordPayout', () => {
     expect(payouts.recordPayout).not.toHaveBeenCalled();
   });
 });
+
+describe('EarningsService with automatic payouts in flight', () => {
+  it('shows money on its way, and keeps it off the manual payment form', async () => {
+    const row = (
+      id: string,
+      over: Record<string, unknown> = {},
+    ): Record<string, unknown> => ({
+      id,
+      order_number: id,
+      vendor_payout_amount: 900000,
+      vendor_paid_at: null,
+      vendor_payout_id: null,
+      vendor_transfer_id: null,
+      updated_at: '2026-10-15T10:00:00.000Z',
+      gift_templates: { name: 'Cake' },
+      redemptions: { completed_at: '2026-10-15T10:00:00.000Z' },
+      ...over,
+    });
+    const payouts = {
+      listCollections: jest
+        .fn()
+        .mockResolvedValue([
+          row('o-1', { vendor_transfer_id: 'tr-1' }),
+          row('o-2'),
+        ]),
+      listPayouts: jest.fn().mockResolvedValue([]),
+    };
+    const sut = new EarningsService(
+      payouts as never,
+      { findById: jest.fn().mockResolvedValue({ id: 'v-1' }) } as never,
+      { record: jest.fn() } as never,
+    );
+
+    const ops = await sut.forOps('v-1');
+    expect(ops.owedNow).toBe(1800000);
+    expect(ops.onItsWay).toBe(900000);
+    expect(ops.unpaidOrderIds).toEqual(['o-2']);
+
+    const vendor = await sut.forVendor('v-1');
+    expect(vendor).toMatchObject({ owedNow: 1800000, onItsWay: 900000 });
+    expect('unpaidOrderIds' in vendor).toBe(false);
+  });
+});

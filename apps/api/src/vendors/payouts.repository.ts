@@ -9,6 +9,8 @@ export interface CollectionRow {
   vendor_payout_amount: number; // kobo
   vendor_paid_at: string | null;
   vendor_payout_id: string | null;
+  /** Set while an automatic transfer is paying for this one. */
+  vendor_transfer_id?: string | null;
   updated_at: string;
   gift_templates: { name: string } | null;
   // orders.id is unique on redemptions, so PostgREST may embed this as an
@@ -36,7 +38,7 @@ export interface PayoutRow {
 }
 
 const COLLECTION_COLUMNS =
-  'id, order_number, vendor_payout_amount, vendor_paid_at, vendor_payout_id, updated_at, gift_templates!gift_template_id(name), redemptions(completed_at), gift_fulfillments(delivered_at)';
+  'id, order_number, vendor_payout_amount, vendor_paid_at, vendor_payout_id, vendor_transfer_id, updated_at, gift_templates!gift_template_id(name), redemptions(completed_at), gift_fulfillments(delivered_at)';
 
 const PAYOUT_COLUMNS =
   'id, net_payout, orders_count, paid_at, payment_method, payment_ref, notes';

@@ -1,3 +1,4 @@
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import { Test } from '@nestjs/testing';
 import {
   BadRequestException,
@@ -131,6 +132,7 @@ describe('DeliveriesService', () => {
   let audit: { record: jest.Mock };
   let alerts: { newDelivery: jest.Mock };
 
+  let autoPayouts: { payVendorSoon: jest.Mock };
   beforeEach(async () => {
     repo = {
       findOrder: jest.fn().mockResolvedValue(order()),
@@ -152,6 +154,7 @@ describe('DeliveriesService', () => {
     orders = { transitionNormal: jest.fn().mockResolvedValue(undefined) };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
     alerts = { newDelivery: jest.fn().mockResolvedValue(undefined) };
+    autoPayouts = { payVendorSoon: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -159,6 +162,7 @@ describe('DeliveriesService', () => {
         { provide: DeliveriesRepository, useValue: repo },
         { provide: OrdersService, useValue: orders },
         { provide: AuditService, useValue: audit },
+        { provide: AutoPayoutsService, useValue: autoPayouts },
         { provide: VendorAlertsService, useValue: alerts },
       ],
     }).compile();
@@ -288,6 +292,8 @@ describe('DeliveriesService', () => {
         'vendor-1',
         2_150_000,
       );
+      // Credited: the automatic payout is kicked off.
+      expect(autoPayouts.payVendorSoon).toHaveBeenCalledWith('vendor-1');
     });
 
     it("hides another vendor's delivery behind the same 404 as a missing one", async () => {

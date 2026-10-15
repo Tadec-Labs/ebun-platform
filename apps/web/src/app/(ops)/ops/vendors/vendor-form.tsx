@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { formatNaira } from "@/lib/format-money";
 import { saveVendorAction } from "../actions";
-import { type Vendor, VENDOR_CATEGORIES } from "@/lib/ops/types";
+import { type BankOption, type Vendor, VENDOR_CATEGORIES } from "@/lib/ops/types";
 
 export interface CatalogGift {
   id: string;
@@ -51,9 +51,12 @@ export function VendorForm({
   vendor,
   backupOptions,
   catalog = [],
+  banks = [],
 }: {
   vendor?: Vendor;
   backupOptions: { id: string; name: string }[];
+  /** Paystack's bank list. Picking from it gives the code automatic payouts need. */
+  banks?: BankOption[];
   /** Create only: gifts that can be ticked on the same screen. */
   catalog?: CatalogGift[];
 }) {
@@ -181,9 +184,7 @@ export function VendorForm({
           More details <span className="font-normal text-zinc-500">— bank, coverage, backup, notes (optional now)</span>
         </summary>
         <div className="grid gap-4 border-t border-zinc-100 p-5 sm:grid-cols-2">
-          <Field label="Bank name">
-            <input name="bankName" defaultValue={vendor?.bankName ?? ""} className={input} />
-          </Field>
+          <BankField vendor={vendor} banks={banks} />
           <Field label="Account number" hint="10-digit NUBAN. Needed before their first payout.">
             <input
               name="accountNumber"
@@ -357,5 +358,55 @@ function GiftChooser({ catalog, sharePct }: { catalog: CatalogGift[]; sharePct: 
         Ticked gifts can be handed over at this vendor&rsquo;s counter and show recipients where to collect. You can change these later.
       </p>
     </fieldset>
+  );
+}
+
+/**
+ * The bank, picked from Paystack's list so the partner can be paid
+ * automatically. Sends both the code and the name. Falls back to typing
+ * the name when the list can't be loaded (they're then paid by hand).
+ */
+function BankField({ vendor, banks }: { vendor?: Vendor; banks: BankOption[] }) {
+  const [code, setCode] = useState(vendor?.bankCode ?? "");
+  const [name, setName] = useState(vendor?.bankName ?? "");
+
+  if (banks.length === 0) {
+    return (
+      <Field label="Bank name" hint="Couldn't load the bank list — typed banks are paid by hand.">
+        <input name="bankName" value={name} onChange={(e) => setName(e.target.value)} className={input} />
+      </Field>
+    );
+  }
+
+  return (
+    <Field
+      label="Bank"
+      hint={
+        code
+          ? "Paid automatically after each handover (when switched on)."
+          : vendor?.bankName
+            ? `On file as "${vendor.bankName}". Pick it from the list to pay them automatically.`
+            : "Pick from the list so they can be paid automatically."
+      }
+    >
+      <select
+        name="bankCode"
+        value={code}
+        onChange={(e) => {
+          setCode(e.target.value);
+          const picked = banks.find((b) => b.code === e.target.value);
+          if (picked) setName(picked.name);
+        }}
+        className={input}
+      >
+        <option value="">Choose a bank…</option>
+        {banks.map((bank) => (
+          <option key={`${bank.code}-${bank.name}`} value={bank.code}>
+            {bank.name}
+          </option>
+        ))}
+      </select>
+      <input type="hidden" name="bankName" value={name} />
+    </Field>
   );
 }

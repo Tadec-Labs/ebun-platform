@@ -24,6 +24,8 @@ export interface CollectionView {
   collectedAt: string;
   paid: boolean;
   paidAt: string | null;
+  /** Sent automatically; waiting for the bank to confirm. */
+  onItsWay: boolean;
 }
 
 export interface PaymentView {
@@ -43,6 +45,8 @@ export interface PaymentView {
 export interface EarningsView {
   /** kobo — collected but not yet paid. */
   owedNow: number;
+  /** kobo — part of owedNow already sent automatically and on its way to their bank. */
+  onItsWay: number;
   /** kobo — everything paid out so far. */
   paidTotal: number;
   collections: CollectionView[];
@@ -73,9 +77,9 @@ export class EarningsService {
 
   async forVendor(vendorId: string): Promise<EarningsView> {
     // Built field by field so nothing ops-only rides along by accident.
-    const { owedNow, paidTotal, collections, payments } =
+    const { owedNow, onItsWay, paidTotal, collections, payments } =
       await this.build(vendorId);
-    return { owedNow, paidTotal, collections, payments };
+    return { owedNow, onItsWay, paidTotal, collections, payments };
   }
 
   async forOps(vendorId: string): Promise<OpsEarningsView> {
@@ -151,10 +155,13 @@ export class EarningsService {
 
     return {
       owedNow: sum(unpaid.map((c) => c.amount)),
+      onItsWay: sum(unpaid.filter((c) => c.onItsWay).map((c) => c.amount)),
       paidTotal: sum(collections.filter((c) => c.paid).map((c) => c.amount)),
       collections,
       payments: payoutRows.map(toPaymentView),
-      unpaidOrderIds: unpaid.map((c) => c.orderId),
+      // Ones an automatic transfer is already paying can't be recorded by
+      // hand too (the database refuses; this keeps them off the form).
+      unpaidOrderIds: unpaid.filter((c) => !c.onItsWay).map((c) => c.orderId),
     };
   }
 }
@@ -175,6 +182,7 @@ function toCollectionView(row: CollectionRow): CollectionView {
       redemption?.completed_at ?? fulfillment?.delivered_at ?? row.updated_at,
     paid: row.vendor_paid_at !== null,
     paidAt: row.vendor_paid_at,
+    onItsWay: row.vendor_paid_at === null && Boolean(row.vendor_transfer_id),
   };
 }
 

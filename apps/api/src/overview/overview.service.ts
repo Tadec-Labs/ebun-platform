@@ -4,6 +4,7 @@ import { DELIVERY_STAGE_TITLE } from './overview.copy';
 import { OrdersService } from '../orders/orders.service';
 import { STUCK_FULFILLMENT_MINUTES } from '../jobs/jobs.config';
 import { OverviewRepository } from './overview.repository';
+import { AutoPayoutsRepository } from '../payouts/auto-payouts.repository';
 
 /** Something on /ops that needs a person, most urgent first. */
 export interface AttentionItem {
@@ -13,7 +14,8 @@ export interface AttentionItem {
     | 'pickup'
     | 'approval'
     | 'partner_details'
-    | 'refund';
+    | 'refund'
+    | 'payout';
   /** 1 = money taken and nothing happening; 3 = tidy-up. */
   urgency: 1 | 2 | 3;
   title: string;
@@ -80,6 +82,7 @@ export class OverviewService {
     private readonly repository: OverviewRepository,
     private readonly deliveries: DeliveriesService,
     private readonly orders: OrdersService,
+    private readonly transfers: AutoPayoutsRepository,
   ) {}
 
   async overview(): Promise<OpsOverview> {
@@ -95,6 +98,7 @@ export class OverviewService {
       approvals,
       priceRequests,
       stuckRefunds,
+      failedPayouts,
       readiness,
       recent,
     ] = await Promise.all([
@@ -119,6 +123,10 @@ export class OverviewService {
       settle(this.repository.awaitingApprovalByVendor(), []),
       settle(this.repository.priceRequestsByVendor(), []),
       settle(this.repository.refundsNeedingAttention(), []),
+      settle(
+        this.transfers.recentFailures(new Date(now - 7 * 24 * 60 * 60_000)),
+        [],
+      ),
       settle(this.repository.vendorReadiness(), []),
       settle(this.repository.recentOrders(8), []),
     ]);
@@ -135,6 +143,19 @@ export class OverviewService {
         detail: refund.failure_reason,
         href: `/ops/orders/${refund.order_id}`,
         since: refund.failed_at ?? refund.created_at,
+      });
+    }
+
+    // An automatic payout that didn't go through: a partner is waiting
+    // for money they were promised within minutes.
+    for (const transfer of failedPayouts) {
+      attention.push({
+        kind: 'payout',
+        urgency: 1,
+        title: `Automatic payout to ${transfer.vendors?.business_name ?? 'a partner'} didn't go through`,
+        detail: transfer.failure_reason,
+        href: `/ops/vendors/${transfer.vendor_id}#earnings`,
+        since: transfer.updated_at,
       });
     }
 

@@ -1,3 +1,4 @@
+import { AutoPayoutsRepository } from '../payouts/auto-payouts.repository';
 import { Test } from '@nestjs/testing';
 import { DeliveriesService } from '../deliveries/deliveries.service';
 import { OrdersService } from '../orders/orders.service';
@@ -123,6 +124,20 @@ describe('OverviewService', () => {
         { provide: OverviewRepository, useValue: repo },
         { provide: DeliveriesService, useValue: deliveries },
         { provide: OrdersService, useValue: orders },
+        {
+          provide: AutoPayoutsRepository,
+          useValue: {
+            recentFailures: jest.fn().mockResolvedValue([
+              {
+                vendor_id: 'v6',
+                status: 'failed',
+                failure_reason: 'Paystack: Your balance is not enough',
+                updated_at: '2026-10-15T09:00:00Z',
+                vendors: { business_name: 'Spa Place' },
+              },
+            ]),
+          },
+        },
       ],
     }).compile();
     sut = moduleRef.get(OverviewService);
@@ -133,6 +148,7 @@ describe('OverviewService', () => {
 
     expect(result.attention.map((a) => a.kind)).toEqual([
       'refund',
+      'payout',
       'stuck_order',
       'delivery',
       'approval',
@@ -143,13 +159,16 @@ describe('OverviewService', () => {
     expect(result.attention[0].title).toBe(
       "Refund for EBN-0099 didn't go through",
     );
-    expect(result.attention[5].title).toBe(
+    expect(result.attention[1].title).toBe(
+      "Automatic payout to Spa Place didn't go through",
+    );
+    expect(result.attention[6].title).toBe(
       'Spa Place asked to change 2 prices',
     );
-    expect(result.attention[6].title).toBe('No Bank has no bank details');
+    expect(result.attention[7].title).toBe('No Bank has no bank details');
     // The sidebar badge counts what needs acting on, not the tidy-ups.
     expect(result.counts).toEqual({
-      attention: 6,
+      attention: 7,
       deliveries: 1,
       approvals: 2,
       payouts: 2,

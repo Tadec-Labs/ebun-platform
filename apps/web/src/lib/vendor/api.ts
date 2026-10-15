@@ -62,9 +62,17 @@ export interface VendorDelivery {
   codeLocked: boolean;
 }
 
+/** A bank from Paystack's list. Picking one (not typing it) is what lets SendEbun pay automatically. */
+export interface BankOption {
+  name: string;
+  code: string;
+}
+
 /** Mirrors the API's EarningsView. Amounts in kobo. */
 export interface VendorEarnings {
   owedNow: number;
+  /** Part of owedNow already sent automatically, on its way to their bank. */
+  onItsWay: number;
   paidTotal: number;
   collections: {
     orderId: string;
@@ -74,6 +82,7 @@ export interface VendorEarnings {
     collectedAt: string;
     paid: boolean;
     paidAt: string | null;
+    onItsWay: boolean;
   }[];
   payments: {
     id: string;

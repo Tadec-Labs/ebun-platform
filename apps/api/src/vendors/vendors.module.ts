@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AlertsModule } from '../alerts/alerts.module';
+import { PayoutsModule } from '../payouts/payouts.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { GiftsModule } from '../gifts/gifts.module';
@@ -20,6 +21,7 @@ import { PayoutsRepository } from './payouts.repository';
   imports: [
     AlertsModule,
     AuthModule,
+    PayoutsModule,
     AuditModule,
     GiftsModule,
     OrdersModule,

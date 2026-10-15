@@ -1,3 +1,4 @@
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import { Test } from '@nestjs/testing';
 import { OrderStatus } from '@ebun/types';
 import { RedemptionsService } from './redemptions.service';
@@ -16,6 +17,7 @@ describe('RedemptionsService', () => {
   };
   let ordersService: { transitionNormal: jest.Mock };
 
+  let autoPayouts: { payVendorSoon: jest.Mock };
   beforeEach(async () => {
     repository = {
       createPendingOrFetch: jest.fn(),
@@ -28,12 +30,14 @@ describe('RedemptionsService', () => {
     ordersService = {
       transitionNormal: jest.fn().mockResolvedValue(undefined),
     };
+    autoPayouts = { payVendorSoon: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         RedemptionsService,
         { provide: RedemptionsRepository, useValue: repository },
         { provide: OrdersService, useValue: ordersService },
+        { provide: AutoPayoutsService, useValue: autoPayouts },
       ],
     }).compile();
 

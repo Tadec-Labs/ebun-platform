@@ -1,14 +1,18 @@
 import Link from "next/link";
-import { opsFetch } from "@/lib/ops/api";
-import type { GiftTemplate, VendorSummary } from "@/lib/ops/types";
+import { OpsApiError, opsFetch } from "@/lib/ops/api";
+import type { BankOption, GiftTemplate, VendorSummary } from "@/lib/ops/types";
 import { VendorForm } from "../vendor-form";
 
 export default async function NewVendorPage() {
-  const [vendors, catalog] = await Promise.all([
+  const [vendors, catalog, banks] = await Promise.all([
     opsFetch<VendorSummary[]>("/ops/vendors"),
     // The ops catalogue, so gifts not yet on sale can be linked too —
     // see the same note on the vendor detail page.
     opsFetch<GiftTemplate[]>("/ops/gifts"),
+    opsFetch<BankOption[]>("/ops/banks").catch((error: unknown) => {
+      if (error instanceof OpsApiError) return [] as BankOption[];
+      throw error;
+    }),
   ]);
 
   return (
@@ -22,6 +26,7 @@ export default async function NewVendorPage() {
         &ldquo;More details&rdquo;.
       </p>
       <VendorForm
+        banks={banks}
         backupOptions={vendors.map((v) => ({ id: v.id, name: v.businessName }))}
         catalog={catalog
           .filter((g) => g.deliveryType === "digital_voucher")

@@ -53,6 +53,16 @@ class PaystackChargeDataDto {
   @IsOptional()
   @IsString()
   transaction_reference?: string;
+
+  /** transfer.* events: Paystack's id for a payout we sent. */
+  @IsOptional()
+  @IsString()
+  transfer_code?: string;
+
+  /** transfer.failed: why, when Paystack says. */
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 export class PaystackWebhookDto {

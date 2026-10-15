@@ -20,6 +20,10 @@ export interface VendorRow {
   bank_name: string | null;
   account_number: string | null;
   account_name: string | null;
+  /** Paystack bank code; set by picking the bank from the list. */
+  bank_code?: string | null;
+  /** Paystack transfer recipient for automatic payouts; cleared when bank details change. */
+  paystack_recipient_code?: string | null;
   active: boolean;
   verified: boolean;
   rating: number | null;

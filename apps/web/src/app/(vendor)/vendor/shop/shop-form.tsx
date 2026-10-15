@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { VendorProfile } from "@/lib/vendor/api";
+import type { BankOption, VendorProfile } from "@/lib/vendor/api";
 import { saveProfileAction } from "../actions";
 
 const input =
@@ -14,7 +14,7 @@ const input =
  * "change where the money goes" is the first thing someone holding a lost
  * one would try.
  */
-export function ShopForm({ initial }: { initial: VendorProfile }) {
+export function ShopForm({ initial, banks }: { initial: VendorProfile; banks: BankOption[] }) {
   const [profile, setProfile] = useState(initial);
   const [ownerName, setOwnerName] = useState(initial.ownerName);
   const [pickupAddress, setPickupAddress] = useState(initial.pickupAddress ?? "");
@@ -22,6 +22,7 @@ export function ShopForm({ initial }: { initial: VendorProfile }) {
   const [email, setEmail] = useState(initial.email ?? "");
   const [backupPhone, setBackupPhone] = useState(initial.backupPhone ?? "");
   const [bankName, setBankName] = useState("");
+  const [bankCode, setBankCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountName, setAccountName] = useState("");
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -42,7 +43,7 @@ export function ShopForm({ initial }: { initial: VendorProfile }) {
             pickupHours,
             email,
             backupPhone,
-            ...(settingBank ? { bankName, accountNumber, accountName } : {}),
+            ...(settingBank ? { bankName, bankCode: bankCode || undefined, accountNumber, accountName } : {}),
           });
           if (result.ok) {
             setProfile(result.profile);
@@ -143,7 +144,26 @@ export function ShopForm({ initial }: { initial: VendorProfile }) {
           <>
             <label className="flex flex-col gap-2">
               <span className="text-base">Bank</span>
-              <input value={bankName} onChange={(e) => setBankName(e.target.value)} maxLength={120} placeholder="GTBank" className={input} />
+              {banks.length > 0 ? (
+                // From Paystack's list, so SendEbun can pay you automatically.
+                <select
+                  value={bankCode}
+                  onChange={(e) => {
+                    setBankCode(e.target.value);
+                    setBankName(banks.find((b) => b.code === e.target.value)?.name ?? "");
+                  }}
+                  className={input}
+                >
+                  <option value="">Choose your bank…</option>
+                  {banks.map((bank) => (
+                    <option key={`${bank.code}-${bank.name}`} value={bank.code}>
+                      {bank.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input value={bankName} onChange={(e) => setBankName(e.target.value)} maxLength={120} placeholder="GTBank" className={input} />
+              )}
             </label>
             <label className="flex flex-col gap-2">
               <span className="text-base">Account number</span>

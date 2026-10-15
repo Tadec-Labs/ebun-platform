@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { VendorApiError, vendorFetch, type VendorProfile } from "@/lib/vendor/api";
+import { VendorApiError, vendorFetch, type BankOption, type VendorProfile } from "@/lib/vendor/api";
 import { ShopForm } from "./shop-form";
 import { VendorNav } from "../vendor-nav";
 
@@ -15,8 +15,13 @@ export const metadata: Metadata = {
  */
 export default async function VendorShopPage() {
   let profile: VendorProfile;
+  let banks: BankOption[] = [];
   try {
-    profile = await vendorFetch<VendorProfile>("/vendor/profile");
+    [profile, banks] = await Promise.all([
+      vendorFetch<VendorProfile>("/vendor/profile"),
+      // Only needed to add bank details; the page works without it (typed bank name).
+      vendorFetch<BankOption[]>("/vendor/banks").catch(() => []),
+    ]);
   } catch (error) {
     if (error instanceof VendorApiError) {
       return (
@@ -44,7 +49,7 @@ export default async function VendorShopPage() {
         </div>
         <h1 className="mt-1 text-3xl font-semibold">Your shop</h1>
       </header>
-      <ShopForm initial={profile} />
+      <ShopForm initial={profile} banks={banks} />
     </div>
   );
 }

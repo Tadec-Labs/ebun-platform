@@ -7,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { StaffContext } from '../auth/staff.guard';
 import { GiftsService } from '../gifts/gifts.service';
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import {
   CreateVendorDto,
   UpdateVendorDto,
@@ -62,8 +63,16 @@ export interface VendorView {
   /** The vendor's SHARE of gift value (0.90 = vendor gets 90%, SendEbun's commission is 10%) — despite the column name. */
   commissionRate: number;
   bankName: string | null;
+  /** Paystack bank code — set by picking the bank from the list. */
+  bankCode: string | null;
   accountNumber: string | null;
   accountName: string | null;
+  /**
+   * Whether this partner is paid automatically after each handover
+   * (AUTO_PAYOUTS on, bank picked from the list, account complete).
+   * Otherwise they stay on the manual Payouts queue.
+   */
+  autoPayouts: { on: boolean; reason: string | null };
   active: boolean;
   verified: boolean;
   totalOrders: number;
@@ -139,6 +148,7 @@ const FIELD_MAP: Record<string, string> = {
   deliveryZones: 'delivery_zones',
   commissionRate: 'commission_rate',
   bankName: 'bank_name',
+  bankCode: 'bank_code',
   accountNumber: 'account_number',
   accountName: 'account_name',
   responseTimeoutMinutes: 'response_timeout_minutes',
@@ -191,7 +201,7 @@ function toSummaryView(
   };
 }
 
-function toView(row: VendorRow): VendorView {
+function toView(row: VendorRow, autoPayoutsEnabled: boolean): VendorView {
   return {
     id: row.id,
     portalToken: row.portal_token,
@@ -207,6 +217,8 @@ function toView(row: VendorRow): VendorView {
     deliveryZones: row.delivery_zones ?? [],
     commissionRate: row.commission_rate,
     bankName: row.bank_name,
+    bankCode: row.bank_code ?? null,
+    autoPayouts: autoPayoutStatus(row, autoPayoutsEnabled),
     accountNumber: row.account_number,
     accountName: row.account_name,
     active: row.active,
@@ -268,6 +280,28 @@ const PRICE_CHANGE_REFUSAL: Record<
     ),
 };
 
+function autoPayoutStatus(
+  row: VendorRow,
+  enabled: boolean,
+): VendorView['autoPayouts'] {
+  if (!enabled) {
+    return {
+      on: false,
+      reason: 'Automatic payouts are switched off (AUTO_PAYOUTS).',
+    };
+  }
+  if (!row.account_number || !row.account_name) {
+    return { on: false, reason: 'No bank details yet.' };
+  }
+  if (!row.bank_code) {
+    return {
+      on: false,
+      reason: 'Pick their bank from the list to pay them automatically.',
+    };
+  }
+  return { on: true, reason: null };
+}
+
 const formatNaira = (kobo: number) =>
   `₦${(kobo / 100).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
 
@@ -287,6 +321,7 @@ export class VendorsService {
     private readonly repository: VendorsRepository,
     private readonly gifts: GiftsService,
     private readonly audit: AuditService,
+    private readonly autoPayouts: AutoPayoutsService,
   ) {}
 
   async list(): Promise<VendorSummaryView[]> {
@@ -307,7 +342,7 @@ export class VendorsService {
   }
 
   async get(id: string): Promise<VendorView> {
-    return toView(await this.requireVendor(id));
+    return toView(await this.requireVendor(id), this.autoPayouts.enabled());
   }
 
   async create(
@@ -331,7 +366,7 @@ export class VendorsService {
       ...meta,
     });
 
-    return toView(row);
+    return toView(row, this.autoPayouts.enabled());
   }
 
   /**
@@ -392,11 +427,22 @@ export class VendorsService {
       (column) => !sameValue(current[column], values[column]),
     );
     if (changedColumns.length === 0) {
-      return toView(existing); // nothing actually changed — no write, no audit noise
+      return toView(existing, this.autoPayouts.enabled()); // nothing actually changed — no write, no audit noise
     }
 
     const patch: Record<string, unknown> = {};
     for (const column of changedColumns) patch[column] = values[column];
+    // New bank details need a new Paystack recipient: the old one would
+    // pay the old account.
+    if (
+      changedColumns.some((column) =>
+        ['bank_name', 'bank_code', 'account_number', 'account_name'].includes(
+          column,
+        ),
+      )
+    ) {
+      patch.paystack_recipient_code = null;
+    }
 
     const updated = await this.repository.update(id, patch);
     if (!updated) {
@@ -424,7 +470,7 @@ export class VendorsService {
       ...meta,
     });
 
-    return toView(updated);
+    return toView(updated, this.autoPayouts.enabled());
   }
 
   /**

@@ -203,6 +203,8 @@ export type VendorProfileInput = {
   email: string;
   backupPhone: string;
   bankName?: string;
+  /** Paystack bank code, when picked from the list. */
+  bankCode?: string;
   accountNumber?: string;
   accountName?: string;
 };
@@ -221,6 +223,7 @@ export async function saveProfileAction(
   };
   if (input.accountNumber !== undefined) {
     body.bankName = (input.bankName ?? "").trim();
+    if (input.bankCode) body.bankCode = input.bankCode;
     body.accountNumber = input.accountNumber.replace(/\s/g, "");
     body.accountName = (input.accountName ?? "").trim();
   }

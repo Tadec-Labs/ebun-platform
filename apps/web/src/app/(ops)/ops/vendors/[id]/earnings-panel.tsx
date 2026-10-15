@@ -16,7 +16,7 @@ export function EarningsPanel({
   vendor,
   earnings,
 }: {
-  vendor: Pick<Vendor, "id" | "bankName" | "accountNumber" | "accountName">;
+  vendor: Pick<Vendor, "id" | "bankName" | "accountNumber" | "accountName" | "autoPayouts">;
   earnings: VendorEarnings;
 }) {
   const [paymentRef, setPaymentRef] = useState("");
@@ -28,6 +28,9 @@ export function EarningsPanel({
   const [ask, askDialog] = useConfirm();
 
   const unpaid = earnings.collections.filter((c) => !c.paid);
+  // What can still be paid by hand: not what an automatic transfer is already sending.
+  const payable = unpaid.filter((c) => !c.onItsWay);
+  const payableTotal = earnings.owedNow - earnings.onItsWay;
   const hasBank = Boolean(vendor.accountNumber);
 
   return (
@@ -36,6 +39,12 @@ export function EarningsPanel({
       <p className="mb-4 text-zinc-600">
         Owed now: <span className="font-semibold text-zinc-900">{formatNaira(earnings.owedNow)}</span> across{" "}
         {unpaid.length} {unpaid.length === 1 ? "collection" : "collections"} · Paid so far: {formatNaira(earnings.paidTotal)}
+      </p>
+      <p className={`mb-4 text-sm ${vendor.autoPayouts.on ? "text-emerald-700" : "text-zinc-500"}`}>
+        {vendor.autoPayouts.on
+          ? "Paid automatically after each handover."
+          : `Paid by hand. ${vendor.autoPayouts.reason ?? ""}`}
+        {earnings.onItsWay > 0 && ` ${formatNaira(earnings.onItsWay)} is on its way to them now.`}
       </p>
 
       {unpaid.length > 0 && (
@@ -55,7 +64,10 @@ export function EarningsPanel({
                   <td className="px-4 py-2.5">{formatDay(c.collectedAt)}</td>
                   <td className="px-4 py-2.5 font-mono text-xs">{c.orderNumber ?? "—"}</td>
                   <td className="px-4 py-2.5">{c.giftName}</td>
-                  <td className="px-4 py-2.5 text-right">{formatNaira(c.amount)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    {formatNaira(c.amount)}
+                    {c.onItsWay && <span className="block text-xs text-emerald-700">on its way</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -63,14 +75,14 @@ export function EarningsPanel({
         </div>
       )}
 
-      {unpaid.length > 0 &&
+      {payable.length > 0 &&
         (hasBank ? (
           <form
             className="grid gap-4 rounded border border-zinc-200 bg-white p-5 sm:grid-cols-2"
             onSubmit={async (event) => {
               event.preventDefault();
               const ok = await ask({
-                title: `Record ${formatNaira(earnings.owedNow)} paid?`,
+                title: `Record ${formatNaira(payableTotal)} paid?`,
                 body: "Only after the transfer has gone through in your bank app. The partner sees this payment, with your reference, on their Earnings screen.",
                 confirmLabel: "Record payment",
               });
@@ -96,7 +108,7 @@ export function EarningsPanel({
             }}
           >
             <div className="sm:col-span-2 rounded bg-zinc-50 px-3 py-2 text-zinc-700">
-              Transfer <span className="font-semibold">{formatNaira(earnings.owedNow)}</span> to{" "}
+              Transfer <span className="font-semibold">{formatNaira(payableTotal)}</span> to{" "}
               {vendor.bankName ?? "their bank"} · {vendor.accountNumber} · {vendor.accountName ?? ""}, then record it here.
             </div>
             <label className="flex flex-col gap-1">
@@ -136,7 +148,7 @@ export function EarningsPanel({
               disabled={pending}
               className="self-start rounded bg-zinc-900 px-4 py-2 font-medium text-white disabled:opacity-50 sm:col-span-2"
             >
-              {pending ? "Recording…" : `Record payment of ${formatNaira(earnings.owedNow)}`}
+              {pending ? "Recording…" : `Record payment of ${formatNaira(payableTotal)}`}
             </button>
           </form>
         ) : (

@@ -8,6 +8,7 @@ import {
 import { FulfillmentType, OrderStatus } from '@ebun/types';
 import { AuditService } from '../audit/audit.service';
 import { VendorAlertsService } from '../alerts/vendor-alerts.service';
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import { OrdersService } from '../orders/orders.service';
 import type { TransitionActor } from '../orders/orders.service';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
@@ -152,6 +153,7 @@ export class DeliveriesService {
     private readonly orders: OrdersService,
     private readonly audit: AuditService,
     private readonly alerts: VendorAlertsService,
+    private readonly autoPayouts: AutoPayoutsService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -432,6 +434,8 @@ export class DeliveriesService {
         vendorId,
         price + (order.delivery_fee ?? 0),
       );
+      // Delivery proven and credited: pay them now (no-op unless AUTO_PAYOUTS).
+      this.autoPayouts.payVendorSoon(vendorId);
     }
 
     await this.audit.record({

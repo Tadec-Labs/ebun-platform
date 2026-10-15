@@ -1,3 +1,4 @@
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import {
   BadRequestException,
   Injectable,
@@ -75,6 +76,7 @@ export class RedemptionsService {
   constructor(
     private readonly repository: RedemptionsRepository,
     private readonly ordersService: OrdersService,
+    private readonly autoPayouts: AutoPayoutsService,
   ) {}
 
   /** Read-only lookup for GET /reveal/:token — never creates anything, unlike createPendingForOrder. Null if no redemption exists yet for this order. */
@@ -357,6 +359,8 @@ export class RedemptionsService {
           params.vendorId,
           vendorPayoutAmount,
         );
+        // Handed over and credited: pay them now (no-op unless AUTO_PAYOUTS).
+        this.autoPayouts.payVendorSoon(params.vendorId);
       } catch (err) {
         this.logger.error(
           `Redemption ${redemption.id} completed, but crediting vendor ${params.vendorId} ` +

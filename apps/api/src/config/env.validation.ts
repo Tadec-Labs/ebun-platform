@@ -1,5 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import {
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -135,6 +136,14 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   R2_MEDIA_BUCKET?: string;
+
+  // "true" pays partners automatically through Paystack Transfers, minutes
+  // after each handover (payouts/auto-payouts.service.ts). Needs Paystack
+  // live mode with Transfers enabled, OTP for transfers turned off, and
+  // money in the Paystack balance. Anything else: manual payouts only.
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  AUTO_PAYOUTS?: string;
 }
 
 export function validateEnv(

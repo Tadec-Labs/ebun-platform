@@ -17,6 +17,7 @@ import {
   VendorsRepository,
 } from './vendors.repository';
 import { VendorsService } from './vendors.service';
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 
 const STAFF: StaffContext = {
   userId: 'staff-1',
@@ -99,6 +100,7 @@ describe('VendorsService', () => {
       repository as unknown as VendorsRepository,
       gifts as unknown as GiftsService,
       audit as unknown as AuditService,
+      { enabled: () => true } as unknown as AutoPayoutsService,
     );
   });
 
@@ -204,6 +206,51 @@ describe('VendorsService', () => {
           META,
         ),
       ).rejects.toThrow(/own backup/);
+    });
+
+    it('drops the Paystack recipient when bank details change, so the old account is never paid', async () => {
+      repository.findById.mockResolvedValue(
+        makeVendor({ bank_code: '058', paystack_recipient_code: 'RCP_old' }),
+      );
+      repository.update.mockResolvedValue(
+        makeVendor({ bank_code: '044', paystack_recipient_code: null }),
+      );
+
+      const view = await sut.update(
+        'vendor-1',
+        withFields(UpdateVendorDto, {
+          bankCode: '044',
+          bankName: 'Access Bank',
+        }),
+        STAFF,
+        META,
+      );
+
+      expect(repository.update).toHaveBeenCalledWith(
+        'vendor-1',
+        expect.objectContaining({
+          bank_code: '044',
+          bank_name: 'Access Bank',
+          paystack_recipient_code: null,
+        }),
+      );
+      expect(view.autoPayouts).toEqual({ on: true, reason: null });
+    });
+
+    it('keeps the Paystack recipient when nothing about the bank changed', async () => {
+      repository.findById.mockResolvedValue(makeVendor());
+      repository.update.mockResolvedValue(makeVendor({ notes: 'x' }));
+
+      await sut.update(
+        'vendor-1',
+        withFields(UpdateVendorDto, { notes: 'x' }),
+        STAFF,
+        META,
+      );
+
+      expect(
+        (repository.update.mock.calls as unknown[][])[0][1],
+      ).not.toHaveProperty('paystack_recipient_code');
     });
 
     it('rejects an empty body', async () => {

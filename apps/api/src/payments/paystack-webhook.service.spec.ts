@@ -1,3 +1,4 @@
+import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import { createHmac } from 'crypto';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
@@ -42,9 +43,13 @@ describe('PaystackWebhookService', () => {
   let fulfillment: { start: jest.Mock };
   let refunds: { applyPaystackRefundEvent: jest.Mock };
 
+  let autoPayouts: { applyTransferEvent: jest.Mock };
   beforeEach(async () => {
     refunds = {
       applyPaystackRefundEvent: jest.fn().mockResolvedValue(undefined),
+    };
+    autoPayouts = {
+      applyTransferEvent: jest.fn().mockResolvedValue(undefined),
     };
     ordersService = {
       findByPaystackReference: jest.fn(),
@@ -65,6 +70,7 @@ describe('PaystackWebhookService', () => {
           useValue: fulfillment,
         },
         { provide: RefundsService, useValue: refunds },
+        { provide: AutoPayoutsService, useValue: autoPayouts },
       ],
     }).compile();
 
@@ -245,6 +251,24 @@ describe('PaystackWebhookService', () => {
       );
       expect(idempotency.claim).not.toHaveBeenCalled();
       expect(ordersService.transitionNormal).not.toHaveBeenCalled();
+    });
+
+    it('hands transfer.* events to automatic payouts, by our reference', async () => {
+      const body = {
+        event: 'transfer.success',
+        data: { reference: 'sep_abc', transfer_code: 'TRF_1', amount: 1800000 },
+      };
+      const { raw, signature } = signed(body);
+
+      await sut.handle(raw, signature, body);
+
+      expect(autoPayouts.applyTransferEvent).toHaveBeenCalledWith(
+        'transfer.success',
+        'sep_abc',
+        'TRF_1',
+        undefined,
+      );
+      expect(idempotency.claim).not.toHaveBeenCalled();
     });
 
     it('still checks the signature first', async () => {

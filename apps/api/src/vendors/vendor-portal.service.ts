@@ -648,6 +648,8 @@ export class VendorPortalService {
       values.bank_name = dto.bankName;
       values.account_number = dto.accountNumber;
       values.account_name = dto.accountName;
+      // Picked from Paystack's list: lets SendEbun pay them automatically.
+      if (dto.bankCode) values.bank_code = dto.bankCode;
     }
 
     if (Object.keys(values).length === 0) return toProfileView(row);
