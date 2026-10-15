@@ -35,6 +35,15 @@ describe('OverviewService', () => {
       awaitingApprovalByVendor: jest
         .fn()
         .mockResolvedValue([{ vendorId: 'v3', name: 'Cake Co', count: 2 }]),
+      refundsNeedingAttention: jest.fn().mockResolvedValue([
+        {
+          order_id: 'o9',
+          failure_reason: 'Paystack could not complete the refund',
+          failed_at: '2026-10-15T09:00:00Z',
+          created_at: '2026-10-15T08:00:00Z',
+          orders: { order_number: 'EBN-0099' },
+        },
+      ]),
       // Cake Co again (one partner, counted once) and a second partner.
       priceRequestsByVendor: jest.fn().mockResolvedValue([
         { vendorId: 'v3', name: 'Cake Co', count: 1 },
@@ -123,6 +132,7 @@ describe('OverviewService', () => {
     const result = await sut.overview();
 
     expect(result.attention.map((a) => a.kind)).toEqual([
+      'refund',
       'stuck_order',
       'delivery',
       'approval',
@@ -130,13 +140,16 @@ describe('OverviewService', () => {
       'approval',
       'partner_details',
     ]);
-    expect(result.attention[4].title).toBe(
+    expect(result.attention[0].title).toBe(
+      "Refund for EBN-0099 didn't go through",
+    );
+    expect(result.attention[5].title).toBe(
       'Spa Place asked to change 2 prices',
     );
-    expect(result.attention[5].title).toBe('No Bank has no bank details');
+    expect(result.attention[6].title).toBe('No Bank has no bank details');
     // The sidebar badge counts what needs acting on, not the tidy-ups.
     expect(result.counts).toEqual({
-      attention: 5,
+      attention: 6,
       deliveries: 1,
       approvals: 2,
       payouts: 2,

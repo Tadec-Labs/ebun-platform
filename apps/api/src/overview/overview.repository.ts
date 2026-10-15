@@ -172,6 +172,56 @@ export class OverviewRepository {
     return [...byVendor].map(([vendorId, v]) => ({ vendorId, ...v }));
   }
 
+  /** Refunds Paystack failed, or is holding until someone acts. */
+  async refundsNeedingAttention(): Promise<
+    {
+      order_id: string;
+      failure_reason: string | null;
+      failed_at: string | null;
+      created_at: string;
+      orders: { order_number: string | null } | null;
+    }[]
+  > {
+    const response = (await this.supabase
+      .from('refunds')
+      .select(
+        'order_id, status, failure_reason, failed_at, created_at, orders(order_number)',
+      )
+      .not('failure_reason', 'is', null)
+      .neq('status', 'completed')
+      .order('created_at', { ascending: false })
+      .limit(50)) as Result<
+      {
+        order_id: string;
+        status: string;
+        failure_reason: string | null;
+        failed_at: string | null;
+        created_at: string;
+        orders: { order_number: string | null } | null;
+      }[]
+    >;
+    if (response.error) throw response.error;
+    // A failed attempt that was retried successfully isn't a problem.
+    const rows = response.data ?? [];
+    const settled = await this.ordersWithLiveRefund(
+      rows.filter((row) => row.status === 'failed').map((row) => row.order_id),
+    );
+    return rows.filter(
+      (row) => row.status !== 'failed' || !settled.has(row.order_id),
+    );
+  }
+
+  private async ordersWithLiveRefund(orderIds: string[]): Promise<Set<string>> {
+    if (orderIds.length === 0) return new Set();
+    const response = (await this.supabase
+      .from('refunds')
+      .select('order_id')
+      .in('order_id', orderIds)
+      .neq('status', 'failed')) as Result<{ order_id: string }[]>;
+    if (response.error) throw response.error;
+    return new Set((response.data ?? []).map((row) => row.order_id));
+  }
+
   async vendorReadiness(): Promise<VendorReadinessRow[]> {
     const response = (await this.supabase
       .from('vendors')

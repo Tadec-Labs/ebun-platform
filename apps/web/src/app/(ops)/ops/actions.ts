@@ -12,7 +12,9 @@ import type {
   Offering,
   OpsCounts,
   OpsOverview,
+  OrderRefunds,
   RedemptionLookup,
+  RefundReasonCategory,
   Vendor,
 } from "@/lib/ops/types";
 
@@ -637,5 +639,40 @@ export async function getOpsCountsAction(): Promise<OpsCounts | null> {
     return overview.counts;
   } catch {
     return null;
+  }
+}
+
+// ------------------------------------------------------------- refunds
+
+/**
+ * Refunds everything the sender paid, back to the card or account that
+ * paid. The API voids the gift's code first, so it can't be collected
+ * while the money is on its way back; if Paystack refuses, nothing
+ * changes. `alreadyRefundedInPaystack` only records a refund made in the
+ * dashboard (the early stuck orders) and closes the order.
+ */
+export async function refundOrderAction(input: {
+  orderId: string;
+  reasonCategory: RefundReasonCategory;
+  reason: string;
+  alreadyRefundedInPaystack: boolean;
+}): Promise<{ ok: true; refunds: OrderRefunds } | ActionFailure> {
+  const reason = input.reason.trim();
+  if (reason.length < 3) return fail(["Say briefly what happened — it goes in the order's history."]);
+  try {
+    const refunds = await opsFetch<OrderRefunds>(`/ops/orders/${encodeURIComponent(input.orderId)}/refunds`, {
+      method: "POST",
+      body: {
+        reasonCategory: input.reasonCategory,
+        reason,
+        alreadyRefundedInPaystack: input.alreadyRefundedInPaystack,
+      },
+    });
+    revalidatePath(`/ops/orders/${input.orderId}`);
+    revalidatePath("/ops/orders");
+    revalidatePath("/ops");
+    return { ok: true, refunds };
+  } catch (error) {
+    return asFailure(error);
   }
 }

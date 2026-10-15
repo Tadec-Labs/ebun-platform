@@ -21,6 +21,7 @@ const KIND_LABEL: Record<AttentionItem["kind"], string> = {
   pickup: "Pickup",
   approval: "Approval",
   partner_details: "Partner",
+  refund: "Refund",
 };
 
 /**

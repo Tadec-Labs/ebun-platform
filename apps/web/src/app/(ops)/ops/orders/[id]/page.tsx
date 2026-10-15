@@ -11,9 +11,11 @@ import { ORDER_STATUS_LABEL } from "@/lib/ops/types";
 import type {
   OrderDetail,
   OrderEvent,
+  OrderRefunds,
   OrderStatusValue,
 } from "@/lib/ops/types";
 import { StatusBadge, StuckBadge } from "../status-badge";
+import { RefundPanel } from "./refund-panel";
 
 const MESSAGE_KIND: Record<string, string> = {
   text: "A written message",
@@ -50,6 +52,10 @@ const EVENT_LABEL: Record<string, string> = {
   ORDER_CANCELLED: "Order cancelled",
   REFUND_INITIATED: "Refund started",
   REFUND_COMPLETED: "Refunded",
+  "refund.initiated": "Refund started by staff",
+  "refund.processed": "Refund completed by Paystack",
+  "refund.failed": "Refund failed at Paystack",
+  "refund.needs-attention": "Paystack needs action on the refund",
 };
 
 const ACTOR_LABEL: Record<OrderEvent["actorType"], string> = {
@@ -95,6 +101,13 @@ export default async function OrderDetailPage({
     if (error instanceof OpsApiError && error.status === 404) notFound();
     throw error;
   }
+
+  // Finance and ops roles can see refunds; a role that can't simply
+  // doesn't get the panel rather than losing the whole page.
+  const refunds = await opsFetch<OrderRefunds>(`/ops/orders/${id}/refunds`).catch((error: unknown) => {
+    if (error instanceof OpsApiError) return null;
+    throw error;
+  });
 
   // Only the fields that have something to say. The page previously
   // rendered every column in the row, which meant roughly half of it
@@ -197,6 +210,8 @@ export default async function OrderDetailPage({
           </div>
         </Field>
       </dl>
+
+      {refunds && <RefundPanel orderId={order.id} initial={refunds} />}
 
       {/* Directly under the summary, because this is what answers
           "what happened to this order" — the question the page exists

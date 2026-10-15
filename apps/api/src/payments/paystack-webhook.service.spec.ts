@@ -7,6 +7,7 @@ import { OrdersService } from '../orders/orders.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orchestrator.service';
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
+import { RefundsService } from '../refunds/refunds.service';
 
 const SECRET = 'sk_test_fake_secret';
 
@@ -39,8 +40,12 @@ describe('PaystackWebhookService', () => {
   };
   let idempotency: { claim: jest.Mock };
   let fulfillment: { start: jest.Mock };
+  let refunds: { applyPaystackRefundEvent: jest.Mock };
 
   beforeEach(async () => {
+    refunds = {
+      applyPaystackRefundEvent: jest.fn().mockResolvedValue(undefined),
+    };
     ordersService = {
       findByPaystackReference: jest.fn(),
       transitionNormal: jest.fn(),
@@ -59,6 +64,7 @@ describe('PaystackWebhookService', () => {
           provide: FulfillmentOrchestratorService,
           useValue: fulfillment,
         },
+        { provide: RefundsService, useValue: refunds },
       ],
     }).compile();
 
@@ -213,5 +219,58 @@ describe('PaystackWebhookService', () => {
       /Amount mismatch/,
     );
     expect(ordersService.transitionNormal).not.toHaveBeenCalled();
+  });
+
+  describe('refund events', () => {
+    function signed(body: object) {
+      const raw = Buffer.from(JSON.stringify(body));
+      return {
+        raw,
+        signature: createHmac('sha512', SECRET).update(raw).digest('hex'),
+      };
+    }
+
+    it('hands refund.* events to refunds, by the original transaction reference', async () => {
+      const body = {
+        event: 'refund.processed',
+        data: { transaction_reference: 'ref_abc123', amount: 500000 },
+      };
+      const { raw, signature } = signed(body);
+
+      await sut.handle(raw, signature, body);
+
+      expect(refunds.applyPaystackRefundEvent).toHaveBeenCalledWith(
+        'refund.processed',
+        'ref_abc123',
+      );
+      expect(idempotency.claim).not.toHaveBeenCalled();
+      expect(ordersService.transitionNormal).not.toHaveBeenCalled();
+    });
+
+    it('still checks the signature first', async () => {
+      const body = {
+        event: 'refund.processed',
+        data: { transaction_reference: 'ref_abc123' },
+      };
+      const { raw } = signed(body);
+
+      await expect(
+        sut.handle(raw, 'forged', body as PaystackWebhookDto),
+      ).rejects.toThrow();
+      expect(refunds.applyPaystackRefundEvent).not.toHaveBeenCalled();
+    });
+
+    it('refuses a charge.success missing its amount instead of guessing', async () => {
+      const body = {
+        event: 'charge.success',
+        data: { id: 1, reference: 'ref_abc123' },
+      };
+      const { raw, signature } = signed(body);
+
+      await expect(
+        sut.handle(raw, signature, body as PaystackWebhookDto),
+      ).rejects.toThrow(/missing/);
+      expect(ordersService.transitionNormal).not.toHaveBeenCalled();
+    });
   });
 });

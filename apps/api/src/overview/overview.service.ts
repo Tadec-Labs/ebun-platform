@@ -7,7 +7,13 @@ import { OverviewRepository } from './overview.repository';
 
 /** Something on /ops that needs a person, most urgent first. */
 export interface AttentionItem {
-  kind: 'stuck_order' | 'delivery' | 'pickup' | 'approval' | 'partner_details';
+  kind:
+    | 'stuck_order'
+    | 'delivery'
+    | 'pickup'
+    | 'approval'
+    | 'partner_details'
+    | 'refund';
   /** 1 = money taken and nothing happening; 3 = tidy-up. */
   urgency: 1 | 2 | 3;
   title: string;
@@ -88,6 +94,7 @@ export class OverviewService {
       pickups,
       approvals,
       priceRequests,
+      stuckRefunds,
       readiness,
       recent,
     ] = await Promise.all([
@@ -111,11 +118,25 @@ export class OverviewService {
       ),
       settle(this.repository.awaitingApprovalByVendor(), []),
       settle(this.repository.priceRequestsByVendor(), []),
+      settle(this.repository.refundsNeedingAttention(), []),
       settle(this.repository.vendorReadiness(), []),
       settle(this.repository.recentOrders(8), []),
     ]);
 
     const attention: AttentionItem[] = [];
+
+    // A refund Paystack couldn't finish: the order says refunded, the
+    // sender hasn't got their money. Top of the list.
+    for (const refund of stuckRefunds) {
+      attention.push({
+        kind: 'refund',
+        urgency: 1,
+        title: `Refund for ${refund.orders?.order_number ?? 'an order'} didn't go through`,
+        detail: refund.failure_reason,
+        href: `/ops/orders/${refund.order_id}`,
+        since: refund.failed_at ?? refund.created_at,
+      });
+    }
 
     for (const order of stuck) {
       attention.push({

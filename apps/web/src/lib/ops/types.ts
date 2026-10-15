@@ -87,6 +87,48 @@ export interface Offering {
   priceProposedAt: string | null;
 }
 
+/** Mirrors apps/api/src/refunds/refunds.service.ts's RefundView. */
+export interface OrderRefund {
+  id: string;
+  amount: number; // kobo
+  reason: string;
+  reasonCategory: RefundReasonCategory | null;
+  /** pending → processing (Paystack has it) → completed; or failed. */
+  status: "pending" | "processing" | "completed" | "failed";
+  /** Paystack's word on a problem, e.g. it needs the customer's bank details. */
+  problem: string | null;
+  recordedManually: boolean;
+  createdAt: string;
+  processedAt: string | null;
+}
+
+export interface OrderRefunds {
+  refunds: OrderRefund[];
+  /** Null when a refund can be started; otherwise why not. */
+  cannotRefundBecause: string | null;
+  /** kobo — everything the sender paid. */
+  refundAmount: number;
+}
+
+export type RefundReasonCategory =
+  | "vendor_failure"
+  | "delivery_failure"
+  | "recipient_request"
+  | "duplicate_payment"
+  | "fraud"
+  | "admin_discretion"
+  | "other";
+
+export const REFUND_REASON_LABEL: Record<RefundReasonCategory, string> = {
+  vendor_failure: "Partner couldn't provide it",
+  delivery_failure: "Delivery failed",
+  recipient_request: "Sender or recipient asked",
+  duplicate_payment: "Paid twice",
+  fraud: "Fraud",
+  admin_discretion: "Goodwill",
+  other: "Other",
+};
+
 /** What every ops server action returns instead of throwing — errors are shown inline, not as a crash page. */
 export type ActionResult =
   | { ok: true; message?: string; /** Set when something was created. */ id?: string }
@@ -443,7 +485,7 @@ export const DELIVERY_STAGE_LABEL: Record<OpsDeliveryStage, string> = {
 /* ------------------------------------------------------------------ */
 
 export interface AttentionItem {
-  kind: "stuck_order" | "delivery" | "pickup" | "approval" | "partner_details";
+  kind: "stuck_order" | "delivery" | "pickup" | "approval" | "partner_details" | "refund";
   /** 1 = money taken and nothing happening; 3 = tidy-up. */
   urgency: 1 | 2 | 3;
   title: string;

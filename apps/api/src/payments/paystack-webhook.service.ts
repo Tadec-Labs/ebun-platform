@@ -10,6 +10,7 @@ import { OrderStatus } from '@ebun/types';
 import { OrdersService } from '../orders/orders.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orchestrator.service';
+import { RefundsService } from '../refunds/refunds.service';
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 import { verifyPaystackSignature } from './paystack-signature.util';
 
@@ -26,6 +27,7 @@ export class PaystackWebhookService {
     private readonly idempotency: IdempotencyService,
     private readonly config: ConfigService,
     private readonly fulfillment: FulfillmentOrchestratorService,
+    private readonly refunds: RefundsService,
   ) {}
 
   async handle(
@@ -39,6 +41,16 @@ export class PaystackWebhookService {
       throw new UnauthorizedException('Invalid Paystack webhook signature');
     }
 
+    if (payload.event.startsWith('refund.')) {
+      // Progress of a refund started from /ops. Idempotent by nature
+      // (it sets a status), so no idempotency claim is needed.
+      await this.refunds.applyPaystackRefundEvent(
+        payload.event,
+        payload.data.transaction_reference ?? payload.data.reference,
+      );
+      return;
+    }
+
     if (payload.event !== HANDLED_EVENT) {
       this.logger.debug(
         `Ignoring unhandled Paystack event type: ${payload.event}`,
@@ -46,8 +58,16 @@ export class PaystackWebhookService {
       return;
     }
 
+    const { id, reference, amount } = payload.data;
+    if (id === undefined || !reference || amount === undefined) {
+      throw new BadRequestException(
+        'charge.success is missing its transaction id, reference or amount',
+      );
+    }
+    const charge = { id, reference, amount };
+
     // Paystack doesn't provide a distinct "webhook event ID" the way some other providers do (the schema's own comments — see orders.paystack_event_id and idempotency_keys' example key format — assumed one exists). data.id (the transaction ID) is what's actually stable and unique across redeliveries of the SAME event, so it's used as the idempotency key here instead.
-    const idempotencyKey = `paystack_webhook_evt_${payload.data.id}`;
+    const idempotencyKey = `paystack_webhook_evt_${charge.id}`;
 
     const claimed = await this.idempotency.claim(
       idempotencyKey,
@@ -61,19 +81,19 @@ export class PaystackWebhookService {
     }
 
     const order = await this.ordersService.findByPaystackReference(
-      payload.data.reference,
+      charge.reference,
     );
     if (!order) {
       throw new NotFoundException(
-        `No order found for Paystack reference "${payload.data.reference}"`,
+        `No order found for Paystack reference "${charge.reference}"`,
       );
     }
 
-    if (order.total_amount !== payload.data.amount) {
+    if (order.total_amount !== charge.amount) {
       // Deliberately loud, not a silent skip — an amount mismatch is either tampering or a real pricing bug, never something to paper over.
       throw new BadRequestException(
         `Amount mismatch for order ${order.id}: expected ${order.total_amount} kobo, ` +
-          `Paystack reported ${payload.data.amount} kobo`,
+          `Paystack reported ${charge.amount} kobo`,
       );
     }
 
@@ -87,9 +107,9 @@ export class PaystackWebhookService {
       OrderStatus.Paid,
       { type: 'webhook' },
       {
-        paystackReference: payload.data.reference,
-        paystackTransactionId: payload.data.id,
-        amount: payload.data.amount,
+        paystackReference: charge.reference,
+        paystackTransactionId: charge.id,
+        amount: charge.amount,
       },
     );
 

@@ -24,6 +24,37 @@ interface PaystackInitializeResponse {
   };
 }
 
+interface CreateRefundParams {
+  /** The original transaction's reference (orders.paystack_reference). */
+  transactionReference: string;
+  amountKobo: number;
+  /** Shown to the customer by Paystack/their bank, where supported. */
+  customerNote?: string;
+  /** Visible only in SendEbun's Paystack dashboard. */
+  merchantNote?: string;
+}
+
+interface CreateRefundResult {
+  /** Paystack's refund id — webhooks don't carry it, so it's stored from here. */
+  id: string;
+  /** Paystack's own status word, e.g. "pending". */
+  status: string;
+}
+
+interface PaystackRefundResponse {
+  status: boolean;
+  message: string;
+  data?: { id: number | string; status?: string };
+}
+
+/** Paystack said no to a refund. Its message is safe to show staff (e.g. "Transaction has been fully reversed"). */
+export class PaystackRefundRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaystackRefundRejectedError';
+  }
+}
+
 /**
  * Outbound calls TO Paystack's REST API. Deliberately separate from PaymentsModule, which handles the INBOUND webhook Paystack calls us on — PaymentsModule already imports OrdersModule (for OrdersService), so if OrdersModule also needed PaymentsModule (for this), that would be a circular module dependency. This module depends on nothing of ours, so both Orders and Payments can import it independently.
  */
@@ -86,5 +117,43 @@ export class PaystackClientService {
       accessCode: body.data.access_code,
       reference: body.data.reference,
     };
+  }
+
+  /**
+   * Asks Paystack to return money to the card or account that paid.
+   * Paystack queues it and reports progress by webhook (refund.processed,
+   * refund.failed, …), handled in PaystackWebhookService.
+   *
+   * Throws PaystackRefundRejectedError when Paystack answers and refuses
+   * — a known outcome the caller turns into a message — and lets network
+   * errors through as they are.
+   */
+  async createRefund(params: CreateRefundParams): Promise<CreateRefundResult> {
+    const secretKey = this.config.getOrThrow<string>('PAYSTACK_SECRET_KEY');
+    const response = await fetch(`${PaystackClientService.BASE_URL}/refund`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        transaction: params.transactionReference,
+        amount: params.amountKobo,
+        currency: 'NGN',
+        customer_note: params.customerNote,
+        merchant_note: params.merchantNote,
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+
+    const body = (await response
+      .json()
+      .catch(() => ({}))) as Partial<PaystackRefundResponse>;
+    if (!response.ok || !body.status || !body.data) {
+      throw new PaystackRefundRejectedError(
+        body.message?.trim() || `Paystack answered ${response.status}`,
+      );
+    }
+    return { id: String(body.data.id), status: body.data.status ?? 'pending' };
   }
 }
