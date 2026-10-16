@@ -1,5 +1,6 @@
 /** Mirrors apps/api/src/vendors/vendors.service.ts's views field-for-field. */
 
+import type { Campaign as CompanyCampaign } from "@/lib/company/api";
 import {
   BOOKING_STYLES,
   GIFT_CATEGORIES,
@@ -538,3 +539,27 @@ export interface PayoutRow {
   oldestAt: string;
   bank: { bankName: string | null; accountName: string | null; last4: string } | null;
 }
+
+// ---------------------------------------------------------------- companies
+
+/** One row of /ops/campaigns. Mirrors the API's CampaignSummary. Amounts in kobo. */
+export interface CampaignSummary {
+  id: string;
+  companyName: string;
+  title: string;
+  status: "draft" | "awaiting_payment" | "paid" | "cancelled";
+  recipients: number | null;
+  amountDue: number | null;
+  sendAt: string | null;
+  paidAt: string | null;
+  createdAt: string;
+}
+
+/** Mirrors the API's OpsCampaignView: what the company sees, plus terms and their private link. */
+export type OpsCampaign = CompanyCampaign & {
+  feeBps: number;
+  leadId: string | null;
+  contactPhone: string | null;
+  portalUrl: string;
+  createdAt: string;
+};

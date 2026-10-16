@@ -2,7 +2,7 @@ import { FulfillmentType, OrderStatus, RedemptionStatus } from "@ebun/types";
 import { API_BASE_URL } from "@/lib/api-config";
 import { renderQrSvg } from "./qr";
 import { deriveScreenState } from "./types";
-import type { DeliveryDetails } from "./types";
+import type { CompanyGift, DeliveryDetails } from "./types";
 import type { RevealPayload, RevealScreenState } from "./types";
 
 /**
@@ -14,7 +14,7 @@ import type { RevealPayload, RevealScreenState } from "./types";
  * file and nowhere else.
  */
 interface ApiRevealView {
-  viewState: "not_ready" | "ready" | "expired" | "unavailable";
+  viewState: "not_ready" | "ready" | "expired" | "unavailable" | "choose";
   orderStatus: OrderStatus;
   fulfillmentType?: FulfillmentType;
   recipientName?: string;
@@ -53,6 +53,7 @@ interface ApiRevealView {
   collected?: { at: string | null; placeName: string | null };
   delivery?: DeliveryDetails;
   messageLocked?: boolean;
+  company?: CompanyGift;
 }
 
 export type RevealFetchResult =
@@ -117,6 +118,19 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
   // The three non-viewable states are deliberately minimal server-side
   // — no gift, no sender, no message for a link that isn't valid to
   // view — so there is nothing here to map beyond the state itself.
+  // A company gift with options: who it's from and what to pick from —
+  // nothing about a gift that doesn't exist yet.
+  if (view.viewState === "choose") {
+    return {
+      screenState: "choose",
+      orderStatus: view.orderStatus,
+      recipientName: view.recipientName,
+      senderName: view.senderName,
+      theme: toTheme(view.theme),
+      company: view.company,
+    };
+  }
+
   if (view.viewState !== "ready") {
     return {
       screenState: view.viewState as RevealScreenState,
@@ -155,6 +169,7 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
     collected: view.collected,
     delivery: view.delivery,
     messageLocked: view.messageLocked,
+    company: view.company,
   };
 
   if (view.redemption) {

@@ -207,3 +207,45 @@ export async function confirmReceivedAction(token: string): Promise<SetDeliveryR
     return { ok: false, message: "Confirmed, but couldn't refresh the page. Reload to see it." };
   }
 }
+
+export type CompanyGiftResult = { ok: true } | { ok: false; message: string };
+
+async function postCompanyGift(
+  token: string,
+  path: "choose" | "thanks",
+  body: Record<string, string>,
+): Promise<CompanyGiftResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/reveal/${encodeURIComponent(token)}/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+  } catch {
+    return { ok: false, message: "Couldn't reach SendEbun just then. Check your connection and try again." };
+  }
+  if (res.ok) return { ok: true };
+  if (res.status === 429) {
+    return { ok: false, message: "That was a lot of taps — give it a moment and try again." };
+  }
+  try {
+    const data = (await res.json()) as { message?: unknown };
+    const message = Array.isArray(data.message) ? data.message[0] : data.message;
+    if (typeof message === "string" && res.status < 500) return { ok: false, message };
+  } catch {
+    // fall through
+  }
+  return { ok: false, message: "Something went wrong. Try again in a moment." };
+}
+
+/** A company gift with options: the recipient's pick. Once only — the API decides. */
+export async function chooseGiftAction(token: string, giftTemplateId: string): Promise<CompanyGiftResult> {
+  return postCompanyGift(token, "choose", { giftTemplateId });
+}
+
+/** A thank-you back to the company that sent the gift. */
+export async function sendThanksAction(token: string, note: string): Promise<CompanyGiftResult> {
+  return postCompanyGift(token, "thanks", { note });
+}

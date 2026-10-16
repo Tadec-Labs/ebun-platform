@@ -12,6 +12,7 @@ import { GiftMark, LockGlyph } from "@/components/icons";
 import { MessagePlayer } from "./components/message-player";
 import { PickupBookingPanel } from "./components/pickup-booking";
 import { ScratchPanel } from "./components/scratch-panel";
+import { ChooseScreen, ThanksPanel } from "./components/company-gift";
 
 /**
  * Phase is local state; what it is allowed to start as comes from the
@@ -34,7 +35,8 @@ type Phase =
   | "fulfilled"
   | "not_ready"
   | "expired"
-  | "unavailable";
+  | "unavailable"
+  | "choose";
 
 function initialPhase(payload: RevealPayload): Phase {
   switch (payload.screenState) {
@@ -56,6 +58,8 @@ function initialPhase(payload: RevealPayload): Phase {
       return "arrival-lock";
     case "fulfilled":
       return "fulfilled";
+    case "choose":
+      return "choose";
     case "ready":
     default:
       return "entry";
@@ -150,9 +154,19 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
         {phase === "expired" && <StatusScreen kind="expired" />}
         {phase === "unavailable" && <StatusScreen kind="unavailable" />}
 
+        {phase === "choose" && initial.company && (
+          <ChooseScreen
+            token={token}
+            recipientName={initial.recipientName}
+            senderName={initial.senderName}
+            company={initial.company}
+          />
+        )}
+
         {phase === "entry" && (
           <EntryScreen
             recipientName={initial.recipientName}
+            fromCompany={initial.company?.companyName}
             onBegin={() => setPhase("reveal")}
           />
         )}
@@ -240,6 +254,14 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
             }}
           />
         )}
+
+        {/* A company gift: once it's theirs, a thank-you back. */}
+        {initial.company &&
+          (phase === "claimed" || phase === "redeemed" || phase === "fulfilled" || phase === "transit") && (
+            <div className="pt-8">
+              <ThanksPanel token={token} company={initial.company} />
+            </div>
+          )}
       </div>
 
     </div>
@@ -250,9 +272,12 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
 
 function EntryScreen({
   recipientName,
+  fromCompany,
   onBegin,
 }: {
   recipientName?: string;
+  /** A company gift names the company: "someone's thinking of you" would be coy about an employer. */
+  fromCompany?: string;
   onBegin: () => void;
 }) {
   return (
@@ -277,9 +302,20 @@ function EntryScreen({
       </div>
       <div className="flex flex-col gap-3">
         <h1 className="font-display text-4xl font-normal leading-tight" style={{ color: "var(--cream)" }}>
-          {recipientName ? `${recipientName}, someone's` : "Someone's"}
-          <br />
-          thinking of you.
+          {fromCompany ? (
+            <>
+              {recipientName ? `${recipientName}, ` : ""}
+              {fromCompany}
+              <br />
+              is thinking of you.
+            </>
+          ) : (
+            <>
+              {recipientName ? `${recipientName}, someone's` : "Someone's"}
+              <br />
+              thinking of you.
+            </>
+          )}
         </h1>
         <p className="mx-auto max-w-[26ch] text-sm leading-relaxed" style={{ color: "var(--cream-dim)" }}>
           A gift is waiting, with a message attached.

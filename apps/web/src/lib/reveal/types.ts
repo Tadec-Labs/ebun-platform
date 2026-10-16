@@ -31,7 +31,24 @@ export type RevealScreenState =
   | "awaiting_address" // physical: scratched, needs a delivery address
   | "in_transit" // physical: address confirmed, item + message both en route
   | "arrived" // physical: item delivered, full message unlockable
-  | "fulfilled"; // physical: message opened — terminal, positive
+  | "fulfilled" // physical: message opened — terminal, positive
+  | "choose"; // company gift with options: the recipient picks before anything else
+
+/** A gift sent by a company campaign. */
+export interface CompanyGift {
+  companyName: string;
+  title: string;
+  /** They already sent their thank-you. */
+  thanked: boolean;
+  /** "choose" only: the company's options. */
+  choices?: {
+    giftTemplateId: string;
+    name: string;
+    description: string | null;
+    imageUrl: string | null;
+    deliveryType: string;
+  }[];
+}
 
 export interface RevealMessage {
   type: "text" | "voice" | "video";
@@ -104,6 +121,8 @@ export interface RevealPayload {
   delivery?: DeliveryDetails;
   /** Physical, before delivery: a message exists and opens when the gift arrives. Its content is not sent until then. */
   messageLocked?: boolean;
+  /** Sent by a company campaign. */
+  company?: CompanyGift;
 }
 
 /** Mirrors apps/api's RecipientDeliveryView (deliveries.service.ts). */
