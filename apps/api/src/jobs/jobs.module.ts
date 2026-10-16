@@ -11,6 +11,8 @@ import { VendorEscalationJob } from './vendor-escalation.job';
 import { AlertsModule } from '../alerts/alerts.module';
 import { PayoutsModule } from '../payouts/payouts.module';
 import { AutoPayoutJob } from './auto-payout.job';
+import { CorporateModule } from '../corporate/corporate.module';
+import { CampaignJob } from './campaign.job';
 
 /**
  * Every recurring job in one module, rather than a @Cron scattered
@@ -34,8 +36,10 @@ import { AutoPayoutJob } from './auto-payout.job';
     RedemptionsModule,
     AlertsModule,
     PayoutsModule,
+    CorporateModule,
   ],
   providers: [
+    CampaignJob,
     AutoPayoutJob,
     ScheduledSendJob,
     ExpiryJob,

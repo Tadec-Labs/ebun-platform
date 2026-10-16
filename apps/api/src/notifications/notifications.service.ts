@@ -35,6 +35,11 @@ export class NotificationsService {
    * error_message set) — silent to the caller, not silent to the data.
    */
   async sendGiftRevealLink(order: OrderRow): Promise<void> {
+    if (order.campaign_id) {
+      // A company campaign's links go out from CampaignSendingService, at
+      // the company's send time, by email and the link sheet.
+      return;
+    }
     if (
       order.scheduled_send_at &&
       new Date(order.scheduled_send_at) > new Date()

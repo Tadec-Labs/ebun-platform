@@ -6,6 +6,8 @@ interface InitializeTransactionParams {
   amountKobo: number;
   reference: string;
   metadata?: Record<string, unknown>;
+  /** Where Paystack sends the payer back to. Default: the sender's confirmation page. */
+  callbackPath?: string;
 }
 
 interface InitializeTransactionResult {
@@ -96,9 +98,9 @@ export class PaystackClientService {
           // Paystack appends ?trxref=...&reference=... itself. The page at
           // this path must NOT treat those params as proof of payment — it
           // asks the API for real status (webhook-verified only).
-          // Every payment today is a sender's order payment; a second flow
-          // (e.g. group-gift contributions) is the point to parameterise this.
-          callback_url: `${webAppBaseUrl}/send/confirmation`,
+          // A sender's order returns to /send/confirmation; a company
+          // paying for a campaign returns to its own link (callbackPath).
+          callback_url: `${webAppBaseUrl}${params.callbackPath ?? '/send/confirmation'}`,
           metadata: params.metadata,
         }),
       },

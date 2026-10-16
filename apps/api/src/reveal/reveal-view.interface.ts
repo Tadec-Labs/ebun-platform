@@ -17,7 +17,13 @@ import type { RecipientDeliveryView } from '../deliveries/deliveries.service';
  * frontend derive it from (orderStatus, fulfillmentType, redemption)
  * rather than encoding another guess into viewState.
  */
-export type RevealViewState = 'not_ready' | 'ready' | 'expired' | 'unavailable';
+/**
+ * 'choose' — a company gift where the company offered a few options and
+ * the recipient hasn't picked yet. Shows `company.choices`; nothing else
+ * about the gift exists until they choose.
+ */
+export type RevealViewState =
+  'not_ready' | 'ready' | 'expired' | 'unavailable' | 'choose';
 
 export interface RevealView {
   viewState: RevealViewState;
@@ -79,4 +85,19 @@ export interface RevealView {
    * words around what it has.
    */
   collected?: { at: string | null; placeName: string | null };
+  /** Gifts sent by a company campaign. */
+  company?: {
+    companyName: string;
+    title: string;
+    /** The recipient already sent their thank-you. */
+    thanked: boolean;
+    /** viewState 'choose' only: the company's options. */
+    choices?: {
+      giftTemplateId: string;
+      name: string;
+      description: string | null;
+      imageUrl: string | null;
+      deliveryType: string;
+    }[];
+  };
 }

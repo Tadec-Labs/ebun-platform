@@ -21,6 +21,7 @@ import { RevealView } from './reveal-view.interface';
 import { DeliveriesService } from '../deliveries/deliveries.service';
 import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 import type { DeliveryDetailsInput } from '../deliveries/deliveries.service';
+import { CampaignGiftsService } from '../corporate/campaign-gifts.service';
 
 const PRE_REVEAL_STATES = new Set([
   OrderStatus.VoucherIssued,
@@ -86,6 +87,7 @@ export class RevealService {
     private readonly audit: AuditService,
     private readonly deliveries: DeliveriesService,
     private readonly alerts: VendorAlertsService,
+    private readonly campaignGifts: CampaignGiftsService,
     @Inject(MEDIA_URL_RESOLVER)
     private readonly mediaResolver: MediaUrlResolver,
   ) {}
@@ -161,6 +163,15 @@ export class RevealService {
 
     if (VIEWABLE_AFTER_REVEAL_STATES.has(order.status)) {
       return this.buildView(order, 'ready');
+    }
+
+    // A company gift with options, not picked yet.
+    if (
+      order.campaign_id &&
+      order.status === OrderStatus.Paid &&
+      !order.gift_chosen_at
+    ) {
+      return this.buildChooseView(order);
     }
 
     // paid / processing / fulfillment_in_progress / etc — the token
@@ -351,6 +362,52 @@ export class RevealService {
     return this.view(revealToken);
   }
 
+  /** A company gift with options: the recipient picks one, and it's fulfilled on the spot. */
+  async chooseGift(
+    revealToken: string,
+    giftTemplateId: string,
+  ): Promise<RevealView> {
+    const order = await this.ordersService.findByRevealToken(revealToken);
+    if (!order) {
+      throw new NotFoundException('No gift found for this link.');
+    }
+    if (new Date(order.expires_at) <= new Date()) {
+      return this.buildView(order, 'expired');
+    }
+    await this.campaignGifts.choose(order, giftTemplateId);
+    return this.view(revealToken);
+  }
+
+  /** A thank-you note back to the company that sent the gift. */
+  async thank(revealToken: string, note: string): Promise<RevealView> {
+    const order = await this.ordersService.findByRevealToken(revealToken);
+    if (!order) {
+      throw new NotFoundException('No gift found for this link.');
+    }
+    await this.campaignGifts.thank(order, note);
+    return this.view(revealToken);
+  }
+
+  private async buildChooseView(order: OrderRow): Promise<RevealView> {
+    const info = await this.campaignGifts.revealInfo(order);
+    if (!info?.choices || info.choices.length === 0) {
+      return { viewState: 'not_ready', orderStatus: order.status };
+    }
+    return {
+      viewState: 'choose',
+      orderStatus: order.status,
+      recipientName: order.recipient_name,
+      senderName: info.senderDisplayName ?? info.companyName,
+      theme: order.reveal_theme,
+      company: {
+        companyName: info.companyName,
+        title: info.title,
+        thanked: info.thanked,
+        choices: info.choices,
+      },
+    };
+  }
+
   /** The recipient confirms their doorstep gift arrived — completes it and credits the vendor. */
   async confirmReceived(revealToken: string): Promise<RevealView> {
     const order = await this.ordersService.findByRevealToken(revealToken);
@@ -382,18 +439,31 @@ export class RevealService {
       ? await this.usersService.findById(order.sender_id)
       : null;
 
+    const company = order.campaign_id
+      ? await this.campaignGifts.revealInfo(order)
+      : null;
+
     const view: RevealView = {
       viewState,
       orderStatus: order.status,
       fulfillmentType: giftTemplate.delivery_type,
       recipientName: order.recipient_name,
-      senderName: sender?.name ?? null,
+      senderName: company
+        ? (company.senderDisplayName ?? company.companyName)
+        : (sender?.name ?? null),
       giftName: giftTemplate.name,
       giftDescription: giftTemplate.description,
       giftImageUrl: giftTemplate.image_url,
       bookingStyle: giftTemplate.booking_style ?? 'pickup',
       theme: order.reveal_theme,
     };
+    if (company) {
+      view.company = {
+        companyName: company.companyName,
+        title: company.title,
+        thanked: company.thanked,
+      };
+    }
 
     const isPhysical = giftTemplate.delivery_type === FulfillmentType.Physical;
     if (isPhysical) {

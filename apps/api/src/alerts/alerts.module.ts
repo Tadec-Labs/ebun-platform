@@ -9,6 +9,6 @@ import { VendorAlertsService } from './vendor-alerts.service';
  */
 @Module({
   providers: [EmailSenderService, VendorAlertsRepository, VendorAlertsService],
-  exports: [VendorAlertsService],
+  exports: [VendorAlertsService, EmailSenderService],
 })
 export class AlertsModule {}

@@ -6,6 +6,7 @@ import { IdempotencyModule } from 'src/idempotency/idempotency.module';
 import { PaystackWebhookService } from './paystack-webhook.service';
 import { RefundsModule } from '../refunds/refunds.module';
 import { PayoutsModule } from '../payouts/payouts.module';
+import { CorporateModule } from '../corporate/corporate.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { PayoutsModule } from '../payouts/payouts.module';
     FulfillmentModule,
     RefundsModule,
     PayoutsModule,
+    CorporateModule,
   ],
   controllers: [PaymentsController],
   providers: [PaystackWebhookService],

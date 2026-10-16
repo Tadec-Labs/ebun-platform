@@ -12,6 +12,7 @@ import { IdempotencyService } from '../idempotency/idempotency.service';
 import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orchestrator.service';
 import { RefundsService } from '../refunds/refunds.service';
 import { AutoPayoutsService } from '../payouts/auto-payouts.service';
+import { CampaignFundingService } from '../corporate/campaign-funding.service';
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 import { verifyPaystackSignature } from './paystack-signature.util';
 
@@ -30,6 +31,7 @@ export class PaystackWebhookService {
     private readonly fulfillment: FulfillmentOrchestratorService,
     private readonly refunds: RefundsService,
     private readonly autoPayouts: AutoPayoutsService,
+    private readonly campaigns: CampaignFundingService,
   ) {}
 
   async handle(
@@ -78,6 +80,18 @@ export class PaystackWebhookService {
       );
     }
     const charge = { id, reference, amount };
+
+    if (this.campaigns.isCampaignReference(charge.reference)) {
+      // A company paying for a whole campaign. fund_campaign() is
+      // idempotent and checks the amount itself, so no idempotency claim
+      // here: a redelivery after a failed attempt should get to try again.
+      await this.campaigns.applyPayment(
+        charge.reference,
+        charge.amount,
+        String(charge.id),
+      );
+      return;
+    }
 
     // Paystack doesn't provide a distinct "webhook event ID" the way some other providers do (the schema's own comments — see orders.paystack_event_id and idempotency_keys' example key format — assumed one exists). data.id (the transaction ID) is what's actually stable and unique across redeliveries of the SAME event, so it's used as the idempotency key here instead.
     const idempotencyKey = `paystack_webhook_evt_${charge.id}`;

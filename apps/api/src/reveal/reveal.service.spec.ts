@@ -12,6 +12,7 @@ import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
 import { DeliveriesService } from '../deliveries/deliveries.service';
 import { VendorAlertsService } from '../alerts/vendor-alerts.service';
+import { CampaignGiftsService } from '../corporate/campaign-gifts.service';
 
 function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
   return {
@@ -59,6 +60,11 @@ describe('RevealService', () => {
     setRecipientDetails: jest.Mock;
     markOpened: jest.Mock;
   };
+  let campaignGifts: {
+    revealInfo: jest.Mock;
+    choose: jest.Mock;
+    thank: jest.Mock;
+  };
 
   beforeEach(async () => {
     orders = {
@@ -87,6 +93,12 @@ describe('RevealService', () => {
       markOpened: jest.fn().mockResolvedValue(undefined),
     };
 
+    campaignGifts = {
+      revealInfo: jest.fn().mockResolvedValue(null),
+      choose: jest.fn().mockResolvedValue(undefined),
+      thank: jest.fn().mockResolvedValue(undefined),
+    };
+
     gifts.findById.mockResolvedValue({
       id: 'template-1',
       name: 'Jollof Rice for Two',
@@ -109,10 +121,115 @@ describe('RevealService', () => {
         { provide: DeliveriesService, useValue: deliveries },
         { provide: VendorAlertsService, useValue: alerts },
         { provide: MEDIA_URL_RESOLVER, useValue: mediaResolver },
+        { provide: CampaignGiftsService, useValue: campaignGifts },
       ],
     }).compile();
 
     sut = moduleRef.get(RevealService);
+  });
+
+  describe('company campaign gifts', () => {
+    const info = {
+      companyName: 'Acme Ltd',
+      senderDisplayName: 'Ada Obi, CEO',
+      title: 'Thank you for 2026',
+      thanked: false,
+      choices: [
+        {
+          giftTemplateId: 'template-1',
+          name: 'Lunch for two',
+          description: null,
+          imageUrl: null,
+          deliveryType: 'digital_voucher',
+        },
+        {
+          giftTemplateId: 'template-2',
+          name: 'Spa morning',
+          description: null,
+          imageUrl: null,
+          deliveryType: 'digital_voucher',
+        },
+      ],
+    };
+
+    it('asks the recipient to choose before anything else exists', async () => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.Paid,
+          campaign_id: 'campaign-1',
+          gift_chosen_at: null,
+          sender_id: null,
+        }),
+      );
+      campaignGifts.revealInfo.mockResolvedValue(info);
+
+      const view = await sut.view('token');
+
+      expect(view.viewState).toBe('choose');
+      expect(view.senderName).toBe('Ada Obi, CEO');
+      expect(view.company?.choices).toHaveLength(2);
+      // Nothing about a gift that hasn't been chosen.
+      expect(view.giftName).toBeUndefined();
+      expect(orders.transitionNormal).not.toHaveBeenCalled();
+    });
+
+    it('shows an unchosen gift past its date as expired, not as a choice', async () => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.Paid,
+          campaign_id: 'campaign-1',
+          gift_chosen_at: null,
+          expires_at: new Date(Date.now() - 1000).toISOString(),
+        }),
+      );
+
+      expect((await sut.view('token')).viewState).toBe('expired');
+      expect(campaignGifts.revealInfo).not.toHaveBeenCalled();
+    });
+
+    it('records the choice, then serves the fulfilled gift', async () => {
+      orders.findByRevealToken
+        .mockResolvedValueOnce(
+          makeOrder({ status: OrderStatus.Paid, campaign_id: 'campaign-1' }),
+        )
+        .mockResolvedValueOnce(
+          makeOrder({
+            status: OrderStatus.ReadyForRedemption,
+            campaign_id: 'campaign-1',
+            gift_chosen_at: '2026-10-16T09:00:00Z',
+          }),
+        );
+      campaignGifts.revealInfo.mockResolvedValue({ ...info, choices: null });
+
+      const view = await sut.chooseGift('token', 'template-2');
+
+      expect(campaignGifts.choose).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'order-1' }),
+        'template-2',
+      );
+      expect(view.viewState).toBe('ready');
+      expect(view.company).toEqual({
+        companyName: 'Acme Ltd',
+        title: 'Thank you for 2026',
+        thanked: false,
+      });
+      expect(view.senderName).toBe('Ada Obi, CEO');
+    });
+
+    it('refuses a choice after the gift has expired', async () => {
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.Paid,
+          campaign_id: 'campaign-1',
+          expires_at: new Date(Date.now() - 1000).toISOString(),
+        }),
+      );
+
+      const view = await sut.chooseGift('token', 'template-2');
+
+      expect(view.viewState).toBe('expired');
+      expect(campaignGifts.choose).not.toHaveBeenCalled();
+    });
   });
 
   describe('doorstep (physical) gifts', () => {

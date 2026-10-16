@@ -9,6 +9,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { BookPickupDto } from './dto/book-pickup.dto';
 import { SetDeliveryDetailsDto } from '../deliveries/dto/delivery.dto';
+import { ChooseGiftDto, ThanksDto } from '../corporate/dto/campaign.dto';
 import { RevealService } from './reveal.service';
 
 /**
@@ -68,5 +69,25 @@ export class RevealController {
     @Body() body: SetDeliveryDetailsDto,
   ) {
     return this.reveal.setDelivery(token, body);
+  }
+
+  /** Company gifts with options: the recipient's pick. Once only. */
+  @Post(':token/choose')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async choose(
+    @Param('token', new ParseUUIDPipe()) token: string,
+    @Body() body: ChooseGiftDto,
+  ) {
+    return this.reveal.chooseGift(token, body.giftTemplateId);
+  }
+
+  /** Company gifts: a thank-you note back to the company. Once only. */
+  @Post(':token/thanks')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async thanks(
+    @Param('token', new ParseUUIDPipe()) token: string,
+    @Body() body: ThanksDto,
+  ) {
+    return this.reveal.thank(token, body.note);
   }
 }

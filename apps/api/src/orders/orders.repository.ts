@@ -48,6 +48,9 @@ export interface OrderRow {
   pickup_vendor_id?: string | null;
   pickup_at?: string | null;
   pickup_confirmed_at?: string | null;
+  /** Company campaign gifts only — selected by findById() and findByRevealToken(). */
+  campaign_id?: string | null;
+  gift_chosen_at?: string | null;
   [key: string]: unknown;
 }
 
@@ -147,7 +150,7 @@ export class OrdersRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at',
+        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, campaign_id, gift_chosen_at',
       )
       .eq('reveal_token', revealToken)
       .maybeSingle()) as {
@@ -177,7 +180,7 @@ export class OrdersRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, status, total_amount, gift_value, gift_template_id, recipient_name, recipient_phone, reveal_token, scheduled_send_at, expires_at',
+        'id, status, total_amount, gift_value, gift_template_id, recipient_name, recipient_phone, reveal_token, scheduled_send_at, expires_at, campaign_id',
       )
       .eq('id', id)
       .maybeSingle()) as {
@@ -447,6 +450,8 @@ export class OrdersRepository {
       .not('scheduled_send_at', 'is', null)
       .lte('scheduled_send_at', new Date().toISOString())
       .is('reveal_url', null)
+      // Company campaigns are sent by CampaignSendingService, not here.
+      .is('campaign_id', null)
       .order('scheduled_send_at', { ascending: true })
       .limit(limit)) as {
       data: OrderRow[] | null;
