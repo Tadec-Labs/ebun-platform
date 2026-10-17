@@ -93,7 +93,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+    <section id={`step-${number}`} className="scroll-mt-4 rounded-xl border border-zinc-200 bg-white shadow-sm">
       <header className="flex items-center gap-3 border-b border-zinc-100 px-5 py-3.5">
         <span
           className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${
@@ -149,6 +149,14 @@ function MessageStep({ campaign, locked }: { campaign: Campaign; locked: boolean
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
   const [pending, start] = useTransition();
+  // Typed but not saved is the trap: the page looks done, Pay stays
+  // locked. Say so right next to the Save button.
+  const dirty =
+    title.trim() !== campaign.title ||
+    from.trim() !== (campaign.senderDisplayName ?? "") ||
+    text.trim() !== (campaign.message.text ?? "") ||
+    (when === "later" ? toLocalInput(campaign.sendAt) !== sendAt : campaign.sendAt !== null) ||
+    days !== campaign.giftDays;
 
   function save() {
     setErrors([]);
@@ -261,10 +269,14 @@ function MessageStep({ campaign, locked }: { campaign: Campaign; locked: boolean
       <Errors errors={errors} />
       {!locked && (
         <div className="flex items-center gap-3">
-          <button type="button" className={primary} onClick={save} disabled={pending}>
-            {pending ? "Saving…" : "Save"}
+          <button type="button" className={primary} onClick={save} disabled={pending || !dirty}>
+            {pending ? "Saving…" : dirty ? "Save message" : "Saved"}
           </button>
-          {saved && <span className="text-emerald-700">Saved.</span>}
+          {dirty ? (
+            <span className="text-amber-800">You have changes that aren&rsquo;t saved yet.</span>
+          ) : (
+            saved && <span className="text-emerald-700">Saved.</span>
+          )}
         </div>
       )}
     </div>
@@ -504,9 +516,17 @@ function GiftStep({
               })
             }
           >
-            {pending ? "Saving…" : chosen.length > 1 ? `Offer these ${chosen.length}` : "Use this gift"}
+            {pending
+              ? "Saving…"
+              : !changed && chosen.length > 0
+                ? "Saved"
+                : chosen.length > 1
+                  ? `Offer these ${chosen.length}`
+                  : "Use this gift"}
           </button>
-          <span className="text-zinc-500">{chosen.length}/3 chosen</span>
+          <span className="text-zinc-500">
+            {chosen.length}/3 chosen{changed && chosen.length > 0 ? " — not saved yet" : ""}
+          </span>
         </div>
       )}
     </div>
@@ -686,6 +706,7 @@ function PayStep({ campaign }: { campaign: Campaign }) {
   const [errors, setErrors] = useState<string[]>([]);
   const [pending, start] = useTransition();
   const q = campaign.quote;
+  const blocked = campaign.status === "draft" && campaign.missing.length > 0;
 
   function pay() {
     start(async () => {
@@ -726,12 +747,16 @@ function PayStep({ campaign }: { campaign: Campaign }) {
         <p className="text-zinc-600">Choose a gift to see the total.</p>
       )}
 
-      {campaign.missing.length > 0 && (
-        <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
-          <p className="font-medium">Before you pay:</p>
-          <ul className="mt-1 list-disc pl-5 text-zinc-700">
+      {blocked && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950">
+          <p className="font-medium">Before you can pay:</p>
+          <ul className="mt-1 list-disc pl-5">
             {campaign.missing.map((m) => (
-              <li key={m}>{m}</li>
+              <li key={m}>
+                <a href={`#step-${stepFor(m)}`} className="underline underline-offset-2">
+                  {m}
+                </a>
+              </li>
             ))}
           </ul>
         </div>
@@ -748,11 +773,17 @@ function PayStep({ campaign }: { campaign: Campaign }) {
         <button
           type="button"
           className={primary}
-          disabled={pending || (campaign.status === "draft" && campaign.missing.length > 0) || !q}
+          disabled={pending || blocked || !q}
           onClick={pay}
         >
           {pending ? "Opening Paystack…" : q ? `Pay ${formatNaira(q.amountDue)}` : "Pay"}
         </button>
+        {blocked && (
+          <a href={`#step-${stepFor(campaign.missing[0])}`} className="text-amber-800 underline underline-offset-2">
+            {campaign.missing.length === 1 ? "One thing left" : `${campaign.missing.length} things left`} — go to step{" "}
+            {stepFor(campaign.missing[0])}
+          </a>
+        )}
         {campaign.status === "awaiting_payment" && (
           <button
             type="button"
@@ -772,6 +803,14 @@ function PayStep({ campaign }: { campaign: Campaign }) {
       </div>
     </div>
   );
+}
+
+/** Which step fixes a "before you pay" item — the API's wording names the thing. */
+function stepFor(missing: string): 1 | 2 | 3 {
+  const m = missing.toLowerCase();
+  if (m.includes("gift") || m.includes("can't be bought")) return 2;
+  if (m.includes("people") || m.includes("sending to")) return 3;
+  return 1; // message, send time
 }
 
 /** After Paystack sends them back: wait for the webhook to confirm, re-reading every few seconds. */
