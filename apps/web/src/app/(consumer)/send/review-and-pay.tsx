@@ -203,6 +203,16 @@ export function ReviewAndPay({
           {error && (
             <p className="mb-2 text-center text-xs" style={{ color: "var(--error)" }}>
               {error}
+              {/* A recording that won't save must never stand between a
+                  sender and paying: offer the way out, not just "try again". */}
+              {message.messageType !== "text" && message.recordedMedia && (
+                <>
+                  {" "}
+                  <button type="button" onClick={onBack} className="underline underline-offset-2">
+                    Write your message instead
+                  </button>
+                </>
+              )}
             </p>
           )}
           {/* Above the button, not under it: read before paying, which

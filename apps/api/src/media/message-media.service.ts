@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  OnApplicationBootstrap,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { AwsClient } from 'aws4fetch';
@@ -45,6 +46,9 @@ const PLAYBACK_LINK_SECONDS = 2 * 60 * 60;
 
 const KEY_PATTERN = /^messages\/[0-9a-f-]{36}\.(webm|mp4|ogg)$/;
 
+/** Written and deleted at boot. Outside messages/, so it can never be signed for playback. */
+const HEALTHCHECK_KEY = 'healthcheck/boot-write-test.txt';
+
 /**
  * Senders' voice and video messages, in a PRIVATE R2 bucket.
  *
@@ -59,7 +63,7 @@ const KEY_PATTERN = /^messages\/[0-9a-f-]{36}\.(webm|mp4|ogg)$/;
  * which already requires their token.
  */
 @Injectable()
-export class MessageMediaService {
+export class MessageMediaService implements OnApplicationBootstrap {
   private readonly logger = new Logger(MessageMediaService.name);
   private readonly config: R2MediaConfig | null;
   private readonly client: AwsClient | null;
@@ -79,6 +83,54 @@ export class MessageMediaService {
   /** False until R2_MEDIA_BUCKET is set: voice and video are then refused with a clear message. */
   isEnabled(): boolean {
     return this.config !== null;
+  }
+
+  /**
+   * At boot, proves the API can actually write to (and clean up in) the
+   * media bucket, and says so in the logs either way.
+   *
+   * Why: a key that only covers the photos bucket boots happily and then
+   * refuses every sender's recording with a 403 — found in October 2026
+   * by testing checkout, not by a log. A misconfigured key now shows up
+   * as one ERROR line at deploy time instead of at a customer's Pay
+   * button.
+   *
+   * Never blocks or fails the boot: text messages, payments and
+   * everything else work without the bucket. Not awaited by Nest's
+   * bootstrap for the same reason.
+   */
+  onApplicationBootstrap(): void {
+    if (process.env.NODE_ENV === 'test') return;
+    void this.checkWritable();
+  }
+
+  async checkWritable(): Promise<boolean> {
+    if (!this.config || !this.client) return false;
+    const url = this.objectUrl(this.config, HEALTHCHECK_KEY);
+    try {
+      const put = await this.client.fetch(url, {
+        method: 'PUT',
+        body: 'ok',
+        headers: { 'Content-Type': 'text/plain' },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!put.ok) {
+        this.logger.error(
+          `Media bucket "${this.config.bucket}" is NOT writable (${put.status}): voice and video messages will fail. Check the R2 API token covers this bucket with Object Read & Write.`,
+        );
+        return false;
+      }
+      await this.client
+        .fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(10_000) })
+        .catch(() => undefined);
+      this.logger.log(`Media bucket "${this.config.bucket}" is writable.`);
+      return true;
+    } catch (err) {
+      this.logger.error(
+        `Media bucket check couldn't reach R2: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
   }
 
   /**

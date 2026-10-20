@@ -286,7 +286,7 @@ function MessageStep({ campaign, locked }: { campaign: Campaign; locked: boolean
 function Recorder({ kind, campaign, locked }: { kind: "voice" | "video"; campaign: Campaign; locked: boolean }) {
   const router = useRouter();
   const maxSecs = kind === "video" ? 30 : 60;
-  const { status, elapsedSecs, recorded, stream, start, stop, reset } = useMediaRecorder({
+  const { status, elapsedSecs, recorded, stream, problem, countdown, start, stop, cancel, reset } = useMediaRecorder({
     kind: kind === "video" ? "video" : "audio",
     maxDurationSecs: maxSecs,
   });
@@ -311,7 +311,8 @@ function Recorder({ kind, campaign, locked }: { kind: "voice" | "video"; campaig
     const form = new FormData();
     form.set("kind", kind);
     form.set("durationSecs", String(Math.max(1, Math.round(recorded.durationSecs))));
-    form.set("media", recorded.blob, kind === "video" ? "message.mp4" : "message.m4a");
+    const ext = recorded.blob.type.includes("webm") ? "webm" : recorded.blob.type.includes("ogg") ? "ogg" : kind === "video" ? "mp4" : "m4a";
+    form.set("media", recorded.blob, `message.${ext}`);
     try {
       const res = await fetch("/company/upload-message", { method: "POST", body: form });
       if (!res.ok) {
@@ -360,18 +361,41 @@ function Recorder({ kind, campaign, locked }: { kind: "voice" | "video"; campaig
           {status === "permission-denied" && (
             <p>Allow the {kind === "video" ? "camera and microphone" : "microphone"} for this site, then try again.</p>
           )}
-          {kind === "video" && status === "recording" && (
-            <video ref={preview} autoPlay muted playsInline className="max-h-72 w-full rounded-lg bg-black" />
+          {problem && <p className="text-red-700">{problem}</p>}
+          {status === "checking" && <p className="text-zinc-600">Checking your video…</p>}
+          {(status === "recording" || status === "countdown") && (
+            <div className="relative">
+              {kind === "video" && (
+                <video ref={preview} autoPlay muted playsInline className="max-h-72 w-full rounded-lg bg-black" />
+              )}
+              {status === "countdown" && (
+                <p
+                  aria-live="assertive"
+                  className={
+                    kind === "video"
+                      ? "absolute inset-0 flex items-center justify-center text-6xl font-semibold text-white"
+                      : "text-base font-medium text-zinc-700"
+                  }
+                >
+                  {kind === "video" ? countdown : `Recording starts in ${countdown}…`}
+                </p>
+              )}
+            </div>
           )}
           {recorded && (
             kind === "video" ? (
-              <video src={recorded.url} controls playsInline className="max-h-72 w-full rounded-lg bg-black" />
+              <video src={`${recorded.url}#t=0.1`} preload="metadata" controls playsInline className="max-h-72 w-full rounded-lg bg-black" />
             ) : (
               <audio src={recorded.url} controls className="w-full" />
             )
           )}
           <div className="flex flex-wrap items-center gap-2">
-            {status !== "recording" && !recorded && (
+            {status === "countdown" && (
+              <button type="button" className={secondary} onClick={cancel}>
+                Cancel
+              </button>
+            )}
+            {status !== "recording" && status !== "countdown" && status !== "checking" && !recorded && (
               <button type="button" className={primary} onClick={() => void start()}>
                 {current ? "Record a new one" : kind === "video" ? "Record video" : "Record voice note"}
               </button>

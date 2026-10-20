@@ -118,6 +118,28 @@ describe('MessageMediaService', () => {
     ).rejects.toThrow(/Couldn't save your recording/);
   });
 
+  it('at boot, writes and removes a test file to prove the bucket is writable', async () => {
+    const sut = new MessageMediaService();
+
+    await expect(sut.checkWritable()).resolves.toBe(true);
+    const methods = (fetchSpy.mock.calls as unknown[][]).map(
+      (call) => (call[0] as Request).method,
+    );
+    expect(methods).toEqual(['PUT', 'DELETE']);
+    expect((fetchSpy.mock.calls as unknown[][])[0][0]).toHaveProperty(
+      'url',
+      'https://acct123.r2.cloudflarestorage.com/sendebun-media/healthcheck/boot-write-test.txt',
+    );
+  });
+
+  it('reports a key that cannot write to the media bucket, without throwing', async () => {
+    fetchSpy.mockResolvedValue(new Response('denied', { status: 403 }));
+    const sut = new MessageMediaService();
+
+    await expect(sut.checkWritable()).resolves.toBe(false);
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // nothing to clean up
+  });
+
   it('hands out a signed link that expires in two hours', async () => {
     const sut = new MessageMediaService();
 

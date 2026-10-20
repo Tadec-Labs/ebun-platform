@@ -27,7 +27,7 @@ export function MediaRecorderPanel({
   onRecorded: (media: RecordedMedia) => void;
   onCleared: () => void;
 }) {
-  const { status, elapsedSecs, recorded, stream, start, stop, reset } = useMediaRecorder({
+  const { status, elapsedSecs, recorded, stream, problem, countdown, start, stop, cancel, reset } = useMediaRecorder({
     kind,
     maxDurationSecs,
     initial,
@@ -72,12 +72,21 @@ export function MediaRecorderPanel({
     );
   }
 
+  if (status === "checking") {
+    return <PanelMessage>Checking your video…</PanelMessage>;
+  }
+
   if (status === "idle" || status === "requesting-permission") {
     return (
       <div
-        className="flex flex-col items-center justify-center gap-3 border py-10"
-        style={{ borderColor: "var(--border)" }}
+        className="flex flex-col items-center justify-center gap-3 border px-4 py-10"
+        style={{ borderColor: problem ? "var(--error)" : "var(--border)" }}
       >
+        {problem && (
+          <p role="alert" className="text-center text-xs leading-relaxed" style={{ color: "var(--error)" }}>
+            {problem}
+          </p>
+        )}
         <button
           type="button"
           onClick={() => void start()}
@@ -97,31 +106,62 @@ export function MediaRecorderPanel({
     );
   }
 
-  if (status === "recording") {
+  if (status === "recording" || status === "countdown") {
+    const counting = status === "countdown";
     return (
+      // One layout for both, so the camera preview stays the same element
+      // from countdown into recording and never flickers or goes blank.
       <div className="flex flex-col gap-3 border p-4" style={{ borderColor: "var(--gold)" }}>
-        {kind === "video" && (
-          <video
-            ref={videoPreviewRef}
-            autoPlay
-            muted
-            playsInline
-            className="w-full"
-            style={{ transform: "scaleX(-1)", background: "var(--panel-raised)" }}
-          />
-        )}
+        <div className="relative">
+          {kind === "video" ? (
+            <video
+              ref={videoPreviewRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full"
+              style={{ transform: "scaleX(-1)", background: "var(--panel-raised)" }}
+            />
+          ) : (
+            counting && <div className="h-40" />
+          )}
+          {counting && (
+            <div
+              className="absolute inset-0 flex flex-col items-center justify-center gap-1"
+              style={{ background: "rgba(0,0,0,0.35)" }}
+              aria-live="assertive"
+            >
+              <span className="font-display text-7xl tabular-nums" style={{ color: "var(--cream)" }}>
+                {countdown}
+              </span>
+              <span className="text-xs" style={{ color: "var(--cream-dim)" }}>
+                {kind === "video" ? "Get ready — recording starts soon" : "Recording starts soon"}
+              </span>
+            </div>
+          )}
+        </div>
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-2 text-xs" style={{ color: "var(--gold-light)" }}>
-            <span className="h-2 w-2 animate-pulse rounded-full" style={{ background: "#c94c4c" }} />
-            {formatDuration(elapsedSecs)} / {formatDuration(maxDurationSecs)}
+            {counting ? (
+              <>Up to {formatDuration(maxDurationSecs)}</>
+            ) : (
+              <>
+                <span className="h-2 w-2 animate-pulse rounded-full" style={{ background: "#c94c4c" }} />
+                {formatDuration(elapsedSecs)} / {formatDuration(maxDurationSecs)}
+              </>
+            )}
           </span>
           <button
             type="button"
-            onClick={stop}
+            onClick={counting ? cancel : stop}
             className="px-4 py-2 text-xs tracking-wide"
-            style={{ background: "var(--action)", color: "var(--ink)" }}
+            style={
+              counting
+                ? { border: "1px solid var(--border)", color: "var(--cream-dim)" }
+                : { background: "var(--action)", color: "var(--ink)" }
+            }
           >
-            Stop
+            {counting ? "Cancel" : "Stop"}
           </button>
         </div>
       </div>
@@ -137,7 +177,9 @@ export function MediaRecorderPanel({
         <video
           controls
           playsInline
-          src={recorded.url}
+          // #t=0.1 shows a real first frame before play, not a black box.
+          preload="metadata"
+          src={`${recorded.url}#t=0.1`}
           className="w-full border"
           style={{ borderColor: "var(--border)" }}
         />
