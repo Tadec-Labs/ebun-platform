@@ -139,6 +139,24 @@ export class CampaignsRepository {
     );
   }
 
+  /** A contact's campaigns that still matter (not cancelled), newest first. For "email me my links". */
+  async findOpenByContactEmail(
+    email: string,
+    limit = 10,
+  ): Promise<CampaignRow[]> {
+    return (
+      unwrap(
+        (await this.supabase
+          .from('campaigns')
+          .select(CAMPAIGN_COLUMNS)
+          .eq('contact_email', email)
+          .neq('status', 'cancelled')
+          .order('created_at', { ascending: false })
+          .limit(limit)) as Result<CampaignRow[]>,
+      ) ?? []
+    );
+  }
+
   async findByPortalToken(token: string): Promise<CampaignRow | null> {
     return unwrap(
       (await this.supabase

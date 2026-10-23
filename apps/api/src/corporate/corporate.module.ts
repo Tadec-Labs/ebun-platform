@@ -14,6 +14,8 @@ import { CampaignPortalGuard } from './campaign-portal.guard';
 import { CampaignSendingService } from './campaign-sending.service';
 import { CampaignsRepository } from './campaigns.repository';
 import { CampaignsService } from './campaigns.service';
+import { CompanySignupController } from './company-signup.controller';
+import { CompanySignupService } from './company-signup.service';
 import { OpsCampaignsController } from './ops-campaigns.controller';
 
 /**
@@ -33,7 +35,11 @@ import { OpsCampaignsController } from './ops-campaigns.controller';
     PaystackModule,
     PricingModule,
   ],
-  controllers: [CampaignPortalController, OpsCampaignsController],
+  controllers: [
+    CampaignPortalController,
+    OpsCampaignsController,
+    CompanySignupController,
+  ],
   providers: [
     CampaignsRepository,
     CampaignsService,
@@ -41,6 +47,7 @@ import { OpsCampaignsController } from './ops-campaigns.controller';
     CampaignSendingService,
     CampaignGiftsService,
     CampaignPortalGuard,
+    CompanySignupService,
   ],
   exports: [
     CampaignFundingService,

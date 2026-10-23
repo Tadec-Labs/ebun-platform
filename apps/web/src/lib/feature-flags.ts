@@ -35,3 +35,14 @@ export function whatsappAutoDeliveryEnabled(): boolean {
 export function mediaMessagesEnabled(): boolean {
   return process.env.MEDIA_MESSAGES === "true";
 }
+
+/**
+ * true  → /company/start is open: a company signs itself up, gets its
+ *         private link by email and sets up and pays for a campaign
+ *         with no one from SendEbun involved. The API needs
+ *         CORPORATE_SELF_SERVE=true as well.
+ * unset → only ops starts campaigns; /company/start is a 404.
+ */
+export function corporateSelfServeEnabled(): boolean {
+  return process.env.CORPORATE_SELF_SERVE === "true";
+}

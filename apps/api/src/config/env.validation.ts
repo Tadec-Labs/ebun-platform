@@ -103,6 +103,11 @@ class EnvironmentVariables {
   @IsNotEmpty()
   OPS_ALERT_EMAIL?: string;
 
+  /** "true" opens /companies/start: companies set up and pay for campaigns themselves. Unset = ops starts every campaign. */
+  @IsOptional()
+  @IsString()
+  CORPORATE_SELF_SERVE?: string;
+
   /** Minutes before an unacknowledged delivery or booking is escalated. Default 30. */
   @IsOptional()
   @IsString()
