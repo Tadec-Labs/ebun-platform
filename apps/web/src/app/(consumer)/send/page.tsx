@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
-import { mediaMessagesEnabled, whatsappAutoDeliveryEnabled } from "@/lib/feature-flags";
+import {
+  corporateSelfServeEnabled,
+  mediaMessagesEnabled,
+  whatsappAutoDeliveryEnabled,
+} from "@/lib/feature-flags";
 import { getGiftCatalog } from "@/lib/gifts/get-gift-catalog";
 import { SendExperience } from "./send-experience";
 
@@ -17,6 +21,7 @@ export default async function SendPage() {
       catalogReachable={catalog.kind === "ok"}
       allowScheduling={whatsappAutoDeliveryEnabled()}
       allowRecordings={mediaMessagesEnabled()}
+      companiesOpen={corporateSelfServeEnabled()}
     />
   );
 }

@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { BrandLogo } from "@/components/brand-logo";
+import { OtherWays } from "@/components/other-ways";
+import { LANDING_URL } from "@/lib/site-links";
 import { useEffect, useState } from "react";
 import { PolicyLinks } from "@/components/policy-links";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
@@ -60,6 +63,7 @@ export function SendExperience({
   catalogReachable,
   allowScheduling,
   allowRecordings,
+  companiesOpen,
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
@@ -67,6 +71,8 @@ export function SendExperience({
   allowScheduling: boolean;
   /** Voice and video tabs — off until media storage is live (MEDIA_MESSAGES). */
   allowRecordings: boolean;
+  /** /company/start is open (CORPORATE_SELF_SERVE): link to it from the gift list. */
+  companiesOpen: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>("gift");
   const [draft, setDraft] = useState<SendDraft>({
@@ -96,10 +102,23 @@ export function SendExperience({
     >
       <header className="pt-5 pb-7">
         <div className="flex items-center justify-between">
-          <BrandLogo size="sm" href={null} />
-          <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
-            Step {currentPhaseIndex + 1} of {PHASES.length}
-          </p>
+          {/* The logo goes home to the main site — but only from the first
+              step, so a tap mid-message can't throw away a draft. */}
+          <BrandLogo size="sm" href={phase === "gift" ? LANDING_URL : null} />
+          <div className="flex items-center gap-4">
+            {phase === "gift" && companiesOpen && (
+              <Link
+                href="/company/start"
+                className="text-[11px] tracking-wide underline-offset-4 hover:underline"
+                style={{ color: "var(--gold-light)" }}
+              >
+                For companies
+              </Link>
+            )}
+            <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
+              Step {currentPhaseIndex + 1} of {PHASES.length}
+            </p>
+          </div>
         </div>
         <ol className="mt-4 grid grid-cols-3 gap-1.5" aria-label="Send a gift progress">
           {PHASES.map((item, index) => {
@@ -134,7 +153,8 @@ export function SendExperience({
             setPhase("compose");
           }}
         />
-        <PolicyLinks className="pb-8" />
+        <OtherWays companiesOpen={companiesOpen} />
+        <PolicyLinks className="pt-6 pb-8" />
         </>
       )}
 

@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
+import Link from "next/link";
 import { BrandLogo } from "@/components/brand-logo";
+import { LANDING_URL } from "@/lib/site-links";
 
 export const metadata: Metadata = {
   title: "Your SendEbun campaign",
@@ -25,8 +27,14 @@ export default function CompanyLayout({ children }: LayoutProps<"/">) {
       {/* Dark bar: the logo is drawn for dark surfaces. */}
       <header className="bg-zinc-950">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-5 py-3">
-          <BrandLogo size="sm" href={null} />
-          <span className="text-xs text-zinc-400">For companies</span>
+          {/* Safe to leave: the company's link lives in a cookie, so /company brings them straight back. */}
+          <BrandLogo size="sm" href={LANDING_URL} />
+          <nav aria-label="SendEbun" className="flex items-center gap-4 text-xs">
+            <span className="hidden text-zinc-400 sm:inline">For companies</span>
+            <Link href="/send" className="text-zinc-200 underline-offset-4 hover:underline">
+              Send a personal gift
+            </Link>
+          </nav>
         </div>
       </header>
       <main className="mx-auto w-full max-w-4xl px-5 py-8">{children}</main>
