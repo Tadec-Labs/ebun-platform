@@ -6,7 +6,9 @@ import { AlertsModule } from '../alerts/alerts.module';
 import { PayoutsModule } from '../payouts/payouts.module';
 import { DeliveriesRepository } from './deliveries.repository';
 import { DeliveriesService } from './deliveries.service';
+import { AddressNudgeService } from './address-nudge.service';
 import { OpsDeliveriesController } from './ops-deliveries.controller';
+import { DeliveryAreasController } from './delivery-areas.controller';
 
 /**
  * Doorstep delivery. Imported by RevealModule (the recipient's address)
@@ -15,8 +17,8 @@ import { OpsDeliveriesController } from './ops-deliveries.controller';
  */
 @Module({
   imports: [OrdersModule, AuditModule, AuthModule, AlertsModule, PayoutsModule],
-  controllers: [OpsDeliveriesController],
-  providers: [DeliveriesRepository, DeliveriesService],
-  exports: [DeliveriesService],
+  controllers: [OpsDeliveriesController, DeliveryAreasController],
+  providers: [DeliveriesRepository, DeliveriesService, AddressNudgeService],
+  exports: [DeliveriesService, AddressNudgeService],
 })
 export class DeliveriesModule {}

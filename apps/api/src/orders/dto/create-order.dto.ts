@@ -13,6 +13,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 // Loose E.164 check — full validation (country-specific length/format) would need a library like libphonenumber-js; not pulled in for one field. Good enough to reject obviously-malformed input.
@@ -90,4 +91,38 @@ export class CreateOrderDto {
   @IsString()
   @Length(2, 2)
   senderCountryCode?: string;
+
+  /**
+   * Doorstep gifts only, all optional: the sender already knows where to
+   * bring it, so the recipient skips the address screen. Ignored for
+   * collected gifts. An area outside the shop's list is dropped at
+   * fulfilment and the recipient is simply asked instead — never a
+   * failed checkout.
+   */
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined,
+  )
+  @IsString()
+  @MinLength(8, {
+    message: 'Add the full address — house number, street and area.',
+  })
+  @MaxLength(300)
+  deliveryAddress?: string;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined,
+  )
+  @IsString()
+  @MaxLength(80)
+  deliveryArea?: string;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined,
+  )
+  @IsString()
+  @MaxLength(300)
+  deliveryNote?: string;
 }

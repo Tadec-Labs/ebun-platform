@@ -115,6 +115,7 @@ describe('ExpiryJob', () => {
   const build = async (config = configOf()) => {
     orders = {
       findExpirable: jest.fn().mockResolvedValue([]),
+      findExpirableAwaitingAddress: jest.fn().mockResolvedValue([]),
       transitionNormal: jest.fn().mockResolvedValue(undefined),
     };
     redemptions = { expireOverdue: jest.fn().mockResolvedValue([]) };
@@ -204,6 +205,26 @@ describe('ExpiryJob', () => {
 
     expect(result.orders).toBe(1);
     expect(redemptions.expireOverdue).toHaveBeenCalled();
+  });
+
+  it('also expires doorstep gifts that never got an address, from fulfillment_in_progress', async () => {
+    await build();
+    orders.findExpirableAwaitingAddress.mockResolvedValue([
+      {
+        id: 'door-1',
+        status: OrderStatus.FulfillmentInProgress,
+        expires_at: '2026-10-01T00:00:00Z',
+      },
+    ]);
+
+    await expect(sut.expireOverdue()).resolves.toMatchObject({ orders: 1 });
+    expect(orders.transitionNormal).toHaveBeenCalledWith(
+      'door-1',
+      OrderStatus.FulfillmentInProgress,
+      OrderStatus.Expired,
+      { type: 'cron' },
+      expect.any(Object),
+    );
   });
 
   it('expires overdue redemptions too', async () => {

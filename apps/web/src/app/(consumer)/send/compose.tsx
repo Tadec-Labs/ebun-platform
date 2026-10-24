@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { FulfillmentType } from "@ebun/types";
+import { API_BASE_URL } from "@/lib/api-config";
 import type { RecordedMedia } from "@/lib/media-recording/use-media-recorder";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 import {
@@ -27,6 +29,15 @@ export interface MessageDraft {
   recordedMedia: RecordedMedia | null;
   sendTiming: SendTiming;
   scheduledFor: string; // datetime-local string, only meaningful when sendTiming === "scheduled"
+  /**
+   * Doorstep gifts, optional: the sender already knows where to bring it,
+   * so the recipient never sees the address screen. Off by default — the
+   * default is still "no address needed from you".
+   */
+  knowsAddress: boolean;
+  deliveryAddress: string;
+  deliveryArea: string;
+  deliveryNote: string;
 }
 
 // Mirrors apps/api/src/orders/dto's PHONE_PATTERN exactly — keep these
@@ -69,7 +80,28 @@ export function Compose({
 }) {
   const [touchedPhone, setTouchedPhone] = useState(false);
   const phoneIsValid = PHONE_PATTERN.test(draft.recipientPhone.trim());
-  const canContinue = draft.recipientName.trim().length > 0 && phoneIsValid;
+  const isDoorstep = gift.deliveryType === FulfillmentType.Physical;
+  const addressOk =
+    !isDoorstep ||
+    !draft.knowsAddress ||
+    (draft.deliveryAddress.trim().length >= 8 && draft.deliveryArea.trim().length >= 2);
+  const canContinue = draft.recipientName.trim().length > 0 && phoneIsValid && addressOk;
+
+  // The shop's delivery areas, so the sender taps one instead of typing.
+  const [areas, setAreas] = useState<string[]>([]);
+  useEffect(() => {
+    if (!isDoorstep) return;
+    let cancelled = false;
+    fetch(`${API_BASE_URL}/gifts/${encodeURIComponent(gift.id)}/delivery-areas`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ areas: string[] }>) : { areas: [] }))
+      .then((body) => {
+        if (!cancelled) setAreas(Array.isArray(body.areas) ? body.areas : []);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [gift.id, isDoorstep]);
 
   function set<K extends keyof MessageDraft>(key: K, value: MessageDraft[K]) {
     onChangeDraft({ ...draft, [key]: value });
@@ -185,6 +217,87 @@ export function Compose({
             />
           </Field>
         </section>
+
+        {isDoorstep && (
+          <section className="flex flex-col gap-4">
+            {!draft.knowsAddress ? (
+              <button
+                type="button"
+                onClick={() => set("knowsAddress", true)}
+                className="self-start text-left text-xs leading-relaxed"
+                style={{ color: "var(--cream-dim)" }}
+              >
+                No address needed — they&rsquo;ll add it when they open the gift.{" "}
+                <span className="underline underline-offset-2" style={{ color: "var(--gold-light)" }}>
+                  I know their address
+                </span>
+              </button>
+            ) : (
+              <>
+                <Field label="Their address">
+                  <textarea
+                    value={draft.deliveryAddress}
+                    onChange={(e) => set("deliveryAddress", e.target.value)}
+                    rows={2}
+                    maxLength={300}
+                    placeholder="House number, street, estate"
+                    className="w-full resize-none border-0 border-b bg-transparent py-2 text-sm outline-none"
+                    style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+                  />
+                </Field>
+                <Field label="Area">
+                  {areas.length > 0 ? (
+                    <select
+                      value={draft.deliveryArea}
+                      onChange={(e) => set("deliveryArea", e.target.value)}
+                      className="w-full appearance-none border-0 border-b bg-transparent py-2 text-sm outline-none"
+                      style={{
+                        borderColor: "var(--border-strong)",
+                        color: draft.deliveryArea ? "var(--cream)" : "var(--cream-faint)",
+                      }}
+                    >
+                      <option value="">Choose their area</option>
+                      {areas.map((a) => (
+                        <option key={a} value={a} style={{ color: "#111" }}>
+                          {a}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={draft.deliveryArea}
+                      onChange={(e) => set("deliveryArea", e.target.value)}
+                      maxLength={80}
+                      placeholder="e.g. Alagbaka, GRA"
+                      className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
+                      style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+                    />
+                  )}
+                </Field>
+                <Field label="Landmark (optional)">
+                  <input
+                    value={draft.deliveryNote}
+                    onChange={(e) => set("deliveryNote", e.target.value)}
+                    maxLength={300}
+                    placeholder="Blue gate, opposite the filling station"
+                    className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
+                    style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+                  />
+                </Field>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChangeDraft({ ...draft, knowsAddress: false, deliveryAddress: "", deliveryArea: "", deliveryNote: "" })
+                  }
+                  className="self-start text-xs underline underline-offset-2"
+                  style={{ color: "var(--cream-dim)" }}
+                >
+                  Let them add it instead
+                </button>
+              </>
+            )}
+          </section>
+        )}
 
         {/*
           Sits above the message box, not below it. Buried under the

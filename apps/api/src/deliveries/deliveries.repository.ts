@@ -39,6 +39,9 @@ export interface DeliveryOrderRow {
   delivery_phone: string | null;
   delivery_note: string | null;
   delivery_details_at: string | null;
+  /** The partner couldn't hand it over at the door; it is collected at the shop instead. */
+  delivery_failed_at: string | null;
+  delivery_failed_reason: string | null;
   created_at: string;
   gift_templates: {
     name: string;
@@ -51,6 +54,19 @@ export interface DeliveryOrderRow {
 export interface OpenDeliveryRow extends DeliveryFulfillmentRow {
   orders: DeliveryOrderRow | null;
   vendors: { business_name: string } | null;
+}
+
+/** A doorstep gift still waiting for its address, with what the sender nudge needs. */
+export interface AwaitingAddressRow {
+  id: string;
+  recipient_name: string;
+  recipient_phone: string;
+  reveal_token: string;
+  address_nudges: number;
+  created_at: string;
+  expires_at: string;
+  gift_templates: { name: string } | null;
+  users: { email: string | null; name: string | null } | null;
 }
 
 /** A vendor who could deliver a given gift. */
@@ -73,7 +89,7 @@ const FULFILLMENT_COLUMNS =
 // orders links to gift_templates twice (swapped_to_template_id too), so
 // the embed names its foreign key or PostgREST refuses it as ambiguous.
 const ORDER_COLUMNS =
-  'id, status, order_number, gift_template_id, gift_value, delivery_fee, recipient_name, recipient_phone, delivery_address, delivery_zone, delivery_phone, delivery_note, delivery_details_at, created_at, gift_templates!gift_template_id(name, delivery_type, delivery_window)';
+  'id, status, order_number, gift_template_id, gift_value, delivery_fee, recipient_name, recipient_phone, delivery_address, delivery_zone, delivery_phone, delivery_note, delivery_details_at, delivery_failed_at, delivery_failed_reason, created_at, gift_templates!gift_template_id(name, delivery_type, delivery_window)';
 
 type Result<T> = { data: T | null; error: PostgrestError | null };
 
@@ -143,6 +159,24 @@ export class DeliveriesRepository {
       .select('id')) as Result<{ id: string }[]>;
     if (response.error) throw response.error;
     return (response.data ?? []).length > 0;
+  }
+
+  /** Forgets a sender-given address the shops can't serve, so the recipient is asked instead. */
+  async clearDeliveryDetails(orderId: string): Promise<void> {
+    const response = (await this.supabase
+      .from('orders')
+      .update({
+        delivery_address: null,
+        delivery_zone: null,
+        delivery_phone: null,
+        delivery_note: null,
+        delivery_details_at: null,
+      })
+      .eq('id', orderId)
+      .eq('status', OrderStatus.FulfillmentInProgress)) as {
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
   }
 
   /**
@@ -241,6 +275,65 @@ export class DeliveriesRepository {
       delivered_at: new Date().toISOString(),
       delivery_confirmation: confirmedBy,
     });
+  }
+
+  /**
+   * "Couldn't deliver": recorded once. Guarded on the order still being in
+   * delivery and not already marked failed, so a double tap is a no-op.
+   */
+  async markDeliveryFailed(orderId: string, reason: string): Promise<boolean> {
+    const response = (await this.supabase
+      .from('orders')
+      .update({
+        delivery_failed_at: new Date().toISOString(),
+        delivery_failed_reason: reason,
+      })
+      .eq('id', orderId)
+      .is('delivery_failed_at', null)
+      .in('status', [OrderStatus.FulfillmentInProgress, OrderStatus.Dispatched])
+      .select('id')) as Result<{ id: string }[]>;
+    if (response.error) throw response.error;
+    return (response.data ?? []).length > 0;
+  }
+
+  /**
+   * Doorstep gifts paid for but still without an address, created before
+   * `olderThan`, that haven't had both nudges. Oldest first.
+   */
+  async awaitingAddress(
+    olderThan: Date,
+    limit = 50,
+  ): Promise<AwaitingAddressRow[]> {
+    const response = (await this.supabase
+      .from('orders')
+      .select(
+        'id, recipient_name, recipient_phone, reveal_token, address_nudges, created_at, expires_at, gift_templates!gift_template_id!inner(name, delivery_type), users!sender_id(email, name)',
+      )
+      .eq('status', OrderStatus.FulfillmentInProgress)
+      .is('delivery_address', null)
+      .is('campaign_id', null)
+      .lt('address_nudges', 2)
+      .lt('created_at', olderThan.toISOString())
+      .eq('gift_templates.delivery_type', FulfillmentType.Physical)
+      .order('created_at', { ascending: true })
+      .limit(limit)) as Result<AwaitingAddressRow[]>;
+    if (response.error) throw response.error;
+    return response.data ?? [];
+  }
+
+  /** Counts one nudge. Guarded on the count the job read, so two instances can't both send it. */
+  async recordAddressNudge(orderId: string, from: number): Promise<boolean> {
+    const response = (await this.supabase
+      .from('orders')
+      .update({
+        address_nudges: from + 1,
+        address_nudged_at: new Date().toISOString(),
+      })
+      .eq('id', orderId)
+      .eq('address_nudges', from)
+      .select('id')) as Result<{ id: string }[]>;
+    if (response.error) throw response.error;
+    return (response.data ?? []).length > 0;
   }
 
   /** Vendors holding an offering for this gift — the only ones who can be asked to deliver it. */

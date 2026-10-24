@@ -3,7 +3,8 @@
 import { useEffect, useState, useTransition } from "react";
 import { formatNaira } from "@/lib/format-money";
 import type { VendorPickup } from "@/lib/vendor/api";
-import { confirmPickupAction, listPickupsAction } from "./actions";
+import { useConfirm } from "@/components/ui/feedback";
+import { confirmPickupAction, listPickupsAction, markNoShowAction } from "./actions";
 
 /** How often the counter re-reads the list. */
 const REFRESH_MS = 30_000;
@@ -24,6 +25,7 @@ export function ComingIn({ initial }: { initial: VendorPickup[] }) {
   const [pickups, setPickups] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [ask, askDialog] = useConfirm();
 
   useEffect(() => {
     const refresh = async () => {
@@ -50,6 +52,21 @@ export function ComingIn({ initial }: { initial: VendorPickup[] }) {
       } else {
         setError(result.message);
       }
+    });
+  }
+
+  async function noShow(pickup: VendorPickup) {
+    const ok = await ask({
+      title: `${pickup.recipientFirstName} didn't come?`,
+      body: "They'll be asked to pick a new time. If they turn up later anyway, just check their code as usual.",
+      confirmLabel: "Yes, didn't come",
+    });
+    if (!ok) return;
+    setError(null);
+    startTransition(async () => {
+      const result = await markNoShowAction(pickup.orderId);
+      if (result.ok) setPickups((all) => all.filter((p) => p.orderId !== pickup.orderId));
+      else setError(result.message);
     });
   }
 
@@ -88,7 +105,16 @@ export function ComingIn({ initial }: { initial: VendorPickup[] }) {
                 </p>
               )}
             </div>
-            {pickup.confirmed ? (
+            {pickup.canMarkNoShow ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => void noShow(pickup)}
+                className="shrink-0 rounded-lg border-2 border-zinc-300 px-3 py-2.5 text-sm font-medium text-zinc-700 disabled:opacity-50"
+              >
+                Didn&rsquo;t come
+              </button>
+            ) : pickup.confirmed ? (
               <span className="shrink-0 text-base font-medium text-emerald-700">✓ Ready</span>
             ) : (
               <button
@@ -103,6 +129,7 @@ export function ComingIn({ initial }: { initial: VendorPickup[] }) {
           </li>
         ))}
       </ul>
+      {askDialog}
     </section>
   );
 }

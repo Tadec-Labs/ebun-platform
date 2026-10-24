@@ -129,6 +129,12 @@ export const NORMAL_TRANSITIONS: Readonly<
     // INFERRED — delivery/preparation failure while actively fulfilling.
     // CONFIRM WITH PRODUCT.
     OrderStatus.FulfillmentFailed,
+    // PRODUCT (24 Oct 2026) — a doorstep gift whose recipient never gave
+    // an address expires with the gift's validity, like an uncollected
+    // voucher, so the sender can be refunded. ExpiryJob only takes this
+    // edge for physical orders with no address; a gift with an address
+    // is being prepared and never expires out from under the shop.
+    OrderStatus.Expired,
   ],
 
   [OrderStatus.Dispatched]: [

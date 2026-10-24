@@ -57,6 +57,8 @@ export interface PickupView {
   pickupAt: string;
   /** The vendor already tapped "Got it". */
   confirmed: boolean;
+  /** The booked time has passed: "Didn't come" is offered. */
+  canMarkNoShow: boolean;
   /**
    * kobo — already paid by the sender and owed to the vendor on handover.
    * Shown so the counter sees the money is real before preparing anything.
@@ -122,6 +124,7 @@ export class VendorPortalService {
         row.recipient_name.trim().split(/\s+/)[0] || row.recipient_name,
       pickupAt: row.pickup_at,
       confirmed: row.pickup_confirmed_at !== null,
+      canMarkNoShow: new Date(row.pickup_at).getTime() <= Date.now(),
     }));
   }
 
@@ -147,6 +150,50 @@ export class VendorPortalService {
     });
 
     return { confirmed: true };
+  }
+
+  /**
+   * "Didn't come." The booking is cleared and the recipient's page asks
+   * them to pick a new time — one free rebook. At the second miss ops is
+   * told: the agreed rule is that the gift then counts as used and the
+   * shop is still paid, which ops applies by hand after a call, because
+   * it ends a gift someone paid for.
+   */
+  async markNoShow(
+    vendor: VendorContext,
+    orderId: string,
+    meta: RequestMeta,
+  ): Promise<{ noShows: number }> {
+    const row = await this.orders.markPickupNoShow(orderId, vendor.vendorId);
+    if (!row) {
+      throw new NotFoundException(
+        'No past booking like that for your shop. If they come later, just check their code as usual.',
+      );
+    }
+
+    await this.audit.record({
+      eventType: 'order.pickup_no_show',
+      actorId: null,
+      actorType: 'vendor',
+      resourceType: 'order',
+      resourceId: orderId,
+      metadata: { vendorId: vendor.vendorId, noShows: row.pickup_no_shows },
+      ...meta,
+    });
+
+    if (row.pickup_no_shows >= 2) {
+      await this.alerts.handoverProblem({
+        orderId,
+        key: `no-show-2:${orderId}`,
+        subject: `${row.recipient_name} missed a second booking (${row.order_number ?? orderId})`,
+        lines: [
+          `${vendor.businessName} marked ${row.recipient_name} as not coming, for the second time.`,
+          '',
+          'Agreed rule: the gift now counts as used and the shop is paid. Call the recipient first; if they still want it, they can book once more.',
+        ],
+      });
+    }
+    return { noShows: row.pickup_no_shows };
   }
 
   async listOfferings(vendorId: string): Promise<PortalOfferingView[]> {

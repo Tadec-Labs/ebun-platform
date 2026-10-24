@@ -9,6 +9,7 @@ import { DigitalVoucherService } from './digital-voucher.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { VTU_PROVIDER } from './vtu-provider.interface';
 import type { VtuProviderService } from './vtu-provider.interface';
+import { DeliveriesService } from '../deliveries/deliveries.service';
 import { UnsupportedFulfillmentTypeException } from './exceptions/unsupported-fulfillment-type.exception';
 
 /**
@@ -62,6 +63,7 @@ export class FulfillmentOrchestratorService {
     private readonly digitalVoucher: DigitalVoucherService,
     private readonly notifications: NotificationsService,
     @Inject(VTU_PROVIDER) private readonly vtuProvider: VtuProviderService,
+    private readonly deliveries: DeliveriesService,
   ) {}
 
   async start(orderId: string): Promise<void> {
@@ -172,7 +174,18 @@ export class FulfillmentOrchestratorService {
       status: FulfillmentStatus.Pending,
     });
 
-    this.logger.log(`Order ${order.id}: delivery opened, waiting for address`);
+    // The sender may already have given the address at checkout; if so a
+    // shop is assigned now and the recipient never sees the address
+    // screen. Best effort: if it fails the recipient is simply asked.
+    try {
+      await this.deliveries.applySenderAddress(order.id);
+    } catch (err) {
+      this.logger.warn(
+        `Order ${order.id}: couldn't use the sender's address (${err instanceof Error ? err.message : String(err)}); the recipient will be asked.`,
+      );
+    }
+
+    this.logger.log(`Order ${order.id}: delivery opened`);
 
     await this.notifyRecipient(order);
   }

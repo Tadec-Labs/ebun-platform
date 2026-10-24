@@ -303,3 +303,34 @@ export async function confirmPickupAction(
     return { ok: false, message: messageOf(error) };
   }
 }
+
+/** "Didn't come" — the booked time passed. The recipient is asked to pick a new one. */
+export async function markNoShowAction(
+  orderId: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await vendorFetch<{ noShows: number }>(
+      `/vendor/pickups/${encodeURIComponent(orderId)}/no-show`,
+      { method: "POST" },
+    );
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}
+
+/** "Couldn't deliver" — the gift becomes collect-at-the-shop with the same code. */
+export async function deliveryFailedAction(
+  orderId: string,
+  reason: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await vendorFetch<{ ok: true }>(
+      `/vendor/deliveries/${encodeURIComponent(orderId)}/failed`,
+      { method: "POST", body: { reason } },
+    );
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
+  }
+}

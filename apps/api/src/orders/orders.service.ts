@@ -188,6 +188,15 @@ export class OrdersService {
     return this.ordersRepository.findExpirable(limit);
   }
 
+  async markPickupNoShow(orderId: string, vendorId: string) {
+    return this.ordersRepository.markPickupNoShow(orderId, vendorId);
+  }
+
+  /** Doorstep gifts that expired without ever getting an address. */
+  async findExpirableAwaitingAddress(limit = 200) {
+    return this.ordersRepository.findExpirableAwaitingAddress(limit);
+  }
+
   async findStuckInFulfillment(olderThan: Date, limit = 100) {
     return this.ordersRepository.findStuckInFulfillment(olderThan, limit);
   }

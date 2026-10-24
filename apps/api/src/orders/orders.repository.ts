@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
-import { OrderStatus } from '@ebun/types';
+import { FulfillmentType, OrderStatus } from '@ebun/types';
 import { SUPABASE_CLIENT } from '../supabase/supabase.module';
 
 /** Mirrors the schema's actor_type enum — kept local since only this
@@ -48,6 +48,8 @@ export interface OrderRow {
   pickup_vendor_id?: string | null;
   pickup_at?: string | null;
   pickup_confirmed_at?: string | null;
+  /** Times the shop marked a booked visit "Didn't come". */
+  pickup_no_shows?: number;
   /** Company campaign gifts only — selected by findById() and findByRevealToken(). */
   campaign_id?: string | null;
   gift_chosen_at?: string | null;
@@ -85,6 +87,8 @@ export interface CreateOrderParams {
   senderIp?: string | null;
   senderCountryCode?: string | null;
   isDiasporaSender: boolean;
+  /** Doorstep gifts: given by the sender at checkout (optional). */
+  delivery?: { address: string; area: string; note: string | null } | null;
 }
 /**
  * Thin wrapper around attempt_order_transition() (see
@@ -150,7 +154,7 @@ export class OrdersRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, campaign_id, gift_chosen_at',
+        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, pickup_no_shows, campaign_id, gift_chosen_at',
       )
       .eq('reveal_token', revealToken)
       .maybeSingle()) as {
@@ -305,6 +309,60 @@ export class OrdersRepository {
     return response.data ?? null;
   }
 
+  /**
+   * "Didn't come." Clears the booking so the recipient can book again,
+   * and counts the miss. Scoped to the booked vendor, only for a visit
+   * whose time has passed, and guarded on the count read a moment ago so
+   * a double tap counts once. Null when that guard stopped it.
+   */
+  async markPickupNoShow(
+    id: string,
+    vendorId: string,
+  ): Promise<{
+    id: string;
+    pickup_no_shows: number;
+    recipient_name: string;
+    order_number: string | null;
+  } | null> {
+    const current = (await this.supabase
+      .from('orders')
+      .select('pickup_no_shows')
+      .eq('id', id)
+      .eq('pickup_vendor_id', vendorId)
+      .eq('status', OrderStatus.RevealOpened)
+      .not('pickup_at', 'is', null)
+      .lte('pickup_at', new Date().toISOString())
+      .maybeSingle()) as {
+      data: { pickup_no_shows: number } | null;
+      error: PostgrestError | null;
+    };
+    if (current.error) throw current.error;
+    if (!current.data) return null;
+
+    const response = (await this.supabase
+      .from('orders')
+      .update({
+        pickup_at: null,
+        pickup_confirmed_at: null,
+        pickup_no_shows: current.data.pickup_no_shows + 1,
+      })
+      .eq('id', id)
+      .eq('pickup_vendor_id', vendorId)
+      .eq('pickup_no_shows', current.data.pickup_no_shows)
+      .select('id, pickup_no_shows, recipient_name, order_number')
+      .maybeSingle()) as {
+      data: {
+        id: string;
+        pickup_no_shows: number;
+        recipient_name: string;
+        order_number: string | null;
+      } | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return response.data ?? null;
+  }
+
   /** Records that the reveal link was actually sent — does NOT touch order.status (reveal delivery and order state are separate concerns; see order-state-machine.ts's reveal_opened edge, which fires on the recipient actually opening the link, not on us sending it). */
   async recordRevealSent(id: string, revealUrl: string): Promise<void> {
     const { error } = await this.supabase
@@ -417,6 +475,14 @@ export class OrdersRepository {
         sender_ip: params.senderIp ?? null,
         sender_country_code: params.senderCountryCode ?? null,
         is_diaspora_sender: params.isDiasporaSender,
+        ...(params.delivery
+          ? {
+              delivery_address: params.delivery.address,
+              delivery_zone: params.delivery.area,
+              delivery_note: params.delivery.note,
+              delivery_details_at: new Date().toISOString(),
+            }
+          : {}),
       })
       .select()
       .single()) as { data: OrderRow | null; error: PostgrestError | null };
@@ -474,6 +540,32 @@ export class OrdersRepository {
    * significant state transition is logged" is not a rule worth
    * breaking for a faster sweep.
    */
+  /**
+   * Doorstep gifts past their expiry that never got an address — nothing
+   * was ever prepared, so they expire like an uncollected voucher.
+   * Physical only: a voucher sits in fulfillment_in_progress for a moment
+   * during issue and must never be caught here.
+   */
+  async findExpirableAwaitingAddress(limit: number): Promise<OrderRow[]> {
+    const response = (await this.supabase
+      .from('orders')
+      .select('*, gift_templates!gift_template_id!inner(delivery_type)')
+      .eq('status', OrderStatus.FulfillmentInProgress)
+      .is('delivery_address', null)
+      .eq('gift_templates.delivery_type', FulfillmentType.Physical)
+      .lt('expires_at', new Date().toISOString())
+      .order('expires_at', { ascending: true })
+      .limit(limit)) as {
+      data: OrderRow[] | null;
+      error: PostgrestError | null;
+    };
+
+    if (response.error) {
+      throw response.error;
+    }
+    return response.data ?? [];
+  }
+
   async findExpirable(limit: number): Promise<OrderRow[]> {
     const response = (await this.supabase
       .from('orders')

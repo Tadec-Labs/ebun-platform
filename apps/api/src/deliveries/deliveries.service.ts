@@ -23,7 +23,12 @@ import {
 
 /** Where a doorstep gift is, in the recipient's terms. */
 export type DeliveryStage =
-  'awaiting_address' | 'preparing' | 'on_the_way' | 'delivered';
+  | 'awaiting_address'
+  | 'preparing'
+  | 'on_the_way'
+  /** The partner couldn't hand it over at the door: collect it at the shop with the same code. */
+  | 'missed'
+  | 'delivered';
 
 /** What the recipient's gift page shows about their delivery. */
 export interface RecipientDeliveryView {
@@ -50,6 +55,12 @@ export interface RecipientDeliveryView {
   handoverCode: string | null;
   /** The recipient can say "I've received it" themselves. */
   canConfirmReceived: boolean;
+  /**
+   * Areas the shop(s) for this gift deliver to. When not empty, the
+   * address form shows these to pick from instead of a free-text box,
+   * and an area outside them is refused.
+   */
+  areas: string[];
 }
 
 /** A delivery on the vendor's "To deliver" list. Everything a rider needs, nothing more. */
@@ -62,8 +73,8 @@ export interface VendorDeliveryView {
   address: string;
   area: string | null;
   note: string | null;
-  /** new = not yet acknowledged; acknowledged = "Got it"; on_the_way = rider has it. */
-  stage: 'new' | 'acknowledged' | 'on_the_way';
+  /** new = not yet acknowledged; acknowledged = "Got it"; on_the_way = rider has it; missed = couldn't deliver, collecting at the shop. */
+  stage: 'new' | 'acknowledged' | 'on_the_way' | 'missed';
   /** kobo — item price plus the delivery fee, credited when it's delivered. */
   youReceive: number | null;
   assignedAt: string | null;
@@ -85,7 +96,8 @@ export interface OpsDeliveryView {
     | 'needs_vendor'
     | 'unacknowledged'
     | 'preparing'
-    | 'on_the_way';
+    | 'on_the_way'
+    | 'missed';
   /** When the order entered its current wait — what "how long has this been stuck" is measured from. */
   waitingSince: string;
   /** Waited past the point where someone should chase it (see LATE_AFTER_MINUTES). */
@@ -103,6 +115,8 @@ export const LATE_AFTER_MINUTES: Record<OpsDeliveryView['stage'], number> = {
   awaiting_address: 24 * 60,
   preparing: 4 * 60,
   on_the_way: 3 * 60,
+  // Waiting for the recipient to come to the shop: chase after a day.
+  missed: 24 * 60,
 };
 
 export interface DeliveryDetailsInput {
@@ -176,7 +190,7 @@ export class DeliveriesService {
     const dispatched = Boolean(fulfillment?.rider_dispatched_at);
     const stage = recipientStage(orderStatus, order, fulfillment);
     const handoverOpen =
-      (stage === 'preparing' || stage === 'on_the_way') &&
+      (stage === 'preparing' || stage === 'on_the_way' || stage === 'missed') &&
       Boolean(order.delivery_address) &&
       Boolean(fulfillment?.vendor_id);
 
@@ -193,12 +207,84 @@ export class DeliveriesService {
       deliveredAt: fulfillment?.delivered_at ?? null,
       window: order.gift_templates?.delivery_window ?? null,
       canChangeAddress:
-        orderStatus === OrderStatus.FulfillmentInProgress && !dispatched,
+        orderStatus === OrderStatus.FulfillmentInProgress &&
+        !dispatched &&
+        !order.delivery_failed_at,
       handoverCode: handoverOpen
         ? await this.repository.handoverCode(orderId)
         : null,
       canConfirmReceived: handoverOpen,
+      areas:
+        stage === 'awaiting_address' || (stage === 'preparing' && !dispatched)
+          ? await this.deliveryAreas(order.gift_template_id)
+          : [],
     };
+  }
+
+  /**
+   * Where this gift can be delivered: the areas listed by the active
+   * shops that offer it, de-duplicated, in a stable order. Empty when no
+   * shop has listed any — the form then falls back to free text and
+   * nothing is refused.
+   */
+  async deliveryAreas(giftTemplateId: string): Promise<string[]> {
+    const candidates = await this.repository.listCandidates(giftTemplateId);
+    const seen = new Map<string, string>();
+    for (const c of candidates) {
+      if (!c.vendors?.active || !c.approved) continue;
+      for (const area of c.vendors.service_areas ?? []) {
+        const label = clean(area);
+        const key = normaliseArea(label);
+        if (key && !seen.has(key)) seen.set(key, label);
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }
+
+  /**
+   * The sender gave the address at checkout, so the recipient never sees
+   * the address screen. Called once delivery is opened for the paid
+   * order; assigns a shop exactly as a recipient's address would.
+   * A no-op for orders without a sender-given address.
+   */
+  async applySenderAddress(orderId: string): Promise<void> {
+    const order = await this.repository.findOrder(orderId);
+    if (!order?.delivery_address || !order.delivery_zone) return;
+    const fulfillment = await this.repository.findFulfillment(orderId);
+    if (!fulfillment || fulfillment.vendor_id) return;
+
+    // An area no shop for this gift covers: drop the sender's address and
+    // let the recipient give one. A quiet fallback, never a failed order.
+    let area: string;
+    try {
+      area = await this.resolveArea(
+        order.gift_template_id,
+        order.delivery_zone,
+      );
+    } catch {
+      await this.repository.clearDeliveryDetails(orderId);
+      this.logger.warn(
+        `Order ${orderId}: sender's area "${order.delivery_zone}" isn't one this gift delivers to; the recipient will be asked.`,
+      );
+      return;
+    }
+    if (area !== order.delivery_zone) {
+      await this.repository.saveRecipientDetails(orderId, {
+        address: order.delivery_address,
+        area,
+        phone: order.delivery_phone,
+        note: order.delivery_note,
+      });
+    }
+    const vendorId = await this.autoAssign(order, area);
+    await this.audit.record({
+      eventType: 'order.delivery_details_added',
+      actorId: null,
+      actorType: 'user',
+      resourceType: 'order',
+      resourceId: orderId,
+      metadata: { area, vendorId, by: 'sender' },
+    });
   }
 
   /**
@@ -210,6 +296,11 @@ export class DeliveriesService {
     input: DeliveryDetailsInput,
   ): Promise<void> {
     const order = await this.requirePhysicalOrder(orderId);
+    if (order.delivery_failed_at) {
+      throw new BadRequestException(
+        "The shop couldn't deliver it, so it's waiting for you there. Show your code when you collect it.",
+      );
+    }
     const fulfillment = await this.repository.findFulfillment(orderId);
     if (
       order.status !== OrderStatus.FulfillmentInProgress ||
@@ -225,7 +316,7 @@ export class DeliveriesService {
 
     const details = {
       address: clean(input.address),
-      area: clean(input.area),
+      area: await this.resolveArea(order.gift_template_id, input.area),
       phone: input.phone ? clean(input.phone) : null,
       note: input.note ? clean(input.note) : null,
     };
@@ -301,11 +392,13 @@ export class DeliveriesService {
         address: order.delivery_address,
         area: order.delivery_zone,
         note: order.delivery_note,
-        stage: row.rider_dispatched_at
-          ? 'on_the_way'
-          : row.vendor_accepted_at
-            ? 'acknowledged'
-            : 'new',
+        stage: order.delivery_failed_at
+          ? 'missed'
+          : row.rider_dispatched_at
+            ? 'on_the_way'
+            : row.vendor_accepted_at
+              ? 'acknowledged'
+              : 'new',
         youReceive: price === null ? null : price + (order.delivery_fee ?? 0),
         assignedAt: row.vendor_notified_at,
         codeLocked: row.handover_code_attempts >= MAX_HANDOVER_ATTEMPTS,
@@ -349,6 +442,63 @@ export class DeliveriesService {
     await this.toDispatched(actor, order, {
       name: rider.name ? clean(rider.name) : null,
       phone: rider.phone ? clean(rider.phone) : null,
+    });
+  }
+
+  /**
+   * "Couldn't deliver." The rider couldn't reach the recipient or hand it
+   * over. Nothing is refunded and no second trip is booked automatically:
+   * the gift becomes collect-at-the-shop with the same 4-digit code (the
+   * recipient's page says so), and ops is told — a second doorstep trip
+   * is ops' call, case by case, because on a small order it costs more
+   * than SendEbun earns.
+   */
+  async markFailed(
+    actor: DeliveryActor,
+    orderId: string,
+    reason: string,
+  ): Promise<void> {
+    const { order, fulfillment } = await this.requireActionable(actor, orderId);
+    if (
+      order.status !== OrderStatus.FulfillmentInProgress &&
+      order.status !== OrderStatus.Dispatched
+    ) {
+      throw new BadRequestException(
+        "This delivery can't be marked as missed right now.",
+      );
+    }
+    if (!order.delivery_address) {
+      throw new BadRequestException(
+        "There's no address yet, so there was nothing to deliver.",
+      );
+    }
+    const why = clean(reason).slice(0, 300) || 'Not given';
+    const done = await this.repository.markDeliveryFailed(orderId, why);
+    if (!done) {
+      throw new ConflictException('Already marked as not delivered.');
+    }
+    await this.audit.record({
+      eventType: 'order.delivery_failed',
+      ...this.auditActor(actor),
+      resourceType: 'order',
+      resourceId: orderId,
+      metadata: { reason: why, vendorId: fulfillment.vendor_id },
+    });
+    const shop = fulfillment.vendor_id
+      ? await this.repository.vendorName(fulfillment.vendor_id)
+      : null;
+    await this.alerts.handoverProblem({
+      orderId,
+      key: `delivery-failed:${orderId}`,
+      subject: `Couldn't deliver ${order.order_number ?? orderId} to ${order.recipient_name}`,
+      lines: [
+        `${shop ?? 'The shop'} couldn't hand over ${order.gift_templates?.name ?? 'a gift'} to ${order.recipient_name}.`,
+        `Reason: ${why}`,
+        `Recipient: ${order.delivery_phone ?? order.recipient_phone}`,
+        `Address: ${order.delivery_address}${order.delivery_zone ? `, ${order.delivery_zone}` : ''}`,
+        '',
+        'Their gift page now says to collect it at the shop with their code. Call them today; a second doorstep trip is your call.',
+      ],
     });
   }
 
@@ -549,6 +699,28 @@ export class DeliveriesService {
 
   // ---------------------------------------------------------------------
 
+  /**
+   * The area as the shop listed it. When shops for this gift have listed
+   * areas, anything else is refused with the list — that is what stops a
+   * Lagos address being sent to an Akure kitchen.
+   */
+  private async resolveArea(
+    giftTemplateId: string,
+    area: string,
+  ): Promise<string> {
+    const typed = clean(area);
+    const areas = await this.deliveryAreas(giftTemplateId);
+    if (areas.length === 0) return typed;
+    const wanted = normaliseArea(typed);
+    const match = areas.find((a) => normaliseArea(a) === wanted);
+    if (!match) {
+      throw new BadRequestException(
+        `This gift is delivered to: ${areas.join(', ')}. Pick one of those.`,
+      );
+    }
+    return match;
+  }
+
   private async autoAssign(
     order: DeliveryOrderRow,
     area: string,
@@ -677,6 +849,7 @@ function recipientStage(
   if (status === OrderStatus.Delivered || status === OrderStatus.Fulfilled) {
     return 'delivered';
   }
+  if (order.delivery_failed_at) return 'missed';
   if (status === OrderStatus.Dispatched || fulfillment?.rider_dispatched_at) {
     return 'on_the_way';
   }
@@ -731,7 +904,10 @@ function toOpsView(row: OpenDeliveryRow): OpsDeliveryView {
   const order = row.orders!;
   let stage: OpsDeliveryView['stage'];
   let waitingSince: string;
-  if (!order.delivery_address) {
+  if (order.delivery_failed_at) {
+    stage = 'missed';
+    waitingSince = order.delivery_failed_at;
+  } else if (!order.delivery_address) {
     stage = 'awaiting_address';
     waitingSince = row.created_at;
   } else if (!row.vendor_id) {

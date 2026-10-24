@@ -53,7 +53,11 @@ export class ExpiryJob {
   }
 
   async expireOverdue(): Promise<{ orders: number; redemptions: number }> {
-    const expirable = await this.orders.findExpirable(EXPIRY_BATCH);
+    const expirable = [
+      ...(await this.orders.findExpirable(EXPIRY_BATCH)),
+      // Doorstep gifts whose address never came: same rule, same refund.
+      ...(await this.orders.findExpirableAwaitingAddress(EXPIRY_BATCH)),
+    ];
     let expired = 0;
 
     for (const order of expirable) {

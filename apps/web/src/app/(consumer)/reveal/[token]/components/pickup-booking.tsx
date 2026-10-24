@@ -36,6 +36,8 @@ export function PickupBookingPanel({
   giftName,
   recipientName,
   appointment = false,
+  minNoticeMinutes = 0,
+  missedBookings = 0,
   booking,
   onBooked,
 }: {
@@ -44,13 +46,21 @@ export function PickupBookingPanel({
   giftName?: string;
   recipientName?: string;
   appointment?: boolean;
+  /** Earliest bookable time, in minutes from now (spa 6h, cinema 3h). Earlier times simply aren't offered. */
+  minNoticeMinutes?: number;
+  /** The shop marked an earlier booking "Didn't come". */
+  missedBookings?: number;
   booking: PickupBooking | null;
   onBooked: (booking: PickupBooking) => void;
 }) {
   const [editing, setEditing] = useState(booking === null);
   const [vendorId, setVendorId] = useState(booking?.vendorId ?? places[0]?.vendorId ?? "");
-  const [quick, setQuick] = useState<number | null>(appointment ? null : 30);
+  // Only quick times that respect the notice the shop needs.
+  const quickTimes = QUICK_TIMES.filter((option) => option.minutes >= minNoticeMinutes);
+  const [quick, setQuick] = useState<number | null>(appointment ? null : (quickTimes[0]?.minutes ?? null));
   const [custom, setCustom] = useState("");
+  // Captured once when the panel opens: the earliest time the picker offers.
+  const [earliestInput] = useState(() => localInputValue(new Date(Date.now() + minNoticeMinutes * 60_000)));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -147,10 +157,17 @@ export function PickupBookingPanel({
         <p className="font-display text-xl" style={{ color: "var(--cream)" }}>
           {appointment ? "Book your appointment" : "When are you collecting?"}
         </p>
+        {missedBookings > 0 && (
+          <p className="text-xs leading-relaxed" style={{ color: "var(--gold-light)" }}>
+            {missedBookings === 1
+              ? "Looks like you missed your last booking — no problem. Pick a new time."
+              : "You've missed two bookings, so please pick a time you're sure of — or message the shop first."}
+          </p>
+        )}
         <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
           {appointment
-            ? "Pick a time that suits you. They'll confirm it, or suggest another if it's taken."
-            : "So it’s ready when you walk in, not started when you arrive."}
+            ? `Pick a time that suits you${minNoticeMinutes > 0 ? ` (from ${noticeLabel(minNoticeMinutes)} from now)` : ""}. They'll confirm it, or suggest another if it's taken.`
+            : "Optional — you can just show your code any time they're open. Booking means it's ready when you walk in."}
         </p>
       </div>
 
@@ -175,7 +192,7 @@ export function PickupBookingPanel({
 
       {!appointment && (
       <div className="flex flex-wrap gap-2" role="group" aria-label="When">
-        {QUICK_TIMES.map((option) => (
+        {quickTimes.map((option) => (
           <button
             key={option.minutes}
             type="button"
@@ -213,6 +230,7 @@ export function PickupBookingPanel({
       {quick === null && (
         <input
           type="datetime-local"
+          min={earliestInput}
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
           aria-label={appointment ? "Appointment time" : "Pickup time"}
@@ -250,6 +268,21 @@ export function PickupBookingPanel({
       </div>
     </section>
   );
+}
+
+/** 360 -> "6 hours", 45 -> "45 minutes". */
+function noticeLabel(minutes: number): string {
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${minutes} minutes`;
+}
+
+/** A Date as the value of <input type="datetime-local">, in the phone's own time. */
+function localInputValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function formatWhen(iso: string): string {

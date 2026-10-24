@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { DeliveriesModule } from '../deliveries/deliveries.module';
 import { OrdersModule } from '../orders/orders.module';
 import { GiftsModule } from '../gifts/gifts.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -20,7 +21,7 @@ import { FulfillmentOrchestratorService } from './fulfillment-orchestrator.servi
  * FulfillmentOrchestratorService itself.
  */
 @Module({
-  imports: [OrdersModule, GiftsModule, NotificationsModule],
+  imports: [OrdersModule, GiftsModule, NotificationsModule, DeliveriesModule],
   providers: [
     GiftFulfillmentsRepository,
     DigitalVoucherService,

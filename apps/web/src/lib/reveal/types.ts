@@ -100,6 +100,10 @@ export interface RevealPayload {
   giftName?: string;
   /** pickup = "when are you collecting?"; appointment = "book your appointment" (spa, studio). */
   bookingStyle?: "pickup" | "appointment";
+  /** Collected gifts: earliest booking is this many minutes from now (spa 6h, cinema 3h, food 0). */
+  minNoticeMinutes?: number;
+  /** Collected gifts: booked visits the shop marked "Didn't come". */
+  missedBookings?: number;
   giftDescription?: string | null;
   giftImageUrl?: string | null;
   theme?: "gold" | "red" | "white" | "green";
@@ -127,7 +131,8 @@ export interface RevealPayload {
 
 /** Mirrors apps/api's RecipientDeliveryView (deliveries.service.ts). */
 export interface DeliveryDetails {
-  stage: "awaiting_address" | "preparing" | "on_the_way" | "delivered";
+  /** missed = the shop couldn't deliver; collect it there with the same code. */
+  stage: "awaiting_address" | "preparing" | "on_the_way" | "missed" | "delivered";
   address: string | null;
   area: string | null;
   phone: string | null;
@@ -143,6 +148,8 @@ export interface DeliveryDetails {
   handoverCode: string | null;
   /** They can tap "I've received it" themselves. */
   canConfirmReceived: boolean;
+  /** Areas the shop delivers to. Not empty = pick from this list instead of typing. */
+  areas: string[];
 }
 
 /**

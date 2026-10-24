@@ -198,6 +198,32 @@ export class VendorAlertsService {
   }
 
   /**
+   * Something went wrong at a handover — a failed doorstep delivery or a
+   * missed booking — that ops should look at today. One email per event
+   * (the key names it), and never throws.
+   */
+  async handoverProblem(input: {
+    orderId: string;
+    key: string;
+    subject: string;
+    lines: string[];
+  }): Promise<void> {
+    await this.safely(`handover problem ${input.orderId}`, async () => {
+      const opsEmail = this.opsEmail();
+      if (!opsEmail || !this.email.isConfigured()) return;
+      await this.send({
+        orderId: input.orderId,
+        recipientType: 'admin',
+        to: opsEmail,
+        notificationType: 'OPS_HANDOVER_PROBLEM',
+        idempotencyKey: `ops-handover:${input.key}`,
+        subject: input.subject,
+        text: input.lines.join('\n'),
+      });
+    });
+  }
+
+  /**
    * The safety net. Every few minutes: anything a vendor hasn't
    * acknowledged within VENDOR_ACK_MINUTES gets one reminder to the
    * vendor and one email to ops. Once each per assignment/booking —

@@ -3,7 +3,9 @@
 import { useEffect, useState, useTransition } from "react";
 import { formatNaira } from "@/lib/format-money";
 import type { VendorDelivery } from "@/lib/vendor/api";
-import { deliveryStepAction, listDeliveriesAction } from "./actions";
+import { deliveryFailedAction, deliveryStepAction, listDeliveriesAction } from "./actions";
+
+const FAIL_REASONS = ["Not home", "Phone off / no answer", "Wrong address"] as const;
 
 const REFRESH_MS = 30_000;
 
@@ -27,6 +29,8 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
   const [riderPhone, setRiderPhone] = useState("");
   const [codeFor, setCodeFor] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  const [failFor, setFailFor] = useState<string | null>(null);
+  const [failReason, setFailReason] = useState("");
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -76,6 +80,25 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
     });
   }
 
+  function markFailed(orderId: string) {
+    const reason = failReason.trim();
+    if (reason.length < 2) {
+      setError("Say briefly what happened.");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const result = await deliveryFailedAction(orderId, reason);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setFailFor(null);
+      setFailReason("");
+      setItems((all) => all.map((d) => (d.orderId === orderId ? { ...d, stage: "missed" } : d)));
+    });
+  }
+
   const fresh = items.filter((d) => d.stage === "new").length;
 
   return (
@@ -104,14 +127,22 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
               </div>
               <span
                 className={`shrink-0 rounded-full px-2.5 py-1 text-sm font-medium ${
-                  d.stage === "on_the_way"
+                  d.stage === "missed"
+                    ? "bg-violet-100 text-violet-800"
+                    : d.stage === "on_the_way"
                     ? "bg-sky-100 text-sky-800"
                     : d.stage === "acknowledged"
                       ? "bg-zinc-100 text-zinc-700"
                       : "bg-amber-500 text-white"
                 }`}
               >
-                {d.stage === "on_the_way" ? "On its way" : d.stage === "acknowledged" ? "Preparing" : "New"}
+                {d.stage === "missed"
+                  ? "Collecting here"
+                  : d.stage === "on_the_way"
+                    ? "On its way"
+                    : d.stage === "acknowledged"
+                      ? "Preparing"
+                      : "New"}
               </span>
             </div>
 
@@ -144,7 +175,63 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
               )}
             </div>
 
-            {codeFor === d.orderId ? (
+            {d.stage === "missed" && (
+              <p className="rounded-lg bg-violet-50 px-3 py-2 text-sm text-violet-900">
+                Couldn&rsquo;t be delivered — {d.recipientName.split(" ")[0]} will collect it here. Check their
+                4-digit code and tap &ldquo;Collected&rdquo;.
+              </p>
+            )}
+
+            {failFor === d.orderId ? (
+              <div className="flex flex-col gap-2 rounded-lg bg-zinc-50 p-3">
+                <p className="text-base font-medium">What happened?</p>
+                <div className="flex flex-wrap gap-2">
+                  {FAIL_REASONS.map((reason) => (
+                    <button
+                      key={reason}
+                      type="button"
+                      onClick={() => setFailReason(reason)}
+                      aria-pressed={failReason === reason}
+                      className={`rounded-full border-2 px-3 py-1.5 text-sm ${
+                        failReason === reason ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-300"
+                      }`}
+                    >
+                      {reason}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={failReason}
+                  onChange={(e) => setFailReason(e.target.value)}
+                  placeholder="Or type it"
+                  maxLength={300}
+                  className="rounded-lg border-2 border-zinc-300 bg-white px-3 py-3 text-base"
+                />
+                <p className="text-sm text-zinc-600">
+                  {d.recipientName.split(" ")[0]} will be told to collect it from you with the same code.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => markFailed(d.orderId)}
+                    className="rounded-lg bg-zinc-900 py-3 text-base font-semibold text-white disabled:opacity-50"
+                  >
+                    Couldn&rsquo;t deliver
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFailFor(null);
+                      setFailReason("");
+                    }}
+                    className="rounded-lg border-2 border-zinc-300 py-3 text-base"
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+            ) : codeFor === d.orderId ? (
               <form
                 className="flex flex-col gap-2 rounded-lg bg-emerald-50 p-3"
                 onSubmit={(event) => {
@@ -153,7 +240,9 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
                 }}
               >
                 <label className="flex flex-col gap-2">
-                  <span className="text-base font-medium">Delivery code from {d.recipientName.split(" ")[0]}</span>
+                  <span className="text-base font-medium">
+                    {d.stage === "missed" ? "Collection code" : "Delivery code"} from {d.recipientName.split(" ")[0]}
+                  </span>
                   <input
                     autoFocus
                     value={code}
@@ -261,12 +350,26 @@ export function ToDeliver({ initial }: { initial: VendorDelivery[] }) {
                       setCodeFor(d.orderId);
                     }}
                     className={`rounded-lg py-3 text-base font-semibold disabled:opacity-50 ${
-                      d.stage === "on_the_way"
+                      d.stage === "on_the_way" || d.stage === "missed"
                         ? "col-span-2 bg-emerald-600 text-white"
                         : "border-2 border-zinc-300 text-zinc-800"
                     }`}
                   >
-                    Delivered
+                    {d.stage === "missed" ? "Collected" : "Delivered"}
+                  </button>
+                )}
+                {(d.stage === "acknowledged" || d.stage === "on_the_way") && (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => {
+                      setError(null);
+                      setFailReason("");
+                      setFailFor(d.orderId);
+                    }}
+                    className="col-span-2 py-1 text-sm text-zinc-500 underline underline-offset-2"
+                  >
+                    Couldn&rsquo;t deliver?
                   </button>
                 )}
               </div>

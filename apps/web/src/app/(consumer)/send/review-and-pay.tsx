@@ -63,6 +63,13 @@ export function ReviewAndPay({
             message.sendTiming === "scheduled" && message.scheduledFor
               ? new Date(message.scheduledFor).toISOString()
               : undefined,
+          ...(gift.deliveryType === FulfillmentType.Physical && message.knowsAddress
+            ? {
+                deliveryAddress: message.deliveryAddress.trim(),
+                deliveryArea: message.deliveryArea.trim(),
+                deliveryNote: message.deliveryNote.trim() || undefined,
+              }
+            : {}),
         },
         recorded ? { blob: recorded.blob, durationSecs: recorded.durationSecs } : undefined,
       );
@@ -135,14 +142,20 @@ export function ReviewAndPay({
               <SummaryRow label="Service fee" value={formatNaira(gift.serviceFee)} />
             )}
           </div>
-          {gift.deliveryType === FulfillmentType.Physical && (
-            // Answers the question every sender of a hamper has: "but I
-            // didn't give an address". They don't need one.
-            <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-              No address needed from you. {message.recipientName || "They"} will tell us where to bring it when they
-              open the gift — the surprise stays intact.
-            </p>
-          )}
+          {gift.deliveryType === FulfillmentType.Physical &&
+            (message.knowsAddress ? (
+              <SummaryRow
+                label="Delivering to"
+                value={`${message.deliveryAddress.trim()}, ${message.deliveryArea.trim()}`}
+              />
+            ) : (
+              // Answers the question every sender of a hamper has: "but I
+              // didn't give an address". They don't need one.
+              <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+                No address needed from you. {message.recipientName || "They"} will tell us where to bring it when they
+                open the gift — the surprise stays intact.
+              </p>
+            ))}
           <div
             className="flex items-baseline justify-between border-t pt-3"
             style={{ borderColor: "var(--border)" }}

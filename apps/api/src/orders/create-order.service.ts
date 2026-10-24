@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { OrderStatus } from '@ebun/types';
+import { FulfillmentType, OrderStatus } from '@ebun/types';
 import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { PaystackClientService } from '../paystack/paystack-client.service';
@@ -174,6 +174,18 @@ export class CreateOrderService {
       isDiasporaSender: !!(
         dto.senderCountryCode && dto.senderCountryCode !== 'NG'
       ),
+      // Only for doorstep gifts, and only with both an address and an
+      // area — half an address is no use to a rider.
+      delivery:
+        giftTemplate.delivery_type === FulfillmentType.Physical &&
+        dto.deliveryAddress &&
+        dto.deliveryArea
+          ? {
+              address: dto.deliveryAddress,
+              area: dto.deliveryArea,
+              note: dto.deliveryNote ?? null,
+            }
+          : null,
     });
 
     progress.orderInserted = true;

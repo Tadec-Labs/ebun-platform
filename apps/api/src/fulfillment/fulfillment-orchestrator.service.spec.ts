@@ -9,6 +9,7 @@ import { GiftFulfillmentsRepository } from './gift-fulfillments.repository';
 import { DigitalVoucherService } from './digital-voucher.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { VTU_PROVIDER } from './vtu-provider.interface';
+import { DeliveriesService } from '../deliveries/deliveries.service';
 import { UnsupportedFulfillmentTypeException } from './exceptions/unsupported-fulfillment-type.exception';
 
 function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
@@ -72,6 +73,12 @@ describe('FulfillmentOrchestratorService', () => {
         { provide: DigitalVoucherService, useValue: digitalVoucher },
         { provide: NotificationsService, useValue: notifications },
         { provide: VTU_PROVIDER, useValue: vtuProvider },
+        {
+          provide: DeliveriesService,
+          useValue: {
+            applySenderAddress: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 

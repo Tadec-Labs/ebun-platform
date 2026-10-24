@@ -25,6 +25,10 @@ const EMPTY_MESSAGE: MessageDraft = {
   recordedMedia: null,
   sendTiming: "now",
   scheduledFor: "",
+  knowsAddress: false,
+  deliveryAddress: "",
+  deliveryArea: "",
+  deliveryNote: "",
 };
 
 const PHASES: { id: Phase; label: string }[] = [

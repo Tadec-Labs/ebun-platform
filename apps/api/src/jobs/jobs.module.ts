@@ -13,6 +13,8 @@ import { PayoutsModule } from '../payouts/payouts.module';
 import { AutoPayoutJob } from './auto-payout.job';
 import { CorporateModule } from '../corporate/corporate.module';
 import { CampaignJob } from './campaign.job';
+import { DeliveriesModule } from '../deliveries/deliveries.module';
+import { AddressNudgeJob } from './address-nudge.job';
 
 /**
  * Every recurring job in one module, rather than a @Cron scattered
@@ -37,8 +39,10 @@ import { CampaignJob } from './campaign.job';
     AlertsModule,
     PayoutsModule,
     CorporateModule,
+    DeliveriesModule,
   ],
   providers: [
+    AddressNudgeJob,
     CampaignJob,
     AutoPayoutJob,
     ScheduledSendJob,

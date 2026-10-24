@@ -39,7 +39,8 @@ export function DeliveryActions({
     });
   }
 
-  const canReassign = delivery.stage !== "on_the_way" && delivery.stage !== "awaiting_address";
+  const canReassign =
+    delivery.stage !== "on_the_way" && delivery.stage !== "awaiting_address" && delivery.stage !== "missed";
   const hasVendor = Boolean(delivery.vendorId);
 
   return (
@@ -70,7 +71,10 @@ export function DeliveryActions({
             </button>
           </>
         )}
-        {hasVendor && delivery.stage !== "on_the_way" && delivery.stage !== "awaiting_address" && (
+        {hasVendor &&
+          delivery.stage !== "on_the_way" &&
+          delivery.stage !== "awaiting_address" &&
+          delivery.stage !== "missed" && (
           <button
             type="button"
             disabled={pending}

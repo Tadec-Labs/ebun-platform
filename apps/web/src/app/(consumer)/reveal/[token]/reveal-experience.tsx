@@ -187,6 +187,7 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
             token={token}
             giftName={initial.giftName}
             current={live.delivery?.address ? live.delivery : null}
+            areas={live.delivery?.areas ?? []}
             onSaved={(payload) => {
               setLive(payload);
               setPhase("transit");
@@ -233,6 +234,8 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
                 giftName={initial.giftName}
                 recipientName={initial.recipientName}
                 appointment={initial.bookingStyle === "appointment"}
+                minNoticeMinutes={initial.minNoticeMinutes ?? 0}
+                missedBookings={initial.missedBookings ?? 0}
                 booking={pickup}
                 onBooked={setPickup}
               />

@@ -9,6 +9,10 @@ export interface CreateOrderPayload {
   senderMessage?: string;
   messageType?: "text" | "voice" | "video";
   scheduledSendAt?: string;
+  /** Doorstep gifts, optional: the sender already knows where to bring it. */
+  deliveryAddress?: string;
+  deliveryArea?: string;
+  deliveryNote?: string;
 }
 
 /** A voice note or video recorded on the sender's phone, sent with the order. */

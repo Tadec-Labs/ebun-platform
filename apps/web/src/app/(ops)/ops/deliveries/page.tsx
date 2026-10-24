@@ -16,6 +16,7 @@ export const metadata: Metadata = { title: "Deliveries" };
 const STAGE_ORDER: OpsDeliveryStage[] = [
   "needs_vendor",
   "unacknowledged",
+  "missed",
   "awaiting_address",
   "preparing",
   "on_the_way",

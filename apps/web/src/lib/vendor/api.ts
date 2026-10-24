@@ -39,6 +39,8 @@ export interface VendorPickup {
   pickupAt: string; // ISO
   /** This vendor already tapped "Got it". */
   confirmed: boolean;
+  /** The booked time has passed: "Didn't come" is offered. */
+  canMarkNoShow: boolean;
   /** kobo — already paid by the sender, owed to this vendor on handover. */
   youReceive: number | null;
 }
@@ -53,8 +55,8 @@ export interface VendorDelivery {
   address: string;
   area: string | null;
   note: string | null;
-  /** new = not seen yet; acknowledged = "Got it"; on_the_way = rider has it. */
-  stage: "new" | "acknowledged" | "on_the_way";
+  /** new = not seen yet; acknowledged = "Got it"; on_the_way = rider has it; missed = couldn't deliver, they'll collect at the shop. */
+  stage: "new" | "acknowledged" | "on_the_way" | "missed";
   /** kobo — item plus delivery fee, credited when delivered. */
   youReceive: number | null;
   assignedAt: string | null;

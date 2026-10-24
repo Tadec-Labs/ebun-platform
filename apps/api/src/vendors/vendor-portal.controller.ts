@@ -36,6 +36,7 @@ import { EarningsService } from './earnings.service';
 import { DeliveriesService } from '../deliveries/deliveries.service';
 import { BanksService } from '../payouts/banks.service';
 import {
+  DeliveryFailedDto,
   DispatchDeliveryDto,
   HandoverCodeDto,
 } from '../deliveries/dto/delivery.dto';
@@ -290,6 +291,16 @@ export class VendorPortalController {
     );
   }
 
+  /** "Didn't come" — only for a booking whose time has passed. */
+  @Post('pickups/:orderId/no-show')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  noShow(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Req() request: VendorRequest,
+  ) {
+    return this.portal.markNoShow(vendorOf(request), orderId, metaOf(request));
+  }
+
   /**
    * Doorstep gifts this shop is delivering: name, phone, address and
    * landmark — what a rider needs. Only deliveries assigned to this
@@ -344,6 +355,25 @@ export class VendorPortalController {
       { kind: 'vendor', vendorId: vendorOf(request).vendorId },
       orderId,
       dto.code,
+    );
+    return { ok: true };
+  }
+
+  /**
+   * "Couldn't deliver." The gift becomes collect-at-the-shop with the
+   * same code, and ops is told. No refund, no automatic second trip.
+   */
+  @Post('deliveries/:orderId/failed')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async failedDelivery(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Body() dto: DeliveryFailedDto,
+    @Req() request: VendorRequest,
+  ) {
+    await this.deliveries.markFailed(
+      { kind: 'vendor', vendorId: vendorOf(request).vendorId },
+      orderId,
+      dto.reason,
     );
     return { ok: true };
   }

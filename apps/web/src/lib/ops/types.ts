@@ -469,7 +469,8 @@ export type OpsDeliveryStage =
   | "needs_vendor"
   | "unacknowledged"
   | "preparing"
-  | "on_the_way";
+  | "on_the_way"
+  | "missed";
 
 export interface OpsDelivery {
   orderId: string;
@@ -492,6 +493,7 @@ export const DELIVERY_STAGE_LABEL: Record<OpsDeliveryStage, string> = {
   unacknowledged: "Vendor hasn't seen it",
   preparing: "Being prepared",
   on_the_way: "On its way",
+  missed: "Couldn't deliver — to collect at shop",
 };
 
 /* ------------------------------------------------------------------ */

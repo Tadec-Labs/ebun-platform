@@ -14,6 +14,7 @@ import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { RedemptionsService } from '../redemptions/redemptions.service';
 import { VendorsService } from '../vendors/vendors.service';
+import { minNoticeMinutes } from '../gifts/min-notice';
 import { MEDIA_URL_RESOLVER } from '../media/media-url-resolver.interface';
 import type { MediaUrlResolver } from '../media/media-url-resolver.interface';
 import { OrderTransitionConflictException } from '../orders/exceptions/order-transition-conflict.exception';
@@ -290,8 +291,10 @@ export class RevealService {
     const pickupAt = new Date(pickupAtIso);
     const now = Date.now();
     // A few minutes' grace for a phone clock that runs slow; anything
-    // earlier is a time that has already passed.
-    const earliest = now - 5 * 60_000;
+    // earlier is a time that has already passed — or, for a spa or a
+    // cinema, sooner than the partner agreed they can prepare for.
+    const notice = minNoticeMinutes(giftTemplate);
+    const earliest = now + notice * 60_000 - 5 * 60_000;
     const latest = Math.min(
       new Date(redemption.expires_at as string).getTime(),
       new Date(order.expires_at).getTime(),
@@ -303,7 +306,9 @@ export class RevealService {
       pickupAt.getTime() > latest
     ) {
       throw new BadRequestException(
-        'Choose a time from now until your gift expires (at most a week ahead).',
+        notice > 0
+          ? `Choose a time at least ${formatNotice(notice)} from now, before your gift expires (at most a week ahead).`
+          : 'Choose a time from now until your gift expires (at most a week ahead).',
       );
     }
 
@@ -457,6 +462,10 @@ export class RevealService {
       bookingStyle: giftTemplate.booking_style ?? 'pickup',
       theme: order.reveal_theme,
     };
+    if (giftTemplate.delivery_type === FulfillmentType.DigitalVoucher) {
+      view.minNoticeMinutes = minNoticeMinutes(giftTemplate);
+      view.missedBookings = order.pickup_no_shows ?? 0;
+    }
     if (company) {
       view.company = {
         companyName: company.companyName,
@@ -606,4 +615,13 @@ export class RevealService {
       return [];
     }
   }
+}
+
+/** 360 -> "6 hours", 90 -> "90 minutes". */
+function formatNotice(minutes: number): string {
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} hour${hours === 1 ? '' : 's'}`;
+  }
+  return `${minutes} minutes`;
 }

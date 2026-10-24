@@ -17,6 +17,7 @@ import { NoStoreInterceptor } from '../common/no-store.interceptor';
 import { DeliveriesService } from './deliveries.service';
 import {
   AssignDeliveryVendorDto,
+  DeliveryFailedDto,
   DispatchDeliveryDto,
 } from './dto/delivery.dto';
 
@@ -64,6 +65,20 @@ export class OpsDeliveriesController {
       { kind: 'staff', userId: staffOf(request).userId },
       orderId,
       { name: dto.riderName, phone: dto.riderPhone },
+    );
+    return { ok: true };
+  }
+
+  @Post(':orderId/failed')
+  async failed(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Body() dto: DeliveryFailedDto,
+    @Req() request: StaffRequest,
+  ) {
+    await this.deliveries.markFailed(
+      { kind: 'staff', userId: staffOf(request).userId },
+      orderId,
+      dto.reason,
     );
     return { ok: true };
   }

@@ -11,6 +11,8 @@ export interface GiftTemplateRow {
   category: GiftCategory; // matches the schema's check constraint
   occasions: string[];
   booking_style: BookingStyle;
+  /** Minimum booking notice in minutes; null = the category default (see min-notice.ts). */
+  min_notice_minutes?: number | null;
   image_url: string | null;
   base_price: number; // kobo
   available: boolean;

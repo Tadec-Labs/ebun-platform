@@ -33,6 +33,8 @@ function order(overrides: Partial<DeliveryOrderRow> = {}): DeliveryOrderRow {
     delivery_phone: null,
     delivery_note: null,
     delivery_details_at: null,
+    delivery_failed_at: null,
+    delivery_failed_reason: null,
     created_at: '2026-10-14T09:00:00.000Z',
     gift_templates: {
       name: 'Grocery Hamper',
@@ -130,7 +132,7 @@ describe('DeliveriesService', () => {
   let repo: Record<keyof DeliveriesRepository, jest.Mock>;
   let orders: { transitionNormal: jest.Mock };
   let audit: { record: jest.Mock };
-  let alerts: { newDelivery: jest.Mock };
+  let alerts: { newDelivery: jest.Mock; handoverProblem: jest.Mock };
 
   let autoPayouts: { payVendorSoon: jest.Mock };
   beforeEach(async () => {
@@ -150,10 +152,17 @@ describe('DeliveriesService', () => {
       listOpen: jest.fn().mockResolvedValue([]),
       handoverCode: jest.fn().mockResolvedValue('4821'),
       tryHandoverCode: jest.fn().mockResolvedValue('ok'),
+      markDeliveryFailed: jest.fn().mockResolvedValue(true),
+      awaitingAddress: jest.fn().mockResolvedValue([]),
+      recordAddressNudge: jest.fn().mockResolvedValue(true),
+      clearDeliveryDetails: jest.fn().mockResolvedValue(undefined),
     };
     orders = { transitionNormal: jest.fn().mockResolvedValue(undefined) };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
-    alerts = { newDelivery: jest.fn().mockResolvedValue(undefined) };
+    alerts = {
+      newDelivery: jest.fn().mockResolvedValue(undefined),
+      handoverProblem: jest.fn().mockResolvedValue(undefined),
+    };
     autoPayouts = { payVendorSoon: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
@@ -167,6 +176,142 @@ describe('DeliveriesService', () => {
       ],
     }).compile();
     sut = moduleRef.get(DeliveriesService);
+  });
+
+  describe('partner terms (24 Oct 2026)', () => {
+    const lekki = (id: string) =>
+      candidate(id, {}, { service_areas: ['Alagbaka', ' Oba-Ile '] });
+
+    it('offers the areas the shops list, de-duplicated and sorted', async () => {
+      repo.listCandidates.mockResolvedValue([
+        lekki('vendor-1'),
+        candidate('vendor-2', {}, { service_areas: ['alagbaka', 'Ijapo'] }),
+        candidate('off', { approved: false }, { service_areas: ['Lagos'] }),
+      ]);
+
+      await expect(sut.deliveryAreas('hamper')).resolves.toEqual([
+        'Alagbaka',
+        'Ijapo',
+        'Oba-Ile',
+      ]);
+    });
+
+    it('refuses an area no shop lists, naming the ones it can use', async () => {
+      repo.listCandidates.mockResolvedValue([lekki('vendor-1')]);
+
+      await expect(
+        sut.setRecipientDetails('order-1', {
+          address: '12 Admiralty Way, Lekki',
+          area: 'Lekki Phase 1',
+        }),
+      ).rejects.toThrow(/Alagbaka, Oba-Ile/);
+      expect(repo.saveRecipientDetails).not.toHaveBeenCalled();
+    });
+
+    it("stores a listed area in the shop's own spelling", async () => {
+      repo.listCandidates.mockResolvedValue([lekki('vendor-1')]);
+
+      await sut.setRecipientDetails('order-1', {
+        address: '4 Oyemekun Road',
+        area: 'oba ile',
+      });
+
+      expect(repo.saveRecipientDetails).toHaveBeenCalledWith(
+        'order-1',
+        expect.objectContaining({ area: 'Oba-Ile' }),
+      );
+    });
+
+    it("uses the sender's address at checkout: assigns a shop, recipient skips the screen", async () => {
+      repo.findOrder.mockResolvedValue(
+        order({
+          delivery_address: '4 Oyemekun Road',
+          delivery_zone: 'Oba-Ile',
+        }),
+      );
+      repo.listCandidates.mockResolvedValue([lekki('vendor-1')]);
+
+      await sut.applySenderAddress('order-1');
+
+      expect(repo.assignVendor).toHaveBeenCalledWith('order-1', 'vendor-1');
+      expect(repo.clearDeliveryDetails).not.toHaveBeenCalled();
+    });
+
+    it("quietly drops a sender's area the shops don't cover, so the recipient is asked", async () => {
+      repo.findOrder.mockResolvedValue(
+        order({ delivery_address: '1 Allen Avenue', delivery_zone: 'Ikeja' }),
+      );
+      repo.listCandidates.mockResolvedValue([lekki('vendor-1')]);
+
+      await expect(sut.applySenderAddress('order-1')).resolves.toBeUndefined();
+
+      expect(repo.clearDeliveryDetails).toHaveBeenCalledWith('order-1');
+      expect(repo.assignVendor).not.toHaveBeenCalled();
+    });
+
+    it('"Couldn\'t deliver": records it, tells ops, and never refunds or re-dispatches', async () => {
+      repo.findOrder.mockResolvedValue(
+        order({
+          status: OrderStatus.Dispatched,
+          delivery_address: '4 Oyemekun Road',
+        }),
+      );
+      repo.findFulfillment.mockResolvedValue(
+        fulfillment({ vendor_id: 'vendor-1', rider_dispatched_at: 'x' }),
+      );
+
+      await sut.markFailed(
+        { kind: 'vendor', vendorId: 'vendor-1' },
+        'order-1',
+        ' Not home ',
+      );
+
+      expect(repo.markDeliveryFailed).toHaveBeenCalledWith(
+        'order-1',
+        'Not home',
+      );
+      expect(alerts.handoverProblem).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'delivery-failed:order-1' }),
+      );
+      expect(orders.transitionNormal).not.toHaveBeenCalled();
+    });
+
+    it('refuses "Couldn\'t deliver" from a shop that isn\'t delivering it', async () => {
+      repo.findOrder.mockResolvedValue(
+        order({ delivery_address: 'x street 1' }),
+      );
+      repo.findFulfillment.mockResolvedValue(
+        fulfillment({ vendor_id: 'vendor-1' }),
+      );
+
+      await expect(
+        sut.markFailed(
+          { kind: 'vendor', vendorId: 'someone-else' },
+          'order-1',
+          'x',
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(repo.markDeliveryFailed).not.toHaveBeenCalled();
+    });
+
+    it('after a missed delivery the recipient still sees their code, to collect at the shop', async () => {
+      repo.findOrder.mockResolvedValue(
+        order({
+          status: OrderStatus.Dispatched,
+          delivery_address: '4 Oyemekun Road',
+          delivery_failed_at: '2026-10-24T10:00:00Z',
+        }),
+      );
+      repo.findFulfillment.mockResolvedValue(
+        fulfillment({ vendor_id: 'vendor-1', rider_dispatched_at: 'x' }),
+      );
+
+      const view = await sut.forRecipient('order-1', OrderStatus.Dispatched);
+
+      expect(view?.stage).toBe('missed');
+      expect(view?.handoverCode).toBe('4821');
+      expect(view?.canChangeAddress).toBe(false);
+    });
   });
 
   describe('setRecipientDetails', () => {

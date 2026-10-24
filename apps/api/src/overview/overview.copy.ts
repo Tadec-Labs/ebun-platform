@@ -7,4 +7,5 @@ export const DELIVERY_STAGE_TITLE: Record<OpsDeliveryView['stage'], string> = {
   unacknowledged: 'vendor hasn’t seen it',
   preparing: 'still being prepared',
   on_the_way: 'still on its way',
+  missed: 'couldn’t be delivered — waiting for collection',
 };

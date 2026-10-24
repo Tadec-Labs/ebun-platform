@@ -78,3 +78,14 @@ export class AssignDeliveryVendorDto {
   @IsUUID()
   vendorId!: string;
 }
+
+/** "Couldn't deliver", from the shop's link or /ops. */
+export class DeliveryFailedDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(2, {
+    message: 'Say briefly what happened, e.g. "Not home, phone off".',
+  })
+  @MaxLength(300)
+  reason!: string;
+}

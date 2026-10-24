@@ -984,6 +984,8 @@ describe('vendor portal over HTTP', () => {
           recipientFirstName: 'Adaeze',
           pickupAt: '2026-10-12T11:30:00.000Z',
           confirmed: false,
+          // Times in the past: "Didn't come" is offered.
+          canMarkNoShow: true,
           youReceive: 720000,
         },
         {
@@ -992,6 +994,7 @@ describe('vendor portal over HTTP', () => {
           recipientFirstName: 'Tunde',
           pickupAt: '2026-10-12T12:00:00.000Z',
           confirmed: false,
+          canMarkNoShow: true,
           // What they'll actually be credited: their share of ₦7,000.
           youReceive: 630000,
         },

@@ -20,6 +20,7 @@ export function AddressScreen({
   token,
   giftName,
   current,
+  areas,
   onSaved,
   onCancel,
 }: {
@@ -27,11 +28,13 @@ export function AddressScreen({
   giftName?: string;
   /** Present when changing an address already given. */
   current: DeliveryDetails | null;
+  /** The shop's delivery areas; empty = type it. */
+  areas: string[];
   onSaved: (payload: RevealPayload) => void;
   onCancel?: () => void;
 }) {
   const [address, setAddress] = useState(current?.address ?? "");
-  const [area, setArea] = useState(current?.area ?? "");
+  const [area, setArea] = useState(current?.area ?? (areas.length === 1 ? areas[0] : ""));
   const [phone, setPhone] = useState("");
   const [note, setNote] = useState(current?.note ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -81,15 +84,36 @@ export function AddressScreen({
           <span className="text-[11px] tracking-[0.12em] uppercase" style={{ color: "var(--gold-dim)" }}>
             Area
           </span>
-          <input
-            value={area}
-            onChange={(e) => setArea(e.target.value)}
-            placeholder="e.g. Lekki Phase 1, Wuse 2, GRA"
-            maxLength={80}
-            required
-            className={field}
-            style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
-          />
+          {areas.length > 0 ? (
+            // The shop's own list: one tap, and nothing can be sent to a
+            // part of town (or a city) nobody delivers to.
+            <select
+              value={area}
+              onChange={(e) => setArea(e.target.value)}
+              required
+              className={`${field} appearance-none`}
+              style={{ borderColor: "var(--border-strong)", color: area ? "var(--cream)" : "var(--cream-faint)" }}
+            >
+              <option value="" disabled>
+                Choose your area
+              </option>
+              {areas.map((a) => (
+                <option key={a} value={a} style={{ color: "#111" }}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={area}
+              onChange={(e) => setArea(e.target.value)}
+              placeholder="e.g. Lekki Phase 1, Wuse 2, GRA"
+              maxLength={80}
+              required
+              className={field}
+              style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+            />
+          )}
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[11px] tracking-[0.12em] uppercase" style={{ color: "var(--gold-dim)" }}>
@@ -170,6 +194,7 @@ export function TransitScreen({
   onReceived: (payload: RevealPayload) => void;
 }) {
   const onTheWay = delivery?.stage === "on_the_way";
+  const missed = delivery?.stage === "missed";
   const sender = senderName ? `${senderName}'s` : "Their";
   const [confirming, setConfirming] = useState(false);
   const [receivedError, setReceivedError] = useState<string | null>(null);
@@ -188,19 +213,21 @@ export function TransitScreen({
     <div className="flex flex-1 flex-col justify-center gap-9 py-6">
       <div className="flex flex-col gap-2 text-center">
         <h2 className="font-display text-3xl font-normal" style={{ color: "var(--cream)" }}>
-          {onTheWay ? "It’s on its way." : "It’s being prepared."}
+          {missed ? "We missed you." : onTheWay ? "It’s on its way." : "It’s being prepared."}
         </h2>
         <p className="text-sm" style={{ color: "var(--cream-dim)" }}>
-          {giftName ?? "Your gift"}
-          {!onTheWay && delivery?.placeName ? ` · by ${delivery.placeName}` : ""}
+          {missed
+            ? `${giftName ?? "Your gift"} is waiting for you at ${delivery?.placeName ?? "the shop"}. Show the code below when you collect it.`
+            : `${giftName ?? "Your gift"}${!onTheWay && delivery?.placeName ? ` · by ${delivery.placeName}` : ""}`}
         </p>
-        {!onTheWay && delivery?.window && (
+        {!onTheWay && !missed && delivery?.window && (
           <p className="text-xs" style={{ color: "var(--gold-light)" }}>
             {delivery.window}
           </p>
         )}
       </div>
 
+      {!missed && (
       <StatusLine
         steps={[
           { label: "Address in", state: "done" },
@@ -209,6 +236,7 @@ export function TransitScreen({
           { label: "At your door", state: "upcoming" },
         ]}
       />
+      )}
 
       {onTheWay && (delivery?.riderName || delivery?.riderPhone) && (
         <div
@@ -238,18 +266,20 @@ export function TransitScreen({
           style={{ borderColor: "var(--gold-dim)", background: "var(--panel-raised)" }}
         >
           <p className="text-[10px] tracking-[0.16em] uppercase" style={{ color: "var(--gold-dim)" }}>
-            Your delivery code
+            {missed ? "Your collection code" : "Your delivery code"}
           </p>
           <p className="font-display text-4xl tracking-[0.35em]" style={{ color: "var(--gold-light)" }}>
             {delivery.handoverCode}
           </p>
           <p className="text-xs leading-snug" style={{ color: "var(--cream-dim)" }}>
-            Give it to the rider only when the gift is in your hands.
+            {missed
+              ? "Give it to the shop only when the gift is in your hands."
+              : "Give it to the rider only when the gift is in your hands."}
           </p>
         </div>
       )}
 
-      {delivery?.address && (
+      {delivery?.address && !missed && (
         <div className="flex flex-col gap-1 border-l-2 pl-4" style={{ borderColor: "var(--gold-dim)" }}>
           <p className="text-[10px] tracking-[0.16em] uppercase" style={{ color: "var(--gold-dim)" }}>
             Delivering to

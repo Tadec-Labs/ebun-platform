@@ -36,6 +36,10 @@ export interface RevealView {
   giftImageUrl?: string | null;
   /** Collected gifts: 'pickup' ("when are you collecting?") or 'appointment' ("book your appointment"). */
   bookingStyle?: 'pickup' | 'appointment';
+  /** Collected gifts: the earliest bookable time is this many minutes from now (spa 6h, cinema 3h, food 0). */
+  minNoticeMinutes?: number;
+  /** Collected gifts: booked visits the shop marked "Didn't come". At 1 the page asks for a new time. */
+  missedBookings?: number;
   theme?: string;
   message?: {
     type: 'text' | 'voice' | 'video';
