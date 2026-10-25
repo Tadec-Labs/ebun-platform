@@ -10,6 +10,7 @@ import { AddressScreen, TransitScreen } from "./components/delivery-screens";
 import { HoldToUnwrap } from "./components/hold-to-unwrap";
 import { GiftMark, LockGlyph } from "@/components/icons";
 import { MessagePlayer } from "./components/message-player";
+import { GroupLines } from "./components/group-lines";
 import { PickupBookingPanel } from "./components/pickup-booking";
 import { ScratchPanel } from "./components/scratch-panel";
 import { ChooseScreen, ThanksPanel } from "./components/company-gift";
@@ -213,12 +214,12 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
 
         {phase === "arrival-lock" && (
           <ArrivalLockScreen
-            hasMessage={Boolean(live.message)}
-            onUnwrapped={() => (live.message ? setPhase("arrival-message") : finishDelivered())}
+            hasMessage={hasWords(live)}
+            onUnwrapped={() => (hasWords(live) ? setPhase("arrival-message") : finishDelivered())}
           />
         )}
 
-        {phase === "arrival-message" && live.message && (
+        {phase === "arrival-message" && hasWords(live) && (
           <ArrivalMessageScreen payload={live} onDone={finishDelivered} />
         )}
 
@@ -391,9 +392,9 @@ function RevealScreen({
 
   const content = (
     <div className="flex h-full flex-col gap-6 py-2">
-      {payload.senderName && (
+      {fromLine(payload) && (
         <p className="text-center text-xs" style={{ color: "var(--cream-dim)" }}>
-          From <span style={{ color: "var(--gold-light)" }}>{payload.senderName}</span>
+          From <span style={{ color: "var(--gold-light)" }}>{fromLine(payload)}</span>
         </p>
       )}
 
@@ -407,6 +408,10 @@ function RevealScreen({
         giftImageUrl={payload.giftImageUrl}
       />
 
+      {/* Under the gift, not above it: the gift is what the scratch
+          reveals; the group's lines are what keeps them reading. */}
+      {!isPhysical && payload.group && <GroupLines group={payload.group} />}
+
       {isPhysical && payload.messageLocked && (
         <div
           className="flex items-center gap-3 border px-4 py-3"
@@ -414,8 +419,9 @@ function RevealScreen({
         >
           <LockGlyph className="h-4 w-4 flex-shrink-0 text-[color:var(--gold-dim)]" />
           <p className="text-xs leading-snug" style={{ color: "var(--cream-dim)" }}>
-            A message from {payload.senderName ?? "the sender"} unlocks the moment this arrives
-            at your door.
+            {payload.group
+              ? "Everyone’s messages unlock the moment this arrives at your door."
+              : `A message from ${payload.senderName ?? "the sender"} unlocks the moment this arrives at your door.`}
           </p>
         </div>
       )}
@@ -497,6 +503,7 @@ function ArrivalMessageScreen({
         </h2>
       </div>
       {payload.message && <MessagePlayer message={payload.message} senderName={payload.senderName} />}
+      {payload.group && <GroupLines group={payload.group} />}
       <button
         type="button"
         onClick={onDone}
@@ -779,4 +786,22 @@ function StatusScreen({ kind }: { kind: "not_ready" | "expired" | "unavailable" 
       </p>
     </div>
   );
+}
+
+/** A message, or a group's lines: anything worth the "it's here" unwrap. */
+function hasWords(payload: RevealPayload): boolean {
+  return Boolean(payload.message) || Boolean(payload.group?.contributors.some((c) => c.message));
+}
+
+/**
+ * Who it's from. A group gift names the people who paid for it —
+ * "Bisi, Chidi and 3 others" — not only the organiser.
+ */
+function fromLine(payload: RevealPayload): string | null {
+  const names = payload.group?.contributors.map((c) => c.name.trim().split(/\s+/)[0]) ?? [];
+  if (names.length === 0) return payload.senderName ?? null;
+  if (names.length <= 3) {
+    return names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  }
+  return `${names.slice(0, 3).join(", ")} and ${names.length - 3} ${names.length - 3 === 1 ? "other" : "others"}`;
 }

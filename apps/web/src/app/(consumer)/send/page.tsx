@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import {
   corporateSelfServeEnabled,
+  groupGiftingEnabled,
   mediaMessagesEnabled,
   whatsappAutoDeliveryEnabled,
 } from "@/lib/feature-flags";
@@ -22,6 +23,7 @@ export default async function SendPage() {
       allowScheduling={whatsappAutoDeliveryEnabled()}
       allowRecordings={mediaMessagesEnabled()}
       companiesOpen={corporateSelfServeEnabled()}
+      groupGifting={groupGiftingEnabled()}
     />
   );
 }

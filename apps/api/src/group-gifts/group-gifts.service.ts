@@ -66,6 +66,12 @@ export interface GroupGiftPublicView {
   deadline: string;
   /** Names always; amount only when the organiser chose to show amounts. */
   contributors: { name: string; amount: number | null }[];
+  /**
+   * The fee rule, so the page can show each share's fee as it's typed.
+   * Same policy PricingService charges with; the checkout total still
+   * comes from the API.
+   */
+  serviceFee: { rateBps: number; minKobo: number; maxKobo: number };
 }
 
 export interface GroupGiftOrganiserView {
@@ -245,6 +251,7 @@ export class GroupGiftsService {
           name: firstName(c.contributor_name),
           amount: pot.show_amounts ? c.amount : null,
         })),
+      serviceFee: this.pricing.servicePolicy(),
     };
   }
 
@@ -267,10 +274,14 @@ export class GroupGiftsService {
           : 'This group gift has closed.',
       );
     }
-    if (new Date(pot.deadline).getTime() <= Date.now()) {
-      throw new ConflictException(
-        "The deadline for this group gift has passed. Ask the organiser if they're extending it.",
-      );
+    // Past the deadline the pot stays open while the organiser decides
+    // (DECISION_WINDOW_HOURS): a share then is exactly what finishes the
+    // gift — including the organiser topping it up themselves. After the
+    // window the pot closes, and anything that still lands is refunded.
+    const windowEnds =
+      new Date(pot.deadline).getTime() + DECISION_WINDOW_HOURS * HOUR;
+    if (windowEnds <= Date.now()) {
+      throw new ConflictException('This group gift has closed.');
     }
 
     const remaining = remainingOf(pot);
@@ -324,6 +335,24 @@ export class GroupGiftsService {
         .catch(() => undefined);
       throw err;
     }
+  }
+
+  /**
+   * "Did my share land?" — for the page Paystack returns a contributor
+   * to, with the reference Paystack puts on that address. The reference
+   * is an unguessable id the contributor's own checkout created, and the
+   * answer is one word about that one share, scoped to this pot.
+   */
+  async contributionStatus(
+    token: string,
+    reference: string,
+  ): Promise<{ status: ContributionRow['status'] }> {
+    const pot = await this.repository.findByToken(token);
+    const status = pot
+      ? await this.repository.contributionStatus(pot.id, reference)
+      : null;
+    if (!status) throw new NotFoundException('No such payment for this gift.');
+    return { status };
   }
 
   async organiserView(pot: GroupGiftRow): Promise<GroupGiftOrganiserView> {

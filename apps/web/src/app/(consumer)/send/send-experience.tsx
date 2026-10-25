@@ -11,6 +11,7 @@ import type { OccasionId } from "@/lib/occasions";
 import { Compose, type MessageDraft } from "./compose";
 import { GiftPicker } from "./gift-picker";
 import { ReviewAndPay } from "./review-and-pay";
+import { StartGroupGift } from "./start-group-gift";
 
 type Phase = "gift" | "compose" | "pay";
 
@@ -18,6 +19,8 @@ export interface SendDraft {
   occasion: OccasionId | null;
   gift: GiftCatalogItem | null;
   message: MessageDraft;
+  /** Starting a group gift: the last step sets up the pot instead of paying. */
+  group: boolean;
 }
 
 const EMPTY_MESSAGE: MessageDraft = {
@@ -64,6 +67,7 @@ export function SendExperience({
   allowScheduling,
   allowRecordings,
   companiesOpen,
+  groupGifting = false,
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
@@ -73,12 +77,15 @@ export function SendExperience({
   allowRecordings: boolean;
   /** /company/start is open (CORPORATE_SELF_SERVE): link to it from the gift list. */
   companiesOpen: boolean;
+  /** "Chip in with friends" in the message step (GROUP_GIFTING). */
+  groupGifting?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>("gift");
   const [draft, setDraft] = useState<SendDraft>({
     occasion: null,
     gift: null,
     message: EMPTY_MESSAGE,
+    group: false,
   });
   const currentPhaseIndex = PHASES.findIndex((item) => item.id === phase);
 
@@ -168,11 +175,18 @@ export function SendExperience({
           onChangeGift={() => setPhase("gift")}
           allowScheduling={allowScheduling}
           allowRecordings={allowRecordings}
+          allowGroup={groupGifting}
+          groupMode={draft.group}
+          onChangeGroupMode={(group) => setDraft((prev) => ({ ...prev, group }))}
           onContinue={() => setPhase("pay")}
         />
       )}
 
-      {phase === "pay" && draft.gift && (
+      {phase === "pay" && draft.gift && draft.group && (
+        <StartGroupGift gift={draft.gift} message={draft.message} onBack={() => setPhase("compose")} />
+      )}
+
+      {phase === "pay" && draft.gift && !draft.group && (
         <ReviewAndPay
           gift={draft.gift}
           message={draft.message}

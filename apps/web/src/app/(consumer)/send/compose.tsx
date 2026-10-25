@@ -65,7 +65,10 @@ export function Compose({
   onChangeOccasion,
   onChangeGift,
   allowScheduling,
-  allowRecordings,
+  allowRecordings: recordingsAvailable,
+  allowGroup = false,
+  groupMode = false,
+  onChangeGroupMode,
   onContinue,
 }: {
   gift: GiftCatalogItem;
@@ -76,8 +79,16 @@ export function Compose({
   onChangeGift: () => void;
   allowScheduling: boolean;
   allowRecordings: boolean;
+  /** "Chip in with friends" is on (GROUP_GIFTING). */
+  allowGroup?: boolean;
+  /** Starting a group gift instead of paying alone. */
+  groupMode?: boolean;
+  onChangeGroupMode?: (on: boolean) => void;
   onContinue: () => void;
 }) {
+  // A group gift carries the organiser's written note; voice and video
+  // ride on a single sender's order, so the tabs step aside here.
+  const allowRecordings = recordingsAvailable && !groupMode;
   const [touchedPhone, setTouchedPhone] = useState(false);
   const phoneIsValid = PHONE_PATTERN.test(draft.recipientPhone.trim());
   const isDoorstep = gift.deliveryType === FulfillmentType.Physical;
@@ -167,6 +178,56 @@ export function Compose({
         </span>
       </button>
 
+      {allowGroup && (
+        // One toggle, not a second flow: the recipient, the note and the
+        // reveal preview below are the same either way; only who pays
+        // changes, and that's the next step.
+        <button
+          type="button"
+          role="switch"
+          aria-checked={groupMode}
+          onClick={() => {
+            if (!groupMode) {
+              // An address and a recording don't travel with a group gift.
+              onChangeDraft({
+                ...draft,
+                knowsAddress: false,
+                deliveryAddress: "",
+                deliveryArea: "",
+                deliveryNote: "",
+                messageType: "text",
+                recordedMedia: null,
+              });
+            }
+            onChangeGroupMode?.(!groupMode);
+          }}
+          className="mb-6 flex w-full items-center gap-3 border p-3 text-left transition-colors"
+          style={{
+            borderColor: groupMode ? "var(--gold)" : "var(--border)",
+            background: groupMode ? "var(--gold-glow)" : "transparent",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            className="relative h-5 w-9 flex-shrink-0 rounded-full transition-colors"
+            style={{ background: groupMode ? "var(--gold)" : "var(--panel-raised)" }}
+          >
+            <span
+              className="absolute top-0.5 h-4 w-4 rounded-full transition-all"
+              style={{ left: groupMode ? "18px" : "2px", background: "var(--cream)" }}
+            />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm" style={{ color: "var(--cream)" }}>
+              Chip in with friends
+            </span>
+            <span className="block text-xs" style={{ color: "var(--cream-dim)" }}>
+              Share one link in your WhatsApp group. Everyone pays their own share — no collecting money.
+            </span>
+          </span>
+        </button>
+      )}
+
       <div className="pb-7">
         <h1
           className="font-display text-3xl leading-tight font-normal"
@@ -218,7 +279,7 @@ export function Compose({
           </Field>
         </section>
 
-        {isDoorstep && (
+        {isDoorstep && !groupMode && (
           <section className="flex flex-col gap-4">
             {!draft.knowsAddress ? (
               <button
@@ -472,7 +533,7 @@ export function Compose({
             className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
             style={{ background: "var(--action)", color: "var(--ink)" }}
           >
-            Continue to payment
+            {groupMode ? "Continue to set up the group" : "Continue to payment"}
           </button>
           {!readyForPayment && (
             <p

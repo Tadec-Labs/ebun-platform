@@ -176,6 +176,22 @@ export class GroupGiftsRepository {
     return created;
   }
 
+  /** One checkout's status, scoped to its own pot. */
+  async contributionStatus(
+    groupGiftId: string,
+    reference: string,
+  ): Promise<ContributionStatus | null> {
+    const row = unwrap(
+      (await this.supabase
+        .from('group_gift_contributions')
+        .select('status')
+        .eq('group_gift_id', groupGiftId)
+        .eq('paystack_reference', reference)
+        .maybeSingle()) as Result<{ status: ContributionStatus }>,
+    );
+    return row?.status ?? null;
+  }
+
   /** A checkout Paystack never started: it can never be paid, so it's marked failed. */
   async markContributionFailed(id: string): Promise<void> {
     const { error } = await this.supabase

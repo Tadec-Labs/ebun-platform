@@ -50,6 +50,17 @@ export interface CompanyGift {
   }[];
 }
 
+/**
+ * A gift paid for by a group pot: who chipped in and their lines. The
+ * lines arrive null until a doorstep gift is delivered — the API holds
+ * them back with the main message, not just this screen.
+ */
+export interface GroupGift {
+  organiserName: string | null;
+  contributorCount: number;
+  contributors: { name: string; message: string | null }[];
+}
+
 export interface RevealMessage {
   type: "text" | "voice" | "video";
   text?: string | null;
@@ -127,6 +138,8 @@ export interface RevealPayload {
   messageLocked?: boolean;
   /** Sent by a company campaign. */
   company?: CompanyGift;
+  /** Paid for by a group of friends. */
+  group?: GroupGift;
 }
 
 /** Mirrors apps/api's RecipientDeliveryView (deliveries.service.ts). */

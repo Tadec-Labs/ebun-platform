@@ -46,3 +46,14 @@ export function mediaMessagesEnabled(): boolean {
 export function corporateSelfServeEnabled(): boolean {
   return process.env.CORPORATE_SELF_SERVE === "true";
 }
+
+/**
+ * true  → the send flow offers "Chip in with friends", which starts a
+ *         group gift instead of paying alone. The API needs
+ *         GROUP_GIFTING=true as well.
+ * unset → the toggle is hidden. Pots already running keep working: their
+ *         pages, the organiser's page and every refund.
+ */
+export function groupGiftingEnabled(): boolean {
+  return process.env.GROUP_GIFTING === "true";
+}

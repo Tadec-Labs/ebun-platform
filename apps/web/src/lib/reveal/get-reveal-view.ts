@@ -2,7 +2,7 @@ import { FulfillmentType, OrderStatus, RedemptionStatus } from "@ebun/types";
 import { API_BASE_URL } from "@/lib/api-config";
 import { renderQrSvg } from "./qr";
 import { deriveScreenState } from "./types";
-import type { CompanyGift, DeliveryDetails } from "./types";
+import type { CompanyGift, DeliveryDetails, GroupGift } from "./types";
 import type { RevealPayload, RevealScreenState } from "./types";
 
 /**
@@ -56,6 +56,7 @@ interface ApiRevealView {
   delivery?: DeliveryDetails;
   messageLocked?: boolean;
   company?: CompanyGift;
+  group?: GroupGift;
 }
 
 export type RevealFetchResult =
@@ -174,6 +175,7 @@ export async function toPayload(view: ApiRevealView): Promise<RevealPayload> {
     delivery: view.delivery,
     messageLocked: view.messageLocked,
     company: view.company,
+    group: view.group,
   };
 
   if (view.redemption) {

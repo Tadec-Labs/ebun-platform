@@ -50,6 +50,19 @@ export class GroupGiftsController {
     return this.groupGifts.publicView(token);
   }
 
+  /** Polled by the page Paystack returns a contributor to. */
+  @Get(':token/contributions/:reference')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  contributionStatus(
+    @Param('token', new ParseUUIDPipe()) token: string,
+    @Param('reference') reference: string,
+  ) {
+    if (!/^ebgrp_[0-9a-f-]{36}$/i.test(reference)) {
+      throw new NotFoundException('No such payment for this gift.');
+    }
+    return this.groupGifts.contributionStatus(token, reference);
+  }
+
   /** Each call opens a Paystack checkout. 20 per 10 minutes per IP. */
   @Post(':token/contributions')
   @Throttle({ default: { limit: 20, ttl: 600_000 } })

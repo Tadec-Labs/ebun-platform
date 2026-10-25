@@ -88,7 +88,11 @@ describe('GroupGiftsService', () => {
   >;
   let gifts: { findAvailableById: jest.Mock; findById: jest.Mock };
   let users: { findOrCreateGuestSender: jest.Mock; findById: jest.Mock };
-  let pricing: { priceGift: jest.Mock; serviceFeeFor: jest.Mock };
+  let pricing: {
+    priceGift: jest.Mock;
+    serviceFeeFor: jest.Mock;
+    servicePolicy: jest.Mock;
+  };
   let paystack: { initializeTransaction: jest.Mock };
   let funding: { afterFunded: jest.Mock; kickRefunds: jest.Mock };
   let audit: { record: jest.Mock };
@@ -141,6 +145,9 @@ describe('GroupGiftsService', () => {
         serviceFee: 150_000,
         total: value + 300_000,
       })),
+      servicePolicy: jest
+        .fn()
+        .mockReturnValue({ rateBps: 500, minKobo: 30_000, maxKobo: 150_000 }),
       // 5%, floor ₦300 — the numbers-sheet policy.
       serviceFeeFor: jest
         .fn()
@@ -236,6 +243,12 @@ describe('GroupGiftsService', () => {
       expect(json).not.toContain('+234');
       expect(json).not.toContain('Happy birthday');
       expect(view.remaining).toBe(3_000_000);
+      // The page shows each share's fee from the same rule the API charges.
+      expect(view.serviceFee).toEqual({
+        rateBps: 500,
+        minKobo: 30_000,
+        maxKobo: 150_000,
+      });
     });
 
     it('shows amounts when the organiser chose to', async () => {
@@ -312,7 +325,16 @@ describe('GroupGiftsService', () => {
       ).resolves.toMatchObject({ amount: 50_000 });
     });
 
-    it('refuses a pot that is funded, closed, or past its deadline', async () => {
+    it('still takes shares after the deadline while the organiser decides — that is how a pot gets finished', async () => {
+      repository.findByToken.mockResolvedValue(
+        pot({ deadline: new Date(Date.now() - 2 * HOUR).toISOString() }),
+      );
+      await expect(
+        sut.contribute('share-token', { ...share, amountNaira: 5_000 }),
+      ).resolves.toMatchObject({ amount: 500_000 });
+    });
+
+    it('refuses a pot that is funded, closed, or past its decision window', async () => {
       repository.findByToken.mockResolvedValueOnce(
         pot({ status: 'triggered' }),
       );
@@ -328,7 +350,7 @@ describe('GroupGiftsService', () => {
       ).rejects.toThrow(ConflictException);
 
       repository.findByToken.mockResolvedValueOnce(
-        pot({ deadline: new Date(Date.now() - 60_000).toISOString() }),
+        pot({ deadline: new Date(Date.now() - 49 * HOUR).toISOString() }),
       );
       await expect(
         sut.contribute('share-token', { ...share, amountNaira: 5_000 }),
@@ -356,6 +378,23 @@ describe('GroupGiftsService', () => {
         { get: () => undefined } as never,
       );
       expect(off.isEnabled()).toBe(false);
+    });
+  });
+
+  describe('contributionStatus', () => {
+    it("answers for a share of this pot, and nothing for another pot's", async () => {
+      (repository as unknown as Record<string, jest.Mock>).contributionStatus =
+        jest
+          .fn()
+          .mockResolvedValueOnce('confirmed')
+          .mockResolvedValueOnce(null);
+
+      await expect(
+        sut.contributionStatus('share-token', 'ebgrp_1'),
+      ).resolves.toEqual({ status: 'confirmed' });
+      await expect(
+        sut.contributionStatus('share-token', 'ebgrp_other'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
