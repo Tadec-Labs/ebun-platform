@@ -23,6 +23,7 @@ import { DeliveriesService } from '../deliveries/deliveries.service';
 import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 import type { DeliveryDetailsInput } from '../deliveries/deliveries.service';
 import { CampaignGiftsService } from '../corporate/campaign-gifts.service';
+import { GroupGiftsService } from '../group-gifts/group-gifts.service';
 
 const PRE_REVEAL_STATES = new Set([
   OrderStatus.VoucherIssued,
@@ -89,6 +90,7 @@ export class RevealService {
     private readonly deliveries: DeliveriesService,
     private readonly alerts: VendorAlertsService,
     private readonly campaignGifts: CampaignGiftsService,
+    private readonly groupGifts: GroupGiftsService,
     @Inject(MEDIA_URL_RESOLVER)
     private readonly mediaResolver: MediaUrlResolver,
   ) {}
@@ -487,8 +489,25 @@ export class RevealService {
     const messageReleased =
       !isPhysical || PHYSICAL_MESSAGE_RELEASED_STATES.has(order.status);
 
+    const group = order.group_gift_id
+      ? await this.groupGifts.revealInfo(order.group_gift_id)
+      : null;
+    if (group) {
+      view.group = {
+        organiserName: group.organiserName,
+        contributorCount: group.contributorCount,
+        // Everyone's lines are part of the message: same lock.
+        contributors: group.contributors.map((c) => ({
+          name: c.name,
+          message: messageReleased ? c.message : null,
+        })),
+      };
+    }
+
     if (!messageReleased) {
-      view.messageLocked = order.message_type !== null;
+      view.messageLocked =
+        order.message_type !== null ||
+        Boolean(group?.contributors.some((c) => c.message));
     } else if (order.message_type === 'text') {
       view.message = { type: 'text', text: order.sender_message };
     } else if (

@@ -108,6 +108,11 @@ class EnvironmentVariables {
   @IsString()
   CORPORATE_SELF_SERVE?: string;
 
+  /** "true" opens group gifting: starting a pot and chipping in. Unset = both are 404s; pots already running keep working. */
+  @IsOptional()
+  @IsString()
+  GROUP_GIFTING?: string;
+
   /** Minutes before an unacknowledged delivery or booking is escalated. Default 30. */
   @IsOptional()
   @IsString()

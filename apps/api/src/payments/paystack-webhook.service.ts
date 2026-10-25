@@ -13,6 +13,7 @@ import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orche
 import { RefundsService } from '../refunds/refunds.service';
 import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import { CampaignFundingService } from '../corporate/campaign-funding.service';
+import { GroupGiftFundingService } from '../group-gifts/group-gift-funding.service';
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 import { verifyPaystackSignature } from './paystack-signature.util';
 
@@ -32,6 +33,7 @@ export class PaystackWebhookService {
     private readonly refunds: RefundsService,
     private readonly autoPayouts: AutoPayoutsService,
     private readonly campaigns: CampaignFundingService,
+    private readonly groupGifts: GroupGiftFundingService,
   ) {}
 
   async handle(
@@ -57,12 +59,17 @@ export class PaystackWebhookService {
     }
 
     if (payload.event.startsWith('refund.')) {
-      // Progress of a refund started from /ops. Idempotent by nature
-      // (it sets a status), so no idempotency claim is needed.
-      await this.refunds.applyPaystackRefundEvent(
-        payload.event,
-        payload.data.transaction_reference ?? payload.data.reference,
-      );
+      // Progress of a refund. Idempotent by nature (it sets a status), so
+      // no idempotency claim is needed. A group gift share's refund is
+      // matched on its own contribution; every other refund was started
+      // from /ops against an order.
+      const refunded =
+        payload.data.transaction_reference ?? payload.data.reference;
+      if (this.groupGifts.isGroupReference(refunded)) {
+        await this.groupGifts.applyRefundEvent(payload.event, refunded);
+        return;
+      }
+      await this.refunds.applyPaystackRefundEvent(payload.event, refunded);
       return;
     }
 
@@ -86,6 +93,18 @@ export class PaystackWebhookService {
       // idempotent and checks the amount itself, so no idempotency claim
       // here: a redelivery after a failed attempt should get to try again.
       await this.campaigns.applyPayment(
+        charge.reference,
+        charge.amount,
+        String(charge.id),
+      );
+      return;
+    }
+
+    if (this.groupGifts.isGroupReference(charge.reference)) {
+      // One person's share of a group gift. confirm_group_contribution()
+      // is idempotent and checks the amount itself, so no idempotency
+      // claim: a redelivery after a transient failure must get to retry.
+      await this.groupGifts.applyPayment(
         charge.reference,
         charge.amount,
         String(charge.id),

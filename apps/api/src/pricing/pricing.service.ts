@@ -38,6 +38,15 @@ export class PricingService {
    * The service fee is on the gift alone, never on the delivery fee:
    * SendEbun doesn't earn a cut of the rider's money.
    */
+  /**
+   * The same service fee on any amount a person pays towards a gift —
+   * a group gift share, for one. Each share is its own Paystack payment,
+   * so each carries its own fee (with the same floor and ceiling).
+   */
+  serviceFeeFor(amountKobo: number): number {
+    return computeServiceFee(amountKobo, this.policy);
+  }
+
   priceGift(giftValue: number, deliveryType?: FulfillmentType): GiftPrice {
     const serviceFee = computeServiceFee(giftValue, this.policy);
     const deliveryFee =

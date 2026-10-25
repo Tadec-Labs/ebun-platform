@@ -9,6 +9,7 @@ import { DeliveriesModule } from '../deliveries/deliveries.module';
 import { AlertsModule } from '../alerts/alerts.module';
 import { MediaModule } from '../media/media.module';
 import { CorporateModule } from '../corporate/corporate.module';
+import { GroupGiftsModule } from '../group-gifts/group-gifts.module';
 import { RevealController } from './reveal.controller';
 import { RevealService } from './reveal.service';
 
@@ -24,6 +25,7 @@ import { RevealService } from './reveal.service';
     AuditModule,
     MediaModule,
     CorporateModule,
+    GroupGiftsModule,
   ],
   controllers: [RevealController],
   providers: [RevealService],

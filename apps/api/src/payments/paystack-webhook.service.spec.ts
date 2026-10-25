@@ -10,6 +10,7 @@ import { FulfillmentOrchestratorService } from '../fulfillment/fulfillment-orche
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 import { RefundsService } from '../refunds/refunds.service';
 import { CampaignFundingService } from '../corporate/campaign-funding.service';
+import { GroupGiftFundingService } from '../group-gifts/group-gift-funding.service';
 
 const SECRET = 'sk_test_fake_secret';
 
@@ -46,7 +47,19 @@ describe('PaystackWebhookService', () => {
 
   let autoPayouts: { applyTransferEvent: jest.Mock };
   let campaigns: { isCampaignReference: jest.Mock; applyPayment: jest.Mock };
+  let groupGifts: {
+    isGroupReference: jest.Mock;
+    applyPayment: jest.Mock;
+    applyRefundEvent: jest.Mock;
+  };
   beforeEach(async () => {
+    groupGifts = {
+      isGroupReference: jest.fn(
+        (ref: unknown) => typeof ref === 'string' && ref.startsWith('ebgrp_'),
+      ),
+      applyPayment: jest.fn().mockResolvedValue(undefined),
+      applyRefundEvent: jest.fn().mockResolvedValue(undefined),
+    };
     campaigns = {
       isCampaignReference: jest.fn(
         (ref: string) => typeof ref === 'string' && ref.startsWith('ebcmp_'),
@@ -80,6 +93,7 @@ describe('PaystackWebhookService', () => {
         { provide: RefundsService, useValue: refunds },
         { provide: AutoPayoutsService, useValue: autoPayouts },
         { provide: CampaignFundingService, useValue: campaigns },
+        { provide: GroupGiftFundingService, useValue: groupGifts },
       ],
     }).compile();
 
@@ -99,6 +113,61 @@ describe('PaystackWebhookService', () => {
     expect(ordersService.findByPaystackReference).not.toHaveBeenCalled();
     // fund_campaign is idempotent itself; a redelivery must reach it.
     expect(idempotency.claim).not.toHaveBeenCalled();
+  });
+
+  it("routes a group gift share's payment to the pot, not to an order", async () => {
+    const { raw, signature, dto } = makePayload({ reference: 'ebgrp_abc' });
+
+    await sut.handle(raw, signature, dto);
+
+    expect(groupGifts.applyPayment).toHaveBeenCalledWith(
+      'ebgrp_abc',
+      500000,
+      '999',
+    );
+    expect(ordersService.findByPaystackReference).not.toHaveBeenCalled();
+    // confirm_group_contribution is idempotent; a redelivery must reach it.
+    expect(idempotency.claim).not.toHaveBeenCalled();
+  });
+
+  it('refuses a group gift payment with a bad signature before touching it', async () => {
+    const { raw, dto } = makePayload({ reference: 'ebgrp_abc' });
+
+    await expect(sut.handle(raw, 'bad', dto)).rejects.toThrow();
+    expect(groupGifts.applyPayment).not.toHaveBeenCalled();
+  });
+
+  it("sends a group gift share's refund progress to the pot, and an order's to refunds", async () => {
+    const share = makePayload({
+      transaction_reference: 'ebgrp_abc',
+    });
+    share.dto.event = 'refund.processed';
+    const shareRaw = Buffer.from(JSON.stringify(share.dto));
+    await sut.handle(
+      shareRaw,
+      createHmac('sha512', SECRET).update(shareRaw).digest('hex'),
+      share.dto,
+    );
+    expect(groupGifts.applyRefundEvent).toHaveBeenCalledWith(
+      'refund.processed',
+      'ebgrp_abc',
+    );
+    expect(refunds.applyPaystackRefundEvent).not.toHaveBeenCalled();
+
+    const order = makePayload({
+      transaction_reference: 'ebun_xyz',
+    });
+    order.dto.event = 'refund.processed';
+    const orderRaw = Buffer.from(JSON.stringify(order.dto));
+    await sut.handle(
+      orderRaw,
+      createHmac('sha512', SECRET).update(orderRaw).digest('hex'),
+      order.dto,
+    );
+    expect(refunds.applyPaystackRefundEvent).toHaveBeenCalledWith(
+      'refund.processed',
+      'ebun_xyz',
+    );
   });
 
   it('refuses a campaign payment with a bad signature before touching it', async () => {

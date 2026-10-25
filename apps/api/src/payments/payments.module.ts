@@ -7,6 +7,7 @@ import { PaystackWebhookService } from './paystack-webhook.service';
 import { RefundsModule } from '../refunds/refunds.module';
 import { PayoutsModule } from '../payouts/payouts.module';
 import { CorporateModule } from '../corporate/corporate.module';
+import { GroupGiftsModule } from '../group-gifts/group-gifts.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { CorporateModule } from '../corporate/corporate.module';
     RefundsModule,
     PayoutsModule,
     CorporateModule,
+    GroupGiftsModule,
   ],
   controllers: [PaymentsController],
   providers: [PaystackWebhookService],

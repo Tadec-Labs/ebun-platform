@@ -19,6 +19,7 @@ import { OverviewModule } from './overview/overview.module';
 import { JobsModule } from './jobs/jobs.module';
 import { RefundsModule } from './refunds/refunds.module';
 import { CorporateModule } from './corporate/corporate.module';
+import { GroupGiftsModule } from './group-gifts/group-gifts.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { CorporateModule } from './corporate/corporate.module';
     JobsModule,
     RefundsModule,
     CorporateModule,
+    GroupGiftsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

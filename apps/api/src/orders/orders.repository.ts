@@ -52,6 +52,8 @@ export interface OrderRow {
   pickup_no_shows?: number;
   /** Company campaign gifts only — selected by findById() and findByRevealToken(). */
   campaign_id?: string | null;
+  /** Group gift orders only — selected by findByRevealToken(). */
+  group_gift_id?: string | null;
   gift_chosen_at?: string | null;
   [key: string]: unknown;
 }
@@ -154,7 +156,7 @@ export class OrdersRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, pickup_no_shows, campaign_id, gift_chosen_at',
+        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, pickup_no_shows, campaign_id, gift_chosen_at, group_gift_id',
       )
       .eq('reveal_token', revealToken)
       .maybeSingle()) as {

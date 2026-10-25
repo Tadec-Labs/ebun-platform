@@ -15,6 +15,8 @@ import { CorporateModule } from '../corporate/corporate.module';
 import { CampaignJob } from './campaign.job';
 import { DeliveriesModule } from '../deliveries/deliveries.module';
 import { AddressNudgeJob } from './address-nudge.job';
+import { GroupGiftsModule } from '../group-gifts/group-gifts.module';
+import { GroupGiftJob } from './group-gift.job';
 
 /**
  * Every recurring job in one module, rather than a @Cron scattered
@@ -40,10 +42,12 @@ import { AddressNudgeJob } from './address-nudge.job';
     PayoutsModule,
     CorporateModule,
     DeliveriesModule,
+    GroupGiftsModule,
   ],
   providers: [
     AddressNudgeJob,
     CampaignJob,
+    GroupGiftJob,
     AutoPayoutJob,
     ScheduledSendJob,
     ExpiryJob,

@@ -13,6 +13,7 @@ import { OrderTransitionConflictException } from '../orders/exceptions/order-tra
 import { DeliveriesService } from '../deliveries/deliveries.service';
 import { VendorAlertsService } from '../alerts/vendor-alerts.service';
 import { CampaignGiftsService } from '../corporate/campaign-gifts.service';
+import { GroupGiftsService } from '../group-gifts/group-gifts.service';
 
 function makeOrder(overrides: Partial<OrderRow> = {}): OrderRow {
   return {
@@ -60,6 +61,7 @@ describe('RevealService', () => {
     setRecipientDetails: jest.Mock;
     markOpened: jest.Mock;
   };
+  let groupGifts: { revealInfo: jest.Mock };
   let campaignGifts: {
     revealInfo: jest.Mock;
     choose: jest.Mock;
@@ -93,6 +95,8 @@ describe('RevealService', () => {
       markOpened: jest.fn().mockResolvedValue(undefined),
     };
 
+    groupGifts = { revealInfo: jest.fn().mockResolvedValue(null) };
+
     campaignGifts = {
       revealInfo: jest.fn().mockResolvedValue(null),
       choose: jest.fn().mockResolvedValue(undefined),
@@ -122,6 +126,7 @@ describe('RevealService', () => {
         { provide: VendorAlertsService, useValue: alerts },
         { provide: MEDIA_URL_RESOLVER, useValue: mediaResolver },
         { provide: CampaignGiftsService, useValue: campaignGifts },
+        { provide: GroupGiftsService, useValue: groupGifts },
       ],
     }).compile();
 
@@ -287,6 +292,66 @@ describe('RevealService', () => {
 
       expect(view.message).toEqual({ type: 'text', text: 'Happy birthday!' });
       expect(view.messageLocked).toBeUndefined();
+    });
+
+    describe('paid for by a group', () => {
+      const group = {
+        organiserName: 'Bisi',
+        contributorCount: 2,
+        contributors: [
+          { name: 'Bisi', message: 'From all of us!' },
+          { name: 'Chidi', message: null },
+        ],
+      };
+
+      it("holds back everyone's lines until the gift arrives, but says who chipped in", async () => {
+        groupGifts.revealInfo.mockResolvedValue(group);
+        orders.findByRevealToken.mockResolvedValue(
+          makeOrder({
+            status: OrderStatus.FulfillmentInProgress,
+            group_gift_id: 'pot-1',
+          }),
+        );
+
+        const view = await sut.view('token');
+
+        expect(groupGifts.revealInfo).toHaveBeenCalledWith('pot-1');
+        expect(view.group?.contributorCount).toBe(2);
+        expect(view.group?.contributors.map((c) => c.name)).toEqual([
+          'Bisi',
+          'Chidi',
+        ]);
+        // Server-side lock: no line is in the payload before delivery.
+        expect(view.group?.contributors.every((c) => c.message === null)).toBe(
+          true,
+        );
+        expect(view.messageLocked).toBe(true);
+      });
+
+      it("shows everyone's lines once delivered", async () => {
+        groupGifts.revealInfo.mockResolvedValue(group);
+        orders.findByRevealToken.mockResolvedValue(
+          makeOrder({ status: OrderStatus.Delivered, group_gift_id: 'pot-1' }),
+        );
+
+        const view = await sut.view('token');
+
+        expect(view.group?.contributors[0]).toEqual({
+          name: 'Bisi',
+          message: 'From all of us!',
+        });
+      });
+
+      it('never looks up a group for an ordinary gift', async () => {
+        orders.findByRevealToken.mockResolvedValue(
+          makeOrder({ status: OrderStatus.Delivered }),
+        );
+
+        const view = await sut.view('token');
+
+        expect(groupGifts.revealInfo).not.toHaveBeenCalled();
+        expect(view.group).toBeUndefined();
+      });
     });
 
     it('accepting a delivered gift marks it opened (fulfilled)', async () => {

@@ -89,6 +89,15 @@ export interface RevealView {
    * words around what it has.
    */
   collected?: { at: string | null; placeName: string | null };
+  /**
+   * Gifts paid for by a group pot: who chipped in and their lines. Held
+   * back with the main message while a doorstep gift is on its way.
+   */
+  group?: {
+    organiserName: string | null;
+    contributorCount: number;
+    contributors: { name: string; message: string | null }[];
+  };
   /** Gifts sent by a company campaign. */
   company?: {
     companyName: string;
