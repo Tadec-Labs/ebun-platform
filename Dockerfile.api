@@ -1,0 +1,28 @@
+FROM node:24-bookworm-slim AS build
+
+RUN npm install --global pnpm@11.21.0
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api ./apps/api
+COPY packages/types ./packages/types
+
+RUN pnpm --filter @ebun/api... install --frozen-lockfile
+RUN pnpm --filter @ebun/types build
+RUN pnpm --filter @ebun/api build
+
+FROM node:24-bookworm-slim AS runtime
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3001
+
+COPY --from=build --chown=node:node /app /app
+
+USER node
+
+EXPOSE 3001
+
+CMD ["node", "apps/api/dist/main"]
