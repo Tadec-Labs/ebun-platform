@@ -86,6 +86,9 @@ describe('CreateOrderService', () => {
     // asked for exactly that total
     expect(orders.create).toHaveBeenCalledWith(
       expect.objectContaining({
+        // Stored on the order: the users row found by email may carry
+        // a name someone else typed with that email.
+        senderName: 'Sender Name',
         giftValue: 500000,
         deliveryFee: 0,
         serviceFee: 25000,

@@ -194,6 +194,7 @@ export class GroupGiftsService {
     const pot = await this.repository.create({
       gift_template_id: template.id,
       organiser_id: organiser.id,
+      organiser_name: dto.organiserName,
       recipient_name: dto.recipientName,
       recipient_phone: dto.recipientPhone,
       target_amount: target,
@@ -233,12 +234,13 @@ export class GroupGiftsService {
       this.repository.contributions(pot.id),
     ]);
     const remaining = remainingOf(pot);
+    const organiserName = organiserNameOf(pot, organiser);
 
     return {
       status: publicStatus(pot),
       gift: giftSummary(template),
       recipientFirstName: firstName(pot.recipient_name),
-      organiserFirstName: organiser?.name ? firstName(organiser.name) : null,
+      organiserFirstName: organiserName ? firstName(organiserName) : null,
       targetAmount: pot.target_amount,
       amountRaised: pot.amount_raised,
       remaining,
@@ -514,7 +516,7 @@ export class GroupGiftsService {
     ]);
     const paid = contributions.filter((c) => c.status === 'confirmed');
     return {
-      organiserName: organiser?.name ?? null,
+      organiserName: organiserNameOf(pot, organiser),
       contributorCount: paid.length,
       contributors: paid.map((c) => ({
         name: c.contributor_name,
@@ -522,6 +524,17 @@ export class GroupGiftsService {
       })),
     };
   }
+}
+
+/**
+ * The name typed when the pot was started. Older pots fall back to the
+ * users row, which is shared by everyone who ever typed that email.
+ */
+function organiserNameOf(
+  pot: GroupGiftRow,
+  organiser: { name: string | null } | null,
+): string | null {
+  return pot.organiser_name ?? organiser?.name ?? null;
 }
 
 function remainingOf(pot: GroupGiftRow): number {

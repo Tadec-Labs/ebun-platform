@@ -59,6 +59,8 @@ export interface OpenDeliveryRow extends DeliveryFulfillmentRow {
 /** A doorstep gift still waiting for its address, with what the sender nudge needs. */
 export interface AwaitingAddressRow {
   id: string;
+  /** As typed at checkout; null on older orders. */
+  sender_name: string | null;
   recipient_name: string;
   recipient_phone: string;
   reveal_token: string;
@@ -307,7 +309,7 @@ export class DeliveriesRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, recipient_name, recipient_phone, reveal_token, address_nudges, created_at, expires_at, gift_templates!gift_template_id!inner(name, delivery_type), users!sender_id(email, name)',
+        'id, sender_name, recipient_name, recipient_phone, reveal_token, address_nudges, created_at, expires_at, gift_templates!gift_template_id!inner(name, delivery_type), users!sender_id(email, name)',
       )
       .eq('status', OrderStatus.FulfillmentInProgress)
       .is('delivery_address', null)

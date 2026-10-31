@@ -15,6 +15,8 @@ export interface GroupGiftRow {
   id: string;
   gift_template_id: string;
   organiser_id: string;
+  /** As typed when the pot was started; null on pots from before 20261031090000. */
+  organiser_name: string | null;
   recipient_name: string;
   recipient_phone: string;
   target_amount: number;
@@ -61,7 +63,7 @@ export interface ContributionRow {
 export type ConfirmResult = 'confirmed' | 'funded' | 'late' | 'already_applied';
 
 const POT_COLUMNS =
-  'id, gift_template_id, organiser_id, recipient_name, recipient_phone, target_amount, amount_raised, contributor_count, status, deadline, token, organiser_token, reveal_theme, sender_message, linked_order_id, gift_value, delivery_fee, send_at, show_amounts, deadline_extended, funded_at, closed_at, close_reason, created_at';
+  'id, gift_template_id, organiser_id, organiser_name, recipient_name, recipient_phone, target_amount, amount_raised, contributor_count, status, deadline, token, organiser_token, reveal_theme, sender_message, linked_order_id, gift_value, delivery_fee, send_at, show_amounts, deadline_extended, funded_at, closed_at, close_reason, created_at';
 
 const CONTRIBUTION_COLUMNS =
   'id, group_gift_id, contributor_name, contributor_email, contributor_phone, amount, service_fee, total_amount, message, paystack_reference, status, confirmed_at, refund_status, refund_amount, refund_attempts, refund_error, created_at';
@@ -88,6 +90,7 @@ export class GroupGiftsRepository {
   async create(row: {
     gift_template_id: string;
     organiser_id: string;
+    organiser_name: string;
     recipient_name: string;
     recipient_phone: string;
     target_amount: number;

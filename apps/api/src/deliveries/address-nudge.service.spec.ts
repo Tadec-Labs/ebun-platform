@@ -13,6 +13,7 @@ const HOURS = (h: number) =>
 function row(overrides: Partial<AwaitingAddressRow> = {}): AwaitingAddressRow {
   return {
     id: 'order-1',
+    sender_name: null,
     recipient_name: 'Kachi Obi',
     recipient_phone: '+2348031234567',
     reveal_token: 'tok-123',
@@ -58,6 +59,14 @@ describe('AddressNudgeService', () => {
     expect(message.to).toBe('tolu@example.com');
     expect(message.text).toContain('https://wa.me/2348031234567?text=');
     expect(message.text).toContain('https://app.ebun.com.ng/reveal/tok-123');
+  });
+
+  it('greets the sender by the name typed for this gift, not the one saved with their email', async () => {
+    repo.awaitingAddress.mockResolvedValue([row({ sender_name: 'Theo' })]);
+
+    await sut.nudgeDue(NOW);
+
+    expect(sent()[0][0].text).toMatch(/^Hi Theo,/);
   });
 
   it('waits until day 3 for the second nudge', async () => {

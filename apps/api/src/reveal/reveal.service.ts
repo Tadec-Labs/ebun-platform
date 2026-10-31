@@ -449,6 +449,9 @@ export class RevealService {
     const company = order.campaign_id
       ? await this.campaignGifts.revealInfo(order)
       : null;
+    const group = order.group_gift_id
+      ? await this.groupGifts.revealInfo(order.group_gift_id)
+      : null;
 
     const view: RevealView = {
       viewState,
@@ -457,7 +460,7 @@ export class RevealService {
       recipientName: order.recipient_name,
       senderName: company
         ? (company.senderDisplayName ?? company.companyName)
-        : (sender?.name ?? null),
+        : senderNameFor(order, group, sender),
       giftName: giftTemplate.name,
       giftDescription: giftTemplate.description,
       giftImageUrl: giftTemplate.image_url,
@@ -489,9 +492,6 @@ export class RevealService {
     const messageReleased =
       !isPhysical || PHYSICAL_MESSAGE_RELEASED_STATES.has(order.status);
 
-    const group = order.group_gift_id
-      ? await this.groupGifts.revealInfo(order.group_gift_id)
-      : null;
     if (group) {
       view.group = {
         organiserName: group.organiserName,
@@ -643,4 +643,18 @@ function formatNotice(minutes: number): string {
     return `${hours} hour${hours === 1 ? '' : 's'}`;
   }
   return `${minutes} minutes`;
+}
+
+/**
+ * Who the gift is from: the name typed for this gift. A group gift is
+ * from its organiser. Only orders from before sender_name existed fall
+ * back to the users row, which is keyed by email and so may hold a name
+ * someone else typed with that email.
+ */
+function senderNameFor(
+  order: OrderRow,
+  group: { organiserName: string | null } | null,
+  sender: { name: string | null } | null,
+): string | null {
+  return order.sender_name ?? group?.organiserName ?? sender?.name ?? null;
 }

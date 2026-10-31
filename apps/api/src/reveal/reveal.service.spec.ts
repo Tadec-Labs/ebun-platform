@@ -420,6 +420,34 @@ describe('RevealService', () => {
       expect(result.recipientName).toBe('Ada');
     });
 
+    it('shows the name typed for this gift, not the one saved with the email', async () => {
+      // users.findById returns 'Chidi': whoever first used that email.
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.ReadyForRedemption,
+          sender_name: 'Theo',
+        }),
+      );
+
+      expect((await sut.view('reveal-token-1')).senderName).toBe('Theo');
+    });
+
+    it('says a group gift is from its organiser', async () => {
+      groupGifts.revealInfo.mockResolvedValue({
+        organiserName: 'Theo',
+        contributorCount: 0,
+        contributors: [],
+      });
+      orders.findByRevealToken.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.ReadyForRedemption,
+          group_gift_id: 'pot-1',
+        }),
+      );
+
+      expect((await sut.view('reveal-token-1')).senderName).toBe('Theo');
+    });
+
     it('also transitions voucher_issued -> reveal_opened on first view', async () => {
       orders.findByRevealToken.mockResolvedValue(
         makeOrder({ status: OrderStatus.VoucherIssued }),

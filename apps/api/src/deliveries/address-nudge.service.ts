@@ -78,7 +78,8 @@ export class AddressNudgeService {
     const gift = row.gift_templates?.name ?? 'your gift';
     const message = `Hi ${name}, you have a gift waiting 🎁 Open it here and tell them where to bring it: ${link}`;
     const whatsapp = `https://wa.me/${row.recipient_phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
-    const sender = row.users?.name ? firstName(row.users.name) : 'there';
+    const senderName = row.sender_name ?? row.users?.name;
+    const sender = senderName ? firstName(senderName) : 'there';
     return [
       `Hi ${sender},`,
       '',

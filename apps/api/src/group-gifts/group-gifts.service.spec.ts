@@ -19,6 +19,7 @@ function pot(overrides: Partial<GroupGiftRow> = {}): GroupGiftRow {
     id: 'pot-1',
     gift_template_id: 'template-1',
     organiser_id: 'organiser-1',
+    organiser_name: null,
     recipient_name: 'Tolu Adebayo',
     recipient_phone: '+2348011111111',
     target_amount: 5_000_000,
@@ -251,6 +252,17 @@ describe('GroupGiftsService', () => {
       });
     });
 
+    it('names the organiser as they typed it, even when their email was first used under another name', async () => {
+      users.findById.mockResolvedValue({ id: 'organiser-1', name: 'Cecilia' });
+      repository.findByToken.mockResolvedValue(
+        pot({ organiser_name: 'Theo Olawuyi' }),
+      );
+
+      expect((await sut.publicView('share-token')).organiserFirstName).toBe(
+        'Theo',
+      );
+    });
+
     it('shows amounts when the organiser chose to', async () => {
       repository.findByToken.mockResolvedValue(pot({ show_amounts: true }));
       repository.contributions.mockResolvedValue([contribution()]);
@@ -477,7 +489,32 @@ describe('GroupGiftsService', () => {
     });
   });
 
+  describe('create: who the pot is from', () => {
+    it('keeps the name typed for this pot, not the one saved with the email', async () => {
+      await sut.create({
+        giftTemplateId: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b',
+        organiserName: 'Theo',
+        organiserEmail: 'shared@example.com',
+        recipientName: 'Tolu Adebayo',
+        recipientPhone: '+2348011111111',
+        deadline: new Date(Date.now() + 3 * DAY).toISOString(),
+      });
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ organiser_name: 'Theo' }),
+      );
+    });
+  });
+
   describe('revealInfo', () => {
+    it('prefers the name typed for the pot over the saved one', async () => {
+      users.findById.mockResolvedValue({ id: 'organiser-1', name: 'Eunice' });
+      repository.findById.mockResolvedValue(pot({ organiser_name: 'Theo' }));
+      repository.contributions.mockResolvedValue([]);
+
+      expect((await sut.revealInfo('pot-1'))?.organiserName).toBe('Theo');
+    });
+
     it('lists who paid for the gift and their lines, leaving out refunded late payers', async () => {
       repository.contributions.mockResolvedValue([
         contribution(),

@@ -156,6 +156,9 @@ export class CreateOrderService {
 
     const order = await createOrder({
       senderId: sender.id,
+      // The name typed for this gift. The users row found by email may
+      // carry a name someone else typed with that email.
+      senderName: dto.senderName.trim() || null,
       giftTemplateId: giftTemplate.id,
       recipientName: dto.recipientName,
       recipientPhone: dto.recipientPhone,

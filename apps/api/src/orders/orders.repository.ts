@@ -35,6 +35,8 @@ export interface OrderRow {
   // Below: only populated by findByRevealToken() — same "typed as
   // required, but only true for the method that actually selects them"
   // convention noted above for total_amount/gift_template_id etc.
+  /** The name typed at checkout for this gift; null on older, company and group orders. */
+  sender_name?: string | null;
   sender_id: string | null; // nullable — guest senders w/ auth_id null still get a users row, but sender_id itself can be null if that user was later deleted (on delete set null)
   sender_message: string | null;
   message_type: 'text' | 'voice' | 'video' | null;
@@ -72,6 +74,8 @@ export interface UpcomingPickupRow {
 
 export interface CreateOrderParams {
   senderId: string;
+  /** As typed at checkout: the reveal shows this, not the users row (see 20261031090000). */
+  senderName: string | null;
   giftTemplateId: string;
   recipientName: string;
   recipientPhone: string;
@@ -156,7 +160,7 @@ export class OrdersRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, pickup_no_shows, campaign_id, gift_chosen_at, group_gift_id',
+        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_name, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, pickup_no_shows, campaign_id, gift_chosen_at, group_gift_id',
       )
       .eq('reveal_token', revealToken)
       .maybeSingle()) as {
@@ -461,6 +465,7 @@ export class OrdersRepository {
       .insert({
         status: 'draft',
         sender_id: params.senderId,
+        sender_name: params.senderName,
         gift_template_id: params.giftTemplateId,
         recipient_name: params.recipientName,
         recipient_phone: params.recipientPhone,
