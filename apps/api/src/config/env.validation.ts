@@ -113,6 +113,26 @@ class EnvironmentVariables {
   @IsString()
   GROUP_GIFTING?: string;
 
+  /** "true" opens event pages (weddings, birthdays, naming, send-forths, remembrances). Needs GROUP_GIFTING=true for gift lists. */
+  @IsOptional()
+  @IsString()
+  EVENTS?: string;
+
+  /** "true" lets guests give cash at events. Keep off until Paystack has approved collecting for hosts. */
+  @IsOptional()
+  @IsString()
+  EVENTS_CASH?: string;
+
+  /** Cash cap for an unverified host's event, kobo. Default 50000000 (₦500,000). 0 = no cap. */
+  @IsOptional()
+  @IsString()
+  EVENT_CASH_CAP_KOBO?: string;
+
+  /** SendEbun's fee on a host's cash payout, basis points. Default 0. */
+  @IsOptional()
+  @IsString()
+  EVENT_HOST_FEE_BPS?: string;
+
   /** Minutes before an unacknowledged delivery or booking is escalated. Default 30. */
   @IsOptional()
   @IsString()

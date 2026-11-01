@@ -8,6 +8,7 @@ import { RefundsModule } from '../refunds/refunds.module';
 import { PayoutsModule } from '../payouts/payouts.module';
 import { CorporateModule } from '../corporate/corporate.module';
 import { GroupGiftsModule } from '../group-gifts/group-gifts.module';
+import { EventsModule } from '../events/events.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { GroupGiftsModule } from '../group-gifts/group-gifts.module';
     PayoutsModule,
     CorporateModule,
     GroupGiftsModule,
+    EventsModule,
   ],
   controllers: [PaymentsController],
   providers: [PaystackWebhookService],

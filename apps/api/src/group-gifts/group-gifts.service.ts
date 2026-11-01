@@ -28,6 +28,7 @@ import {
 } from './group-gifts.config';
 import {
   ContributionRow,
+  EventShareRow,
   GroupGiftRow,
   GroupGiftsRepository,
 } from './group-gifts.repository';
@@ -500,6 +501,92 @@ export class GroupGiftsService {
     }
     this.funding.kickRefunds();
     return { refunds: owed };
+  }
+
+  /**
+   * One item on an event's gift list: an ordinary pot that belongs to
+   * the event. The host is both organiser and recipient (the gift is
+   * theirs, sent the morning after the event). The event sets the
+   * deadline, so the 30-day pot limit doesn't apply; EventsService
+   * checks the date is at most a year away.
+   */
+  async createForEvent(params: {
+    eventId: string;
+    giftTemplateId: string;
+    hostId: string;
+    hostName: string;
+    recipientName: string;
+    recipientPhone: string;
+    deadline: Date;
+    sendAt: Date;
+    showAmounts: boolean;
+  }): Promise<GroupGiftRow> {
+    const template = await this.gifts.findAvailableById(params.giftTemplateId);
+    const price = this.pricing.priceGift(
+      template.base_price,
+      template.delivery_type,
+    );
+    const pot = await this.repository.create({
+      gift_template_id: template.id,
+      organiser_id: params.hostId,
+      organiser_name: params.hostName,
+      recipient_name: params.recipientName,
+      recipient_phone: params.recipientPhone,
+      target_amount: price.giftValue + price.deliveryFee,
+      gift_value: price.giftValue,
+      delivery_fee: price.deliveryFee,
+      deadline: params.deadline.toISOString(),
+      send_at: params.sendAt.toISOString(),
+      sender_message: null,
+      show_amounts: params.showAmounts,
+      event_id: params.eventId,
+    });
+    await this.audit.record({
+      eventType: 'group_gift.created',
+      actorId: params.hostId,
+      actorType: 'user',
+      resourceType: 'group_gift',
+      resourceId: pot.id,
+      newState: 'open',
+      metadata: { giftTemplateId: template.id, eventId: params.eventId },
+    });
+    return pot;
+  }
+
+  /** An event's gift-list pots. */
+  eventPots(eventId: string): Promise<GroupGiftRow[]> {
+    return this.repository.eventPots(eventId);
+  }
+
+  /** Confirmed shares across an event's pots, newest first. */
+  eventShares(eventId: string, limit = 200): Promise<EventShareRow[]> {
+    return this.repository.eventShares(eventId, limit);
+  }
+
+  /**
+   * The host removes an item. Anyone who already chipped in is refunded
+   * in full, exactly as when an organiser cancels a pot.
+   */
+  async removeEventItem(
+    eventId: string,
+    groupGiftId: string,
+  ): Promise<{ refunds: number }> {
+    const pot = await this.repository.findById(groupGiftId);
+    if (!pot || pot.event_id !== eventId) {
+      throw new NotFoundException('That gift is not on this event.');
+    }
+    return this.cancel(pot);
+  }
+
+  async markEventShareThanked(
+    eventId: string,
+    contributionId: string,
+  ): Promise<boolean> {
+    const pots = await this.repository.eventPots(eventId);
+    return this.repository.markShareThanked(
+      pots.map((p) => p.id),
+      contributionId,
+    );
   }
 
   /**

@@ -11,6 +11,7 @@ import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 import { RefundsService } from '../refunds/refunds.service';
 import { CampaignFundingService } from '../corporate/campaign-funding.service';
 import { GroupGiftFundingService } from '../group-gifts/group-gift-funding.service';
+import { EventFundingService } from '../events/event-funding.service';
 
 const SECRET = 'sk_test_fake_secret';
 
@@ -47,12 +48,24 @@ describe('PaystackWebhookService', () => {
 
   let autoPayouts: { applyTransferEvent: jest.Mock };
   let campaigns: { isCampaignReference: jest.Mock; applyPayment: jest.Mock };
+  let events: {
+    isEventReference: jest.Mock;
+    applyPayment: jest.Mock;
+    applyRefundEvent: jest.Mock;
+  };
   let groupGifts: {
     isGroupReference: jest.Mock;
     applyPayment: jest.Mock;
     applyRefundEvent: jest.Mock;
   };
   beforeEach(async () => {
+    events = {
+      isEventReference: jest.fn(
+        (ref: unknown) => typeof ref === 'string' && ref.startsWith('ebevt_'),
+      ),
+      applyPayment: jest.fn().mockResolvedValue(undefined),
+      applyRefundEvent: jest.fn().mockResolvedValue(undefined),
+    };
     groupGifts = {
       isGroupReference: jest.fn(
         (ref: unknown) => typeof ref === 'string' && ref.startsWith('ebgrp_'),
@@ -94,6 +107,7 @@ describe('PaystackWebhookService', () => {
         { provide: AutoPayoutsService, useValue: autoPayouts },
         { provide: CampaignFundingService, useValue: campaigns },
         { provide: GroupGiftFundingService, useValue: groupGifts },
+        { provide: EventFundingService, useValue: events },
       ],
     }).compile();
 
@@ -135,6 +149,38 @@ describe('PaystackWebhookService', () => {
 
     await expect(sut.handle(raw, 'bad', dto)).rejects.toThrow();
     expect(groupGifts.applyPayment).not.toHaveBeenCalled();
+  });
+
+  it("routes an event guest's cash gift to the event, not to an order", async () => {
+    const { raw, signature, dto } = makePayload({ reference: 'ebevt_abc' });
+
+    await sut.handle(raw, signature, dto);
+
+    expect(events.applyPayment).toHaveBeenCalledWith(
+      'ebevt_abc',
+      500000,
+      expect.any(String),
+    );
+    expect(groupGifts.applyPayment).not.toHaveBeenCalled();
+    expect(idempotency.claim).not.toHaveBeenCalled();
+    expect(ordersService.findByPaystackReference).not.toHaveBeenCalled();
+  });
+
+  it("sends an event cash gift's refund progress to the event", async () => {
+    const refund = makePayload({ transaction_reference: 'ebevt_abc' });
+    refund.dto.event = 'refund.processed';
+    const raw = Buffer.from(JSON.stringify(refund.dto));
+    await sut.handle(
+      raw,
+      createHmac('sha512', SECRET).update(raw).digest('hex'),
+      refund.dto,
+    );
+
+    expect(events.applyRefundEvent).toHaveBeenCalledWith(
+      'refund.processed',
+      'ebevt_abc',
+    );
+    expect(refunds.applyPaystackRefundEvent).not.toHaveBeenCalled();
   });
 
   it("sends a group gift share's refund progress to the pot, and an order's to refunds", async () => {

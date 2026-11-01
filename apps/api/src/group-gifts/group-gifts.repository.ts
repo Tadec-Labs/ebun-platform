@@ -38,6 +38,8 @@ export interface GroupGiftRow {
   closed_at: string | null;
   close_reason: string | null;
   created_at: string;
+  /** Set when the pot is an item on an event's gift list. */
+  event_id?: string | null;
 }
 
 export interface ContributionRow {
@@ -60,10 +62,22 @@ export interface ContributionRow {
   created_at: string;
 }
 
+/** A confirmed share in a pot on an event's gift list: for the wall and the host's thank-yous. */
+export interface EventShareRow {
+  id: string;
+  group_gift_id: string;
+  contributor_name: string;
+  contributor_phone: string | null;
+  amount: number;
+  message: string | null;
+  confirmed_at: string;
+  thanked_at: string | null;
+}
+
 export type ConfirmResult = 'confirmed' | 'funded' | 'late' | 'already_applied';
 
 const POT_COLUMNS =
-  'id, gift_template_id, organiser_id, organiser_name, recipient_name, recipient_phone, target_amount, amount_raised, contributor_count, status, deadline, token, organiser_token, reveal_theme, sender_message, linked_order_id, gift_value, delivery_fee, send_at, show_amounts, deadline_extended, funded_at, closed_at, close_reason, created_at';
+  'id, gift_template_id, organiser_id, organiser_name, recipient_name, recipient_phone, target_amount, amount_raised, contributor_count, status, deadline, token, organiser_token, reveal_theme, sender_message, linked_order_id, gift_value, delivery_fee, send_at, show_amounts, deadline_extended, funded_at, closed_at, close_reason, created_at, event_id';
 
 const CONTRIBUTION_COLUMNS =
   'id, group_gift_id, contributor_name, contributor_email, contributor_phone, amount, service_fee, total_amount, message, paystack_reference, status, confirmed_at, refund_status, refund_amount, refund_attempts, refund_error, created_at';
@@ -100,6 +114,7 @@ export class GroupGiftsRepository {
     send_at: string | null;
     sender_message: string | null;
     show_amounts: boolean;
+    event_id?: string;
   }): Promise<GroupGiftRow> {
     const created = unwrap(
       (await this.supabase
@@ -439,6 +454,68 @@ export class GroupGiftsRepository {
           .limit(limit)) as Result<{ id: string }[]>,
       ) ?? [];
     return rows.map((r) => r.id);
+  }
+
+  /** An event's gift-list pots, in the order the host added them. */
+  async eventPots(eventId: string): Promise<GroupGiftRow[]> {
+    return (
+      unwrap(
+        (await this.supabase
+          .from('group_gifts')
+          .select(POT_COLUMNS)
+          .eq('event_id', eventId)
+          .order('created_at', { ascending: true })) as Result<GroupGiftRow[]>,
+      ) ?? []
+    );
+  }
+
+  /**
+   * Confirmed shares across an event's pots, newest first. Only what the
+   * wall and the host's thank-you list need: never an email.
+   */
+  async eventShares(eventId: string, limit: number): Promise<EventShareRow[]> {
+    const rows =
+      unwrap(
+        (await this.supabase
+          .from('group_gift_contributions')
+          .select(
+            'id, group_gift_id, contributor_name, contributor_phone, amount, message, confirmed_at, thanked_at, group_gifts!inner(event_id)',
+          )
+          .eq('group_gifts.event_id', eventId)
+          .eq('status', 'confirmed')
+          .order('confirmed_at', { ascending: false })
+          .limit(limit)) as Result<
+          (EventShareRow & { group_gifts?: unknown })[]
+        >,
+      ) ?? [];
+    return rows.map((r) => ({
+      id: r.id,
+      group_gift_id: r.group_gift_id,
+      contributor_name: r.contributor_name,
+      contributor_phone: r.contributor_phone,
+      amount: r.amount,
+      message: r.message,
+      confirmed_at: r.confirmed_at,
+      thanked_at: r.thanked_at,
+    }));
+  }
+
+  /** Ticks a share as thanked — only if it belongs to one of this event's pots. */
+  async markShareThanked(
+    potIds: string[],
+    contributionId: string,
+  ): Promise<boolean> {
+    if (potIds.length === 0) return false;
+    const rows = unwrap(
+      (await this.supabase
+        .from('group_gift_contributions')
+        .update({ thanked_at: new Date().toISOString() })
+        .eq('id', contributionId)
+        .in('group_gift_id', potIds)
+        .eq('status', 'confirmed')
+        .select('id')) as Result<{ id: string }[]>,
+    );
+    return (rows?.length ?? 0) === 1;
   }
 
   /** The order's reveal token, for the organiser to share once the gift exists. */

@@ -14,6 +14,7 @@ import { RefundsService } from '../refunds/refunds.service';
 import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import { CampaignFundingService } from '../corporate/campaign-funding.service';
 import { GroupGiftFundingService } from '../group-gifts/group-gift-funding.service';
+import { EventFundingService } from '../events/event-funding.service';
 import { PaystackWebhookDto } from './dto/paystack-webhook.dto';
 import { verifyPaystackSignature } from './paystack-signature.util';
 
@@ -34,6 +35,7 @@ export class PaystackWebhookService {
     private readonly autoPayouts: AutoPayoutsService,
     private readonly campaigns: CampaignFundingService,
     private readonly groupGifts: GroupGiftFundingService,
+    private readonly events: EventFundingService,
   ) {}
 
   async handle(
@@ -67,6 +69,10 @@ export class PaystackWebhookService {
         payload.data.transaction_reference ?? payload.data.reference;
       if (this.groupGifts.isGroupReference(refunded)) {
         await this.groupGifts.applyRefundEvent(payload.event, refunded);
+        return;
+      }
+      if (this.events.isEventReference(refunded)) {
+        await this.events.applyRefundEvent(payload.event, refunded);
         return;
       }
       await this.refunds.applyPaystackRefundEvent(payload.event, refunded);
@@ -105,6 +111,17 @@ export class PaystackWebhookService {
       // is idempotent and checks the amount itself, so no idempotency
       // claim: a redelivery after a transient failure must get to retry.
       await this.groupGifts.applyPayment(
+        charge.reference,
+        charge.amount,
+        String(charge.id),
+      );
+      return;
+    }
+
+    if (this.events.isEventReference(charge.reference)) {
+      // A guest's cash gift at an event. confirm_event_cash_gift() is
+      // idempotent and checks the amount itself; same reasoning as above.
+      await this.events.applyPayment(
         charge.reference,
         charge.amount,
         String(charge.id),

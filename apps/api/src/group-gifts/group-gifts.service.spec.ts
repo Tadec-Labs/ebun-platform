@@ -506,6 +506,44 @@ describe('GroupGiftsService', () => {
     });
   });
 
+  describe('event gift lists', () => {
+    it('creates an item priced from the catalogue, tied to the event, with the event deadline', async () => {
+      const deadline = new Date(Date.now() + 90 * DAY);
+      const sendAt = new Date(Date.now() + 88 * DAY);
+
+      await sut.createForEvent({
+        eventId: 'event-1',
+        giftTemplateId: 'template-1',
+        hostId: 'organiser-1',
+        hostName: 'Tola',
+        recipientName: 'Tola & Dayo',
+        recipientPhone: '+2348011111111',
+        deadline,
+        sendAt,
+        showAmounts: false,
+      });
+
+      // Further out than a normal pot may run: the event sets it.
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_id: 'event-1',
+          target_amount: 4_850_000 + 150_000,
+          deadline: deadline.toISOString(),
+          send_at: sendAt.toISOString(),
+        }),
+      );
+    });
+
+    it("won't remove a pot that belongs to another event", async () => {
+      repository.findById.mockResolvedValue(pot({ event_id: 'event-2' }));
+
+      await expect(sut.removeEventItem('event-1', 'pot-1')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(repository.close).not.toHaveBeenCalled();
+    });
+  });
+
   describe('revealInfo', () => {
     it('prefers the name typed for the pot over the saved one', async () => {
       users.findById.mockResolvedValue({ id: 'organiser-1', name: 'Eunice' });
