@@ -30,10 +30,13 @@ export function PotExperience({
   pot,
   returnedFromPayment,
   paymentReference,
+  startWithRest = false,
 }: {
   token: string;
   pot: GroupGiftPublicView;
   returnedFromPayment: boolean;
+  /** Arrived from an event's "Give" button: start with the whole remaining amount. */
+  startWithRest?: boolean;
   /** Paystack's reference for the payment just made, from the return address. */
   paymentReference: string | null;
 }) {
@@ -86,6 +89,16 @@ export function PotExperience({
         </p>
       )}
 
+      {pot.event && (
+        <Link
+          href={`/e/${pot.event.slug}`}
+          className="mb-4 self-start text-xs underline underline-offset-2"
+          style={{ color: "var(--gold-light)" }}
+        >
+          ← Back to {pot.event.title}&rsquo;s page
+        </Link>
+      )}
+
       <div className="pb-6">
         <h1 className="font-display text-3xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
           {funded ? (
@@ -98,7 +111,7 @@ export function PotExperience({
             </>
           )}
         </h1>
-        {pot.organiserFirstName && !funded && (
+        {pot.organiserFirstName && !funded && !pot.event && (
           <p className="mt-2 text-sm" style={{ color: "var(--cream-dim)" }}>
             {pot.organiserFirstName} is putting it together. Add your share and a line for {recipient}.
           </p>
@@ -137,7 +150,7 @@ export function PotExperience({
         </Notice>
       )}
 
-      {(pot.status === "open" || pot.status === "awaiting_organiser") && <ContributeForm token={token} pot={pot} />}
+      {(pot.status === "open" || pot.status === "awaiting_organiser") && <ContributeForm token={token} pot={pot} startWithRest={startWithRest} />}
 
       {pot.status === "closed" && (
         <Notice>
@@ -169,7 +182,15 @@ export function PotExperience({
   );
 }
 
-function ContributeForm({ token, pot }: { token: string; pot: GroupGiftPublicView }) {
+function ContributeForm({
+  token,
+  pot,
+  startWithRest,
+}: {
+  token: string;
+  pot: GroupGiftPublicView;
+  startWithRest: boolean;
+}) {
   const recipient = pot.recipientFirstName;
   const remainingNaira = Math.floor(pot.remaining / 100);
   const minNaira = Math.ceil(pot.minContribution / 100);
@@ -182,7 +203,9 @@ function ContributeForm({ token, pot }: { token: string; pot: GroupGiftPublicVie
     return fitting;
   }, [minNaira, remainingNaira]);
 
-  const [amountText, setAmountText] = useState(presets[0] ? String(presets[0]) : "");
+  const [amountText, setAmountText] = useState(
+    startWithRest && remainingNaira > 0 ? String(remainingNaira) : presets[0] ? String(presets[0]) : "",
+  );
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
@@ -282,12 +305,13 @@ function ContributeForm({ token, pot }: { token: string; pot: GroupGiftPublicVie
               value={message}
               onChange={(e) => setMessage(e.target.value.slice(0, MESSAGE_MAX))}
               rows={3}
-              placeholder={`Happy birthday, ${recipient}!`}
+              placeholder={pot.event ? "Wishing you every happiness!" : `Happy birthday, ${recipient}!`}
               className="w-full resize-none border bg-transparent p-3 text-sm outline-none"
               style={{ borderColor: "var(--border)", color: "var(--cream)" }}
             />
             <span className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
-              Only {recipient} sees this, when they open the gift · {message.length}/{MESSAGE_MAX}
+              {pot.event ? "Only the hosts see this" : `Only ${recipient} sees this, when they open the gift`} ·{" "}
+              {message.length}/{MESSAGE_MAX}
             </span>
           </Field>
           <Field label="Your name">

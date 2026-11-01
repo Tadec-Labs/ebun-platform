@@ -31,6 +31,8 @@ export interface GroupGiftPublicView {
   deadline: string;
   contributors: { name: string; amount: number | null }[];
   serviceFee: FeePolicy;
+  /** Set when this pot is an item on an event's gift list. */
+  event: { slug: string; title: string; eventType: string } | null;
 }
 
 export type ContributionStatus = "pending" | "confirmed" | "late" | "failed" | "refunded";

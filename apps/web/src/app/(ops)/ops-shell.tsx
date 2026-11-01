@@ -51,6 +51,12 @@ const GROUPS: { label: string | null; items: NavItem[] }[] = [
     ],
   },
   {
+    label: "Events",
+    items: [
+      { href: "/ops/events", label: "Events & payouts", icon: icon("M4 5h16v15H4zM4 9h16M8 3v4M16 3v4M8 13h3M8 16h6") },
+    ],
+  },
+  {
     label: "Catalogue",
     items: [
       { href: "/ops/gifts", label: "Gifts", icon: icon("M4 10h16v10H4zM3 7h18v3H3zM12 7v13M12 7c-2-3-6-3-6 0M12 7c2-3 6-3 6 0") },

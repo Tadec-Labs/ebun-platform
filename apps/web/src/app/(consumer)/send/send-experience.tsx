@@ -68,6 +68,7 @@ export function SendExperience({
   allowRecordings,
   companiesOpen,
   groupGifting = false,
+  eventsOpen = false,
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
@@ -79,6 +80,8 @@ export function SendExperience({
   companiesOpen: boolean;
   /** "Chip in with friends" in the message step (GROUP_GIFTING). */
   groupGifting?: boolean;
+  /** /events/new is open (EVENTS): link to it under More ways. */
+  eventsOpen?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>("gift");
   const [draft, setDraft] = useState<SendDraft>({
@@ -160,7 +163,7 @@ export function SendExperience({
             setPhase("compose");
           }}
         />
-        <OtherWays companiesOpen={companiesOpen} />
+        <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
         <PolicyLinks className="pt-6 pb-8" />
         </>
       )}

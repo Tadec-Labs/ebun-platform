@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import {
   corporateSelfServeEnabled,
+  eventsEnabled,
   groupGiftingEnabled,
   mediaMessagesEnabled,
   whatsappAutoDeliveryEnabled,
@@ -24,6 +25,7 @@ export default async function SendPage() {
       allowRecordings={mediaMessagesEnabled()}
       companiesOpen={corporateSelfServeEnabled()}
       groupGifting={groupGiftingEnabled()}
+      eventsOpen={eventsEnabled()}
     />
   );
 }

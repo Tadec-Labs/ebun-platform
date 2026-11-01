@@ -73,6 +73,8 @@ export interface GroupGiftPublicView {
    * comes from the API.
    */
   serviceFee: { rateBps: number; minKobo: number; maxKobo: number };
+  /** Set when this pot is an item on an event's gift list. */
+  event: { slug: string; title: string; eventType: string } | null;
 }
 
 export interface GroupGiftOrganiserView {
@@ -229,10 +231,13 @@ export class GroupGiftsService {
     const pot = await this.repository.findByToken(token);
     if (!pot) throw new NotFoundException('No group gift found for this link.');
 
-    const [template, organiser, contributions] = await Promise.all([
+    const [template, organiser, contributions, event] = await Promise.all([
       this.gifts.findById(pot.gift_template_id),
       this.users.findById(pot.organiser_id),
       this.repository.contributions(pot.id),
+      pot.event_id
+        ? this.repository.eventSummary(pot.event_id)
+        : Promise.resolve(null),
     ]);
     const remaining = remainingOf(pot);
     const organiserName = organiserNameOf(pot, organiser);
@@ -240,7 +245,10 @@ export class GroupGiftsService {
     return {
       status: publicStatus(pot),
       gift: giftSummary(template),
-      recipientFirstName: firstName(pot.recipient_name),
+      // An event's gift is for "Tola & Dayo", not "Tola".
+      recipientFirstName: event
+        ? pot.recipient_name
+        : firstName(pot.recipient_name),
       organiserFirstName: organiserName ? firstName(organiserName) : null,
       targetAmount: pot.target_amount,
       amountRaised: pot.amount_raised,
@@ -255,6 +263,9 @@ export class GroupGiftsService {
           amount: pot.show_amounts ? c.amount : null,
         })),
       serviceFee: this.pricing.servicePolicy(),
+      event: event
+        ? { slug: event.slug, title: event.title, eventType: event.event_type }
+        : null,
     };
   }
 

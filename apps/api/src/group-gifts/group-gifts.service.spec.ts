@@ -263,6 +263,28 @@ describe('GroupGiftsService', () => {
       );
     });
 
+    it("names an event gift's recipients in full and links back to the event", async () => {
+      repository.findByToken.mockResolvedValue(
+        pot({ event_id: 'event-1', recipient_name: 'Tola & Dayo' }),
+      );
+      (repository as unknown as Record<string, jest.Mock>).eventSummary = jest
+        .fn()
+        .mockResolvedValue({
+          slug: 'tola-and-dayo-k3f9q',
+          title: 'Tola & Dayo',
+          event_type: 'wedding',
+        });
+
+      const view = await sut.publicView('share-token');
+
+      expect(view.recipientFirstName).toBe('Tola & Dayo');
+      expect(view.event).toEqual({
+        slug: 'tola-and-dayo-k3f9q',
+        title: 'Tola & Dayo',
+        eventType: 'wedding',
+      });
+    });
+
     it('shows amounts when the organiser chose to', async () => {
       repository.findByToken.mockResolvedValue(pot({ show_amounts: true }));
       repository.contributions.mockResolvedValue([contribution()]);

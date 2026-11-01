@@ -39,7 +39,7 @@ export default async function PotPage({ params, searchParams }: PageProps<"/grou
   const { token } = await params;
   // Paystack sends the payer back to /group/<token>?paid=1 and appends
   // its own reference. Neither is proof of payment: the page asks the API.
-  const { paid, reference } = await searchParams;
+  const { paid, reference, full } = await searchParams;
   const result = await getPot(token);
 
   if (result.kind === "not_found") notFound();
@@ -62,6 +62,7 @@ export default async function PotPage({ params, searchParams }: PageProps<"/grou
       pot={result.pot}
       returnedFromPayment={paid === "1"}
       paymentReference={typeof reference === "string" && reference.startsWith("ebgrp_") ? reference : null}
+      startWithRest={full === "1"}
     />
   );
 }

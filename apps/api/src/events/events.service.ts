@@ -133,9 +133,19 @@ export interface EventHostView {
     paidAt: string | null;
     amount: number | null;
   };
-  items: (EventItemView & { managePath: string })[];
+  /** Plus the pot's id (to remove it) and its organiser page (extend, switch, cancel). */
+  items: (EventItemView & { id: string; managePath: string })[];
   thankYous: ThankYouEntry[];
   canCancel: boolean;
+  /** The host's own switches (the public view shows what guests can do right now). */
+  settings: {
+    giftListEnabled: boolean;
+    cashEnabled: boolean;
+    wallEnabled: boolean;
+    showAmounts: boolean;
+  };
+  /** Whether SendEbun takes cash gifts at all yet (EVENTS_CASH). */
+  cashAvailable: boolean;
 }
 
 export interface CreateEventResult {
@@ -435,11 +445,19 @@ export class EventsService {
         const pot = pots.find((p) => p.token === item.token);
         return {
           ...item,
+          id: pot?.id ?? '',
           managePath: pot ? `/group/manage/${pot.organiser_token}` : '',
         };
       }),
       thankYous,
       canCancel: event.status !== 'cancelled' && event.payout_status === 'none',
+      settings: {
+        giftListEnabled: event.gift_list_enabled,
+        cashEnabled: event.cash_enabled,
+        wallEnabled: event.wall_enabled,
+        showAmounts: event.show_amounts,
+      },
+      cashAvailable: this.isCashEnabled(),
     };
   }
 

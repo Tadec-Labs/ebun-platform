@@ -456,6 +456,23 @@ export class GroupGiftsRepository {
     return rows.map((r) => r.id);
   }
 
+  /** The event a gift-list pot belongs to, for its page's heading and link back. */
+  async eventSummary(
+    eventId: string,
+  ): Promise<{ slug: string; title: string; event_type: string } | null> {
+    return unwrap(
+      (await this.supabase
+        .from('events')
+        .select('slug, title, event_type')
+        .eq('id', eventId)
+        .maybeSingle()) as Result<{
+        slug: string;
+        title: string;
+        event_type: string;
+      }>,
+    );
+  }
+
   /** An event's gift-list pots, in the order the host added them. */
   async eventPots(eventId: string): Promise<GroupGiftRow[]> {
     return (

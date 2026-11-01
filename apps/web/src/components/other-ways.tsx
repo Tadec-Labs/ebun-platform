@@ -6,7 +6,7 @@ import { becomePartnerUrl, helpUrl } from "@/lib/site-links";
  * for, one line each. Below the gifts, never above them — someone here
  * to send a gift should see gifts first and never have to read past this.
  */
-export function OtherWays({ companiesOpen }: { companiesOpen: boolean }) {
+export function OtherWays({ companiesOpen, eventsOpen = false }: { companiesOpen: boolean; eventsOpen?: boolean }) {
   const row = "flex items-center justify-between gap-3 border-t py-3.5 text-sm";
   const arrow = (
     <span aria-hidden="true" style={{ color: "var(--gold-light)" }}>
@@ -18,6 +18,17 @@ export function OtherWays({ companiesOpen }: { companiesOpen: boolean }) {
       <p className="pb-2 text-[11px] tracking-[0.14em] uppercase" style={{ color: "var(--gold-dim)" }}>
         More ways to use SendEbun
       </p>
+      {eventsOpen && (
+        <Link href="/events/new" className={row} style={{ borderColor: "var(--border)", color: "var(--cream)" }}>
+          <span>
+            Weddings, birthdays and celebrations
+            <span className="block text-xs" style={{ color: "var(--cream-dim)" }}>
+              One link for your gift list, cash gifts and a live wall
+            </span>
+          </span>
+          {arrow}
+        </Link>
+      )}
       {companiesOpen && (
         <Link href="/company/start" className={row} style={{ borderColor: "var(--border)", color: "var(--cream)" }}>
           <span>

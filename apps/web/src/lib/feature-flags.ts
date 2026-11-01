@@ -57,3 +57,15 @@ export function corporateSelfServeEnabled(): boolean {
 export function groupGiftingEnabled(): boolean {
   return process.env.GROUP_GIFTING === "true";
 }
+
+/**
+ * true  → event pages are open: /events/new for hosts, and "Weddings and
+ *         celebrations" under More ways. The API needs EVENTS=true (and
+ *         GROUP_GIFTING=true for gift lists). Whether guests can give
+ *         cash is the API's EVENTS_CASH, not a web flag.
+ * unset → /events/new is a 404. Events already running keep their pages
+ *         as long as the API serves them.
+ */
+export function eventsEnabled(): boolean {
+  return process.env.EVENTS === "true";
+}
