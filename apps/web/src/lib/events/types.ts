@@ -82,7 +82,9 @@ export interface EventHostView {
     paidAt: string | null;
     amount: number | null;
   };
-  items: (EventItemView & { id: string; managePath: string })[];
+  items: (EventItemView & { id: string; managePath: string; revealPath: string | null; awaitingAddress: boolean })[];
+  delivery: { address: string; area: string; note: string | null } | null;
+  deliveryAreas: string[];
   thankYous: ThankYouEntry[];
   canCancel: boolean;
   settings: { giftListEnabled: boolean; cashEnabled: boolean; wallEnabled: boolean; showAmounts: boolean };

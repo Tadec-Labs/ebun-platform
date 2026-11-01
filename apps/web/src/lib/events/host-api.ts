@@ -12,7 +12,14 @@ export class HostApiError extends Error {
   }
 }
 
-type HostPath = "" | "/items" | `/items/${string}` | "/payout-account" | "/thanks" | "/cancel";
+type HostPath =
+  | ""
+  | "/items"
+  | `/items/${string}`
+  | "/payout-account"
+  | "/delivery-address"
+  | "/thanks"
+  | "/cancel";
 
 /**
  * Server-side only: calls the API as the host of the event whose short

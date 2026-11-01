@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
+import { DeliveriesModule } from '../deliveries/deliveries.module';
 import { GiftsModule } from '../gifts/gifts.module';
 import { GroupGiftsModule } from '../group-gifts/group-gifts.module';
 import { PaystackModule } from '../paystack/paystack.module';
@@ -25,6 +26,7 @@ import { EventsService } from './events.service';
   imports: [
     AuditModule,
     AuthModule,
+    DeliveriesModule,
     GiftsModule,
     GroupGiftsModule,
     PaystackModule,

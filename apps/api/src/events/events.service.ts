@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
+import { DeliveriesService } from '../deliveries/deliveries.service';
 import { GiftsService } from '../gifts/gifts.service';
 import { GroupGiftFundingService } from '../group-gifts/group-gift-funding.service';
 import { GroupGiftsService } from '../group-gifts/group-gifts.service';
@@ -19,6 +20,7 @@ import {
   AddEventItemDto,
   CashGiftDto,
   CreateEventDto,
+  DeliveryAddressDto,
   PayoutAccountDto,
   ThankDto,
   UpdateEventDto,
@@ -33,6 +35,7 @@ import {
   giftsSendAt,
   givingClosesAt,
   hostFeeBps,
+  lagosTime,
   lagosToday,
   parseEventDate,
 } from './events.config';
@@ -133,8 +136,21 @@ export interface EventHostView {
     paidAt: string | null;
     amount: number | null;
   };
-  /** Plus the pot's id (to remove it) and its organiser page (extend, switch, cancel). */
-  items: (EventItemView & { id: string; managePath: string })[];
+  /**
+   * Plus the pot's id (to remove it), its organiser page (extend, switch,
+   * cancel), the gift's own page once it exists, and whether a doorstep
+   * gift is still waiting for an address.
+   */
+  items: (EventItemView & {
+    id: string;
+    managePath: string;
+    revealPath: string | null;
+    awaitingAddress: boolean;
+  })[];
+  /** Where doorstep gifts go. Only ever on the host's page. */
+  delivery: { address: string; area: string; note: string | null } | null;
+  /** Areas the list's doorstep gifts can be delivered to, to pick from. */
+  deliveryAreas: string[];
   thankYous: ThankYouEntry[];
   canCancel: boolean;
   /** The host's own switches (the public view shows what guests can do right now). */
@@ -183,6 +199,7 @@ export class EventsService {
     private readonly funding: EventFundingService,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
+    private readonly deliveries: DeliveriesService,
   ) {}
 
   isEnabled(): boolean {
@@ -381,11 +398,14 @@ export class EventsService {
   // ---------------------------------------------------------------- host
 
   async hostView(event: EventRow): Promise<EventHostView> {
-    const [pots, cash, shares] = await Promise.all([
+    const [pots, cash, shares, orders] = await Promise.all([
       this.groupGifts.eventPots(event.id),
       this.repository.confirmedCashGifts(event.id, 500, false),
       this.groupGifts.eventShares(event.id, 500),
+      this.groupGifts.eventOrders(event.id),
     ]);
+    const orderByPot = new Map(orders.map((o) => [o.potId, o]));
+    const deliveryAreas = await this.deliveryAreas(pots);
     const publicView = await this.toPublicView(event, pots);
     const giftNames = await this.giftNames(pots);
     const potGift = new Map(
@@ -443,10 +463,18 @@ export class EventsService {
       },
       items: publicView.items.map((item) => {
         const pot = pots.find((p) => p.token === item.token);
+        const order = pot ? orderByPot.get(pot.id) : undefined;
         return {
           ...item,
           id: pot?.id ?? '',
           managePath: pot ? `/group/manage/${pot.organiser_token}` : '',
+          revealPath: order ? `/reveal/${order.revealToken}` : null,
+          awaitingAddress: Boolean(
+            order &&
+            order.doorstep &&
+            !order.hasAddress &&
+            order.status === 'fulfillment_in_progress',
+          ),
         };
       }),
       thankYous,
@@ -458,6 +486,15 @@ export class EventsService {
         showAmounts: event.show_amounts,
       },
       cashAvailable: this.isCashEnabled(),
+      delivery:
+        event.delivery_address && event.delivery_area
+          ? {
+              address: event.delivery_address,
+              area: event.delivery_area,
+              note: event.delivery_note,
+            }
+          : null,
+      deliveryAreas,
     };
   }
 
@@ -520,6 +557,59 @@ export class EventsService {
     groupGiftId: string,
   ): Promise<{ refunds: number }> {
     return this.groupGifts.removeEventItem(event.id, groupGiftId);
+  }
+
+  /**
+   * One address for every doorstep gift on the list. New gifts carry it
+   * from the moment they're paid for (trigger_group_gift); gifts already
+   * paid for and still waiting for an address get it now. A gift whose
+   * shops don't cover the area stays waiting, and the host gives that one
+   * on its own page — the result says how many.
+   */
+  async setDeliveryAddress(
+    event: EventRow,
+    dto: DeliveryAddressDto,
+  ): Promise<{ applied: number; waiting: number }> {
+    const note = dto.note?.length ? dto.note : null;
+    if (
+      !(await this.repository.setDeliveryAddress(event.id, {
+        address: dto.address,
+        area: dto.area,
+        note,
+      }))
+    ) {
+      throw new ConflictException('This event has been cancelled.');
+    }
+    await this.audit.record({
+      eventType: 'event.delivery_address_set',
+      actorId: event.host_id,
+      actorType: 'user',
+      resourceType: 'event',
+      resourceId: event.id,
+      // The area only: the address is personal data and already on the event.
+      metadata: { area: dto.area },
+    });
+
+    const waitingOrders = (await this.groupGifts.eventOrders(event.id)).filter(
+      (o) =>
+        o.doorstep && !o.hasAddress && o.status === 'fulfillment_in_progress',
+    );
+    let applied = 0;
+    for (const order of waitingOrders) {
+      try {
+        await this.deliveries.setRecipientDetails(order.orderId, {
+          address: dto.address,
+          area: dto.area,
+          phone: event.host_phone,
+          note: deliveryNote(note, event.title, event.event_date),
+        });
+        applied += 1;
+      } catch {
+        // Area not covered for this gift, or it changed meanwhile: it
+        // keeps waiting and the host sees it flagged on their page.
+      }
+    }
+    return { applied, waiting: waitingOrders.length - applied };
   }
 
   /** Changing the account clears verification: ops checks again before any payout. */
@@ -723,6 +813,30 @@ export class EventsService {
     };
   }
 
+  /** Delivery areas across the list's doorstep gifts, one of each. */
+  private async deliveryAreas(pots: GroupGiftRow[]): Promise<string[]> {
+    const live = pots.filter((p) => p.status !== 'cancelled');
+    const names = await this.giftNames(live);
+    const doorstep = [
+      ...new Set(
+        live
+          .filter(
+            (p) => names.get(p.gift_template_id)?.delivery_type === 'physical',
+          )
+          .map((p) => p.gift_template_id),
+      ),
+    ];
+    const lists = await Promise.all(
+      doorstep.map((id) => this.deliveries.deliveryAreas(id).catch(() => [])),
+    );
+    const seen = new Map<string, string>();
+    for (const area of lists.flat()) {
+      const key = area.trim().toLowerCase();
+      if (key && !seen.has(key)) seen.set(key, area.trim());
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }
+
   /** Gift templates behind these pots, fetched once each. */
   private async giftNames(
     pots: GroupGiftRow[],
@@ -785,6 +899,30 @@ function itemView(
         ? (givenBy.get(pot.id) ?? [])
         : [],
   };
+}
+
+/**
+ * The note a shop sees on an event gift: the host's own note, whose gift
+ * it is, and not before the day after the event. Same wording as
+ * trigger_group_gift writes for gifts paid for after the address is set.
+ */
+export function deliveryNote(
+  hostNote: string | null,
+  title: string,
+  eventDate: string,
+): string {
+  const after = lagosTime(eventDate, 1, 12)
+    .toLocaleDateString('en-GB', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      timeZone: 'Africa/Lagos',
+    })
+    .replace(/,/g, '');
+  return [hostNote, `Gift for ${title}`, `Deliver from ${after}`]
+    .filter(Boolean)
+    .join(' · ')
+    .slice(0, 300);
 }
 
 function assertEventDate(value: string): void {

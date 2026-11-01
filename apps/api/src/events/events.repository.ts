@@ -40,6 +40,9 @@ export interface EventRow {
   closed_at: string | null;
   cancelled_at: string | null;
   created_at: string;
+  delivery_address: string | null;
+  delivery_area: string | null;
+  delivery_note: string | null;
 }
 
 export interface CashGiftRow {
@@ -65,7 +68,7 @@ export interface CashGiftRow {
 }
 
 const EVENT_COLUMNS =
-  'id, slug, host_token, host_id, host_name, host_phone, event_type, title, event_date, city, gift_list_enabled, cash_enabled, wall_enabled, show_amounts, status, cash_raised, cash_count, verified_at, payout_bank_code, payout_account_number, payout_account_name, payout_status, payout_amount, payout_reference, paid_out_at, closed_at, cancelled_at, created_at';
+  'id, slug, host_token, host_id, host_name, host_phone, event_type, title, event_date, city, gift_list_enabled, cash_enabled, wall_enabled, show_amounts, status, cash_raised, cash_count, verified_at, payout_bank_code, payout_account_number, payout_account_name, payout_status, payout_amount, payout_reference, paid_out_at, closed_at, cancelled_at, created_at, delivery_address, delivery_area, delivery_note';
 
 // Never the guest's email: nothing that reads these rows shows it.
 const GIFT_COLUMNS =
@@ -193,6 +196,27 @@ export class EventsRepository {
         })
         .eq('id', id)
         .eq('payout_status', 'none')
+        .neq('status', 'cancelled')
+        .select('id')) as Result<{ id: string }[]>,
+    );
+    return (rows?.length ?? 0) === 1;
+  }
+
+  /** One address for every doorstep gift on the list. Not once the event has ended. */
+  async setDeliveryAddress(
+    id: string,
+    details: { address: string; area: string; note: string | null },
+  ): Promise<boolean> {
+    const rows = unwrap(
+      (await this.supabase
+        .from('events')
+        .update({
+          delivery_address: details.address,
+          delivery_area: details.area,
+          delivery_note: details.note,
+          delivery_details_at: new Date().toISOString(),
+        })
+        .eq('id', id)
         .neq('status', 'cancelled')
         .select('id')) as Result<{ id: string }[]>,
     );

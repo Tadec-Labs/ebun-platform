@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getGiftCatalog } from "@/lib/gifts/get-gift-catalog";
 import { HostApiError, hostFetch, hostLinkPath } from "@/lib/events/host-api";
 import type { EventHostView } from "@/lib/events/types";
+import { RememberRecent } from "@/components/remember-recent";
 import { HostExperience } from "./host-experience";
 
 export const metadata: Metadata = {
@@ -53,7 +54,12 @@ export default async function HostPage({ params }: PageProps<"/e/h/[id]">) {
     }
   }
 
-  return <HostExperience shortId={id} view={view} catalogue={catalogue} hostLinkPath={await hostLinkPath(id)} />;
+  return (
+    <>
+      <RememberRecent kind="event" title={view.public.title} path={`/e/h/${id}`} />
+      <HostExperience shortId={id} view={view} catalogue={catalogue} hostLinkPath={await hostLinkPath(id)} />
+    </>
+  );
 }
 
 function Centered({ title, children }: { title: string; children: React.ReactNode }) {

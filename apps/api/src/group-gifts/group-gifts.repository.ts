@@ -62,6 +62,17 @@ export interface ContributionRow {
   created_at: string;
 }
 
+/** An order an event's gift-list item became. */
+export interface EventOrderRow {
+  orderId: string;
+  potId: string;
+  status: string;
+  revealToken: string;
+  hasAddress: boolean;
+  /** A doorstep gift (it needs an address to be delivered). */
+  doorstep: boolean;
+}
+
 /** A confirmed share in a pot on an event's gift list: for the wall and the host's thank-yous. */
 export interface EventShareRow {
   id: string;
@@ -471,6 +482,40 @@ export class GroupGiftsRepository {
         event_type: string;
       }>,
     );
+  }
+
+  /**
+   * The orders an event's paid-for items became: for the host's "open
+   * your gift" links and for filling in a delivery address afterwards.
+   */
+  async ordersForPots(potIds: string[]): Promise<EventOrderRow[]> {
+    if (potIds.length === 0) return [];
+    const rows =
+      unwrap(
+        (await this.supabase
+          .from('orders')
+          .select(
+            'id, group_gift_id, status, reveal_token, delivery_address, gift_templates!gift_template_id(delivery_type)',
+          )
+          .in('group_gift_id', potIds)) as Result<
+          {
+            id: string;
+            group_gift_id: string;
+            status: string;
+            reveal_token: string;
+            delivery_address: string | null;
+            gift_templates: { delivery_type: string } | null;
+          }[]
+        >,
+      ) ?? [];
+    return rows.map((r) => ({
+      orderId: r.id,
+      potId: r.group_gift_id,
+      status: r.status,
+      revealToken: r.reveal_token,
+      hasAddress: r.delivery_address !== null,
+      doorstep: r.gift_templates?.delivery_type === 'physical',
+    }));
   }
 
   /** An event's gift-list pots, in the order the host added them. */

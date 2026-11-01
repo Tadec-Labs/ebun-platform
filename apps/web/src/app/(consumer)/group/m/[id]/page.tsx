@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getGiftCatalog } from "@/lib/gifts/get-gift-catalog";
 import { OrganiserApiError, organiserFetch, organiserLinkPath } from "@/lib/group/organiser-api";
 import type { GroupGiftOrganiserView } from "@/lib/group/types";
+import { RememberRecent } from "@/components/remember-recent";
 import { OrganiserExperience } from "./organiser-experience";
 
 export const metadata: Metadata = {
@@ -51,12 +52,15 @@ export default async function OrganiserPage({ params }: PageProps<"/group/m/[id]
   }
 
   return (
-    <OrganiserExperience
-      shortId={id}
-      view={view}
-      affordable={affordable}
-      organiserLinkPath={await organiserLinkPath(id)}
-    />
+    <>
+      <RememberRecent kind="pot" title={`${view.gift.name} · ${view.recipientName}`} path={`/group/m/${id}`} />
+      <OrganiserExperience
+        shortId={id}
+        view={view}
+        affordable={affordable}
+        organiserLinkPath={await organiserLinkPath(id)}
+      />
+    </>
   );
 }
 

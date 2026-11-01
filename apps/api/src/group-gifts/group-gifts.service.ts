@@ -28,6 +28,7 @@ import {
 } from './group-gifts.config';
 import {
   ContributionRow,
+  EventOrderRow,
   EventShareRow,
   GroupGiftRow,
   GroupGiftsRepository,
@@ -567,6 +568,12 @@ export class GroupGiftsService {
   /** An event's gift-list pots. */
   eventPots(eventId: string): Promise<GroupGiftRow[]> {
     return this.repository.eventPots(eventId);
+  }
+
+  /** The orders an event's paid-for items became. */
+  async eventOrders(eventId: string): Promise<EventOrderRow[]> {
+    const pots = await this.repository.eventPots(eventId);
+    return this.repository.ordersForPots(pots.map((p) => p.id));
   }
 
   /** Confirmed shares across an event's pots, newest first. */

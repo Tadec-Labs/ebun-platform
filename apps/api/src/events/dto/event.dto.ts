@@ -12,6 +12,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { EVENT_TYPES, MAX_CASH_KOBO, MIN_CASH_KOBO } from '../events.config';
 import type { EventType } from '../events.config';
@@ -173,6 +174,28 @@ export class PayoutAccountDto {
   @IsNotEmpty()
   @MaxLength(120)
   accountName!: string;
+}
+
+/** Where doorstep gifts from the list are delivered, after the event. */
+export class DeliveryAddressDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(5)
+  @MaxLength(300)
+  address!: string;
+
+  /** The neighbourhood shops deliver to, e.g. "Alagbaka". */
+  @Transform(trim)
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  area!: string;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(200)
+  note?: string;
 }
 
 export class ThankDto {

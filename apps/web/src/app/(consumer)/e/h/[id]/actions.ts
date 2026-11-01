@@ -58,6 +58,22 @@ export async function payoutAccountAction(
   );
 }
 
+export async function deliveryAddressAction(
+  shortId: string,
+  details: { address: string; area: string; note: string },
+): Promise<Result<{ applied: number; waiting: number }>> {
+  const address = details.address.trim();
+  const area = details.area.trim();
+  if (address.length < 5) return { ok: false, error: "Add the full address." };
+  if (area.length < 2) return { ok: false, error: "Add the area." };
+  return run(shortId, () =>
+    hostFetch<{ applied: number; waiting: number }>(shortId, "/delivery-address", {
+      method: "PUT",
+      body: { address, area, note: details.note.trim() || undefined },
+    }),
+  );
+}
+
 export async function thankAction(shortId: string, kind: "cash" | "share", id: string): Promise<Result> {
   if (!UUID.test(id)) return { ok: false, error: "That gift isn't on this event." };
   return run(shortId, () => hostFetch<true>(shortId, "/thanks", { method: "POST", body: { kind, id } }));

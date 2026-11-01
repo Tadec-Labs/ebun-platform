@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { EventsService, makeSlug } from './events.service';
+import { EventsService, deliveryNote, makeSlug } from './events.service';
 import type {
   CashGiftRow,
   EventRow,
@@ -46,6 +46,9 @@ function event(overrides: Partial<EventRow> = {}): EventRow {
     closed_at: null,
     cancelled_at: null,
     created_at: new Date().toISOString(),
+    delivery_address: null,
+    delivery_area: null,
+    delivery_note: null,
     ...overrides,
   };
 }
@@ -82,6 +85,7 @@ describe('EventsService', () => {
   let funding: { capKobo: jest.Mock; kickRefunds: jest.Mock };
   let paystack: { initializeTransaction: jest.Mock };
   let audit: { record: jest.Mock };
+  let deliveries: { setRecipientDetails: jest.Mock; deliveryAreas: jest.Mock };
   let env: Record<string, string | undefined>;
   let sut: EventsService;
 
@@ -112,6 +116,7 @@ describe('EventsService', () => {
     groupGifts = {
       eventPots: jest.fn().mockResolvedValue([]),
       eventShares: jest.fn().mockResolvedValue([]),
+      eventOrders: jest.fn().mockResolvedValue([]),
       createForEvent: jest.fn().mockImplementation((p: { eventId: string }) =>
         Promise.resolve({
           id: 'pot-1',
@@ -139,6 +144,10 @@ describe('EventsService', () => {
         .mockResolvedValue({ authorizationUrl: 'https://checkout/evt' }),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    deliveries = {
+      setRecipientDetails: jest.fn().mockResolvedValue(undefined),
+      deliveryAreas: jest.fn().mockResolvedValue(['Alagbaka', 'Ijapo']),
+    };
     env = { EVENTS: 'true', EVENTS_CASH: 'true' };
 
     sut = new EventsService(
@@ -169,7 +178,115 @@ describe('EventsService', () => {
       funding as never,
       audit as never,
       { get: (key: string) => env[key] } as never,
+      deliveries as never,
     );
+    repository.setDeliveryAddress = jest.fn().mockResolvedValue(true);
+  });
+
+  describe('delivery address', () => {
+    const dto = {
+      address: '12 Oyemekun Road, Akure',
+      area: 'Alagbaka',
+      note: 'Call first',
+    };
+
+    it('fills in gifts already paid for and still waiting, and reports the ones it could not', async () => {
+      groupGifts.eventOrders.mockResolvedValue([
+        {
+          orderId: 'o1',
+          potId: 'p1',
+          status: 'fulfillment_in_progress',
+          revealToken: 'r1',
+          hasAddress: false,
+          doorstep: true,
+        },
+        {
+          orderId: 'o2',
+          potId: 'p2',
+          status: 'fulfillment_in_progress',
+          revealToken: 'r2',
+          hasAddress: false,
+          doorstep: true,
+        },
+        {
+          orderId: 'o3',
+          potId: 'p3',
+          status: 'fulfillment_in_progress',
+          revealToken: 'r3',
+          hasAddress: true,
+          doorstep: true,
+        },
+        {
+          orderId: 'o4',
+          potId: 'p4',
+          status: 'voucher_issued',
+          revealToken: 'r4',
+          hasAddress: false,
+          doorstep: false,
+        },
+      ]);
+      deliveries.setRecipientDetails
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('area not covered'));
+
+      const result = await sut.setDeliveryAddress(
+        event({ event_date: '2026-11-21' }),
+        dto,
+      );
+
+      expect(result).toEqual({ applied: 1, waiting: 1 });
+      expect(deliveries.setRecipientDetails).toHaveBeenCalledTimes(2);
+      expect(deliveries.setRecipientDetails).toHaveBeenCalledWith('o1', {
+        address: dto.address,
+        area: 'Alagbaka',
+        phone: '+2348011111111',
+        note: 'Call first · Gift for Tola & Dayo · Deliver from Sun 22 Nov',
+      });
+      // The address itself never goes into the audit trail.
+      expect(JSON.stringify(audit.record.mock.calls)).not.toContain('Oyemekun');
+    });
+
+    it('flags doorstep gifts still waiting and offers the areas their shops cover', async () => {
+      groupGifts.eventPots.mockResolvedValue([
+        {
+          id: 'p1',
+          token: 't1',
+          organiser_token: 'org1',
+          gift_template_id: 'template-1',
+          status: 'triggered',
+          target_amount: 1,
+          amount_raised: 1,
+          contributor_count: 1,
+        },
+      ]);
+      groupGifts.eventOrders.mockResolvedValue([
+        {
+          orderId: 'o1',
+          potId: 'p1',
+          status: 'fulfillment_in_progress',
+          revealToken: 'r1',
+          hasAddress: false,
+          doorstep: true,
+        },
+      ]);
+
+      const view = await sut.hostView(event());
+
+      expect(view.items[0]).toEqual(
+        expect.objectContaining({
+          revealPath: '/reveal/r1',
+          awaitingAddress: true,
+        }),
+      );
+      expect(view.deliveryAreas).toEqual(['Alagbaka', 'Ijapo']);
+      expect(view.delivery).toBeNull();
+    });
+
+    it('writes the same shop note the database writes for later gifts', () => {
+      expect(deliveryNote(null, 'Mama Kemi at 60', '2026-12-31')).toBe(
+        'Gift for Mama Kemi at 60 · Deliver from Fri 01 Jan',
+      );
+    });
   });
 
   describe('create', () => {

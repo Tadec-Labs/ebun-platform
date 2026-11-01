@@ -12,6 +12,7 @@ import { whatsappChatUrl } from "@/lib/whatsapp-share";
 import {
   addItemAction,
   cancelEventAction,
+  deliveryAddressAction,
   payoutAccountAction,
   removeItemAction,
   thankAction,
@@ -103,6 +104,10 @@ export function HostExperience({
       {showPayout && <Payout shortId={shortId} view={view} />}
 
       {event.giftListEnabled && <GiftListManager shortId={shortId} view={view} catalogue={catalogue} />}
+
+      {event.status !== "cancelled" && (view.delivery || view.items.some((i) => i.deliveryType === "physical")) && (
+        <Delivery shortId={shortId} view={view} />
+      )}
 
       {view.thankYous.length > 0 && <ThankYous shortId={shortId} title={event.title} entries={view.thankYous} />}
 
@@ -334,10 +339,21 @@ function GiftListManager({ shortId, view, catalogue }: { shortId: string; view: 
                   : `${formatNaira(item.raised)} / ${formatNaira(item.price)}`}
               </span>
             </div>
-            {item.managePath && (
-              <a href={item.managePath} className="text-[11px] underline underline-offset-2" style={{ color: "var(--gold-light)" }}>
-                Manage
+            {item.awaitingAddress && (
+              <span className="text-[11px]" style={{ color: "var(--gold-light)" }}>
+                Needs address
+              </span>
+            )}
+            {item.revealPath ? (
+              <a href={item.revealPath} className="text-[11px] underline underline-offset-2" style={{ color: "var(--gold-light)" }}>
+                Open
               </a>
+            ) : (
+              item.managePath && (
+                <a href={item.managePath} className="text-[11px] underline underline-offset-2" style={{ color: "var(--gold-light)" }}>
+                  Manage
+                </a>
+              )
             )}
             {active && item.status === "open" && (
               <button
@@ -384,6 +400,102 @@ function GiftListManager({ shortId, view, catalogue }: { shortId: string; view: 
       {error && (
         <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>
           {error}
+        </p>
+      )}
+    </Section>
+  );
+}
+
+function Delivery({ shortId, view }: { shortId: string; view: EventHostView }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(view.delivery === null);
+  const [address, setAddress] = useState(view.delivery?.address ?? "");
+  const [area, setArea] = useState(view.delivery?.area ?? "");
+  const [note, setNote] = useState(view.delivery?.note ?? "");
+  const [message, setMessage] = useState<{ text: string; good: boolean } | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const save = () =>
+    startTransition(async () => {
+      setMessage(null);
+      const result = await deliveryAddressAction(shortId, { address, area, note });
+      if (!result.ok) return setMessage({ text: result.error, good: false });
+      const { applied, waiting } = result.data;
+      setMessage(
+        waiting > 0
+          ? { text: `Saved. ${waiting} ${waiting === 1 ? "gift needs" : "gifts need"} an address on its own page.`, good: false }
+          : { text: applied > 0 ? `Saved · ${applied} on the way` : "Saved", good: true },
+      );
+      setEditing(false);
+      router.refresh();
+    });
+
+  return (
+    <Section title="Delivery">
+      {!editing && view.delivery ? (
+        <div className="flex items-center justify-between gap-3 border p-3" style={{ borderColor: "var(--border)" }}>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="truncate text-sm" style={{ color: "var(--cream)" }}>
+              {view.delivery.address}
+            </span>
+            <span className="text-[11px]" style={{ color: "var(--cream-dim)" }}>
+              {view.delivery.area} · after {formatEventDate(view.public.eventDate)}
+            </span>
+          </div>
+          <button type="button" onClick={() => setEditing(true)} className="text-xs underline underline-offset-2" style={{ color: "var(--gold-light)" }}>
+            Change
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            maxLength={300}
+            placeholder="Address"
+            autoComplete="street-address"
+            aria-label="Delivery address"
+            className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
+            style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+          />
+          <input
+            value={area}
+            onChange={(e) => setArea(e.target.value)}
+            maxLength={80}
+            placeholder="Area"
+            list="event-delivery-areas"
+            aria-label="Area"
+            className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
+            style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+          />
+          <datalist id="event-delivery-areas">
+            {view.deliveryAreas.map((a) => (
+              <option key={a} value={a} />
+            ))}
+          </datalist>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={200}
+            placeholder="Note for the rider (optional)"
+            aria-label="Note for the rider"
+            className="w-full border-0 border-b bg-transparent py-2 text-sm outline-none"
+            style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+          />
+          <button
+            type="button"
+            onClick={save}
+            disabled={pending || address.trim().length < 5 || area.trim().length < 2}
+            className="py-3 text-sm font-medium disabled:opacity-40"
+            style={{ background: "var(--gold)", color: "var(--ink)" }}
+          >
+            {pending ? "Saving…" : "Save"}
+          </button>
+        </div>
+      )}
+      {message && (
+        <p role="status" className="text-xs" style={{ color: message.good ? "var(--success)" : "var(--gold-light)" }}>
+          {message.text}
         </p>
       )}
     </Section>

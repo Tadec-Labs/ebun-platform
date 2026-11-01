@@ -24,6 +24,7 @@ import {
   AddEventItemDto,
   CashGiftDto,
   CreateEventDto,
+  DeliveryAddressDto,
   PayoutAccountDto,
   RecordPayoutDto,
   ThankDto,
@@ -150,6 +151,16 @@ export class EventHostController {
     @Body() dto: PayoutAccountDto,
   ): Promise<void> {
     await this.events.setPayoutAccount(eventOf(request), dto);
+  }
+
+  /** One address for every doorstep gift on the list. */
+  @Put('delivery-address')
+  @Throttle({ default: { limit: 10, ttl: 3_600_000 } })
+  deliveryAddress(
+    @Req() request: HostRequest,
+    @Body() dto: DeliveryAddressDto,
+  ) {
+    return this.events.setDeliveryAddress(eventOf(request), dto);
   }
 
   @Post('thanks')
