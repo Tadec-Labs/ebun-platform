@@ -54,7 +54,7 @@ export function EventExperience({
     );
     return () => clearTimeout(timer);
   }, [watching, tries, event.slug, paymentReference, router]);
-  const banner = returnBanner(returnedFromPayment, paymentReference, status, watching, copy.whom);
+  const banner = returnBanner(returnedFromPayment, paymentReference, status, watching);
 
   const giving = event.status === "active";
 
@@ -86,16 +86,16 @@ export function EventExperience({
         </h1>
         {event.guestCount > 0 && (
           <p className="text-xs" style={{ color: "var(--cream-dim)" }}>
-            {event.guestCount} {event.guestCount === 1 ? "guest has" : "guests have"} given so far
+            {event.guestCount} gave
           </p>
         )}
       </div>
 
       {event.status === "cancelled" && (
-        <Notice>This event was cancelled. Everyone who gave is being refunded in full, automatically.</Notice>
+        <Notice>Cancelled. Everyone is refunded automatically.</Notice>
       )}
       {event.status === "closed" && (
-        <Notice>Giving has closed for this event. Thank you to everyone who gave.</Notice>
+        <Notice>Giving has closed. Thank you.</Notice>
       )}
 
       {giving && (hasGifts || event.cashOpen) && (
@@ -116,11 +116,7 @@ export function EventExperience({
       )}
 
       {giving && !hasGifts && !event.cashOpen && (
-        <Notice>
-          {event.giftListEnabled
-            ? "The gift list is being put together. Check back soon."
-            : "Giving isn't open just yet. Check back soon."}
-        </Notice>
+        <Notice>Opening soon.</Notice>
       )}
 
       <PolicyLinks className="mt-auto pt-6 pb-8" />
@@ -157,11 +153,11 @@ function GiftList({ items }: { items: EventItemView[] }) {
               </p>
               {item.status === "given" ? (
                 <p className="text-[11px]" style={{ color: "var(--success)" }}>
-                  {item.givenBy.length > 0 ? `Given by ${item.givenBy.join(", ")}` : "Given"}
+                  {item.givenBy.length > 0 ? `Given · ${item.givenBy.join(", ")}` : "Given"}
                 </p>
               ) : item.status === "closed" ? (
                 <p className="text-[11px]" style={{ color: "var(--cream-faint)" }}>
-                  No longer on the list
+                  Closed
                 </p>
               ) : partly ? (
                 <>
@@ -169,13 +165,12 @@ function GiftList({ items }: { items: EventItemView[] }) {
                     <div className="h-full" style={{ width: `${percent}%`, background: "var(--gold)" }} />
                   </div>
                   <p className="text-[11px]" style={{ color: "var(--cream-dim)" }}>
-                    {formatNaira(item.raised)} of {formatNaira(item.price)} · {item.contributorCount} chipped in
+                    {formatNaira(item.raised)} / {formatNaira(item.price)}
                   </p>
                 </>
               ) : (
                 <p className="text-[11px]" style={{ color: "var(--cream-dim)" }}>
                   {formatNaira(item.price)}
-                  {item.deliveryType === "physical" ? " · delivered after the event" : ""}
                 </p>
               )}
             </div>
@@ -219,9 +214,9 @@ function CashForm({ event }: { event: EventPublicView }) {
     amountText.trim() === ""
       ? null
       : wholeNaira === null
-        ? "Whole naira only, e.g. 5000"
+        ? "Whole naira"
         : wholeNaira < minNaira
-          ? `The smallest gift is ${formatNaira(minNaira * 100)}`
+          ? `Min ${formatNaira(minNaira * 100)}`
           : null;
   const amountOk = wholeNaira !== null && amountError === null;
   const fee = amountOk ? shareFee(wholeNaira * 100, event.serviceFee) : 0;
@@ -295,7 +290,7 @@ function CashForm({ event }: { event: EventPublicView }) {
         </section>
 
         <section className="flex flex-col gap-4">
-          <Field label={`Your name, as ${copy.whom} ${copy.whom === "the couple" ? "know" : "knows"} you`}>
+          <Field label="Your name">
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -305,7 +300,7 @@ function CashForm({ event }: { event: EventPublicView }) {
               style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
             />
           </Field>
-          <Field label={`A line for ${copy.whom} (optional)`}>
+          <Field label="Message (optional)">
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value.slice(0, MESSAGE_MAX))}
@@ -313,14 +308,11 @@ function CashForm({ event }: { event: EventPublicView }) {
               className="w-full resize-none border bg-transparent p-3 text-sm outline-none"
               style={{ borderColor: "var(--border)", color: "var(--cream)" }}
             />
-            <span className="text-right text-[10px]" style={{ color: "var(--cream-faint)" }}>
-              {event.wallEnabled && onWall ? `Shown on the ${copy.wall.toLowerCase()} with your name` : "Only the host sees this"}{" "}
-              · {message.length}/{MESSAGE_MAX}
-            </span>
+
           </Field>
           <Field
-            label="Your email"
-            error={touchedEmail && email.trim() && !emailOk ? "That doesn't look like a valid email" : undefined}
+            label="Email"
+            error={touchedEmail && email.trim() && !emailOk ? "Check the email" : undefined}
           >
             <input
               type="email"
@@ -335,18 +327,14 @@ function CashForm({ event }: { event: EventPublicView }) {
           </Field>
           {event.wallEnabled && (
             <Check checked={onWall} onChange={setOnWall}>
-              Show my name on the {copy.wall.toLowerCase()}
+              On the {copy.wall.toLowerCase()}
             </Check>
           )}
           {event.showAmounts && (
             <Check checked={showAmount} onChange={setShowAmount}>
-              Show the amount too
+              Show amount
             </Check>
           )}
-          <p className="text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
-            Abroad? Pay with your card. Your gift reaches {copy.whom} after the event; if the event is cancelled you&rsquo;re
-            refunded in full, automatically.
-          </p>
         </section>
       </div>
 
@@ -367,9 +355,9 @@ function CashForm({ event }: { event: EventPublicView }) {
           )}
           {amountOk && fee > 0 && (
             <p className="mb-2.5 text-center text-[11px]" style={{ color: "var(--cream-faint)" }}>
-              {formatNaira(wholeNaira! * 100)} to {copy.whom} + {formatNaira(fee)} service fee.{" "}
+              {formatNaira(wholeNaira! * 100)} + {formatNaira(fee)} fee ·{" "}
               <Link href="/refunds" target="_blank" className="underline underline-offset-2">
-                Refund policy
+                Refunds
               </Link>
             </p>
           )}
@@ -381,7 +369,7 @@ function CashForm({ event }: { event: EventPublicView }) {
             style={{ background: "var(--action)", color: "var(--ink)" }}
           >
             {submitting
-              ? "Redirecting to Paystack…"
+              ? "Opening Paystack…"
               : amountOk
                 ? `${copy.cashVerb} ${formatNaira(wholeNaira! * 100 + fee)}`
                 : copy.cashVerb}
@@ -397,18 +385,13 @@ function returnBanner(
   reference: string | null,
   status: CashGiftStatus | null,
   watching: boolean,
-  whom: string,
 ): { text: string; good: boolean } | null {
   if (!returned) return null;
-  if (status === "confirmed") return { text: `Received. Thank you — ${whom} will see your name.`, good: true };
-  if (status === "late" || status === "refunded")
-    return {
-      text: "This event couldn't take your gift just now, so you're being refunded in full — nothing to do.",
-      good: false,
-    };
-  if (status === "failed") return { text: "That payment didn't go through. You can try again below.", good: false };
-  if (reference && watching) return { text: "Payment received by Paystack. Confirming your gift…", good: false };
-  return { text: "If you paid, your gift will show here shortly. Paystack has emailed you a receipt.", good: false };
+  if (status === "confirmed") return { text: "Received. Thank you.", good: true };
+  if (status === "late" || status === "refunded") return { text: "Couldn't be accepted — you're refunded in full.", good: false };
+  if (status === "failed") return { text: "Payment didn't go through. Try again.", good: false };
+  if (reference && watching) return { text: "Confirming…", good: false };
+  return { text: "Your gift will show here shortly.", good: false };
 }
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {

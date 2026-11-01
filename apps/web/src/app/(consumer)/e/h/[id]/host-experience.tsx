@@ -88,15 +88,15 @@ export function HostExperience({
       </div>
 
       <div className="grid grid-cols-2 gap-2.5">
-        <Stat label={copy.cash} value={formatNaira(view.cashRaised)} hint={`from ${view.cashCount} ${view.cashCount === 1 ? "guest" : "guests"}`} />
-        <Stat label="Gift list" value={listed === 0 ? "—" : `${given} of ${listed}`} hint="given or funded" />
+        <Stat label={copy.cash} value={formatNaira(view.cashRaised)} hint={`${view.cashCount} guests`} />
+        <Stat label="Gift list" value={listed === 0 ? "—" : `${given}/${listed}`} hint="given" />
       </div>
 
       {active && <Share view={view} />}
 
       {event.status === "cancelled" && (
         <p className="border px-4 py-3 text-sm leading-relaxed" style={{ borderColor: "var(--border-strong)", color: "var(--cream-dim)" }}>
-          This event is cancelled. Everyone who gave is being refunded in full, automatically.
+          Cancelled. Everyone is refunded automatically.
         </p>
       )}
 
@@ -129,12 +129,6 @@ function Share({ view }: { view: EventHostView }) {
 
   return (
     <section className="flex flex-col gap-3 border p-4" style={{ borderColor: "var(--border-strong)", background: "var(--panel)" }}>
-      <p className="text-sm" style={{ color: "var(--cream)" }}>
-        Share your link
-      </p>
-      <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-        On your invitation, in family groups, on the programme. Guests abroad can give too.
-      </p>
       <a
         href="#"
         onClick={(e) => {
@@ -157,10 +151,10 @@ function Share({ view }: { view: EventHostView }) {
           className="flex-1 border py-2.5 text-xs"
           style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
         >
-          {copied ? "Link copied" : "Copy link"}
+          {copied ? "Copied" : "Copy link"}
         </button>
         <Link href={view.sharePath} className="flex-1 border py-2.5 text-center text-xs" style={{ borderColor: "var(--border)", color: "var(--gold-light)" }}>
-          See guests&rsquo; page
+          Guest page
         </Link>
       </div>
       {event.wallEnabled && (
@@ -171,7 +165,7 @@ function Share({ view }: { view: EventHostView }) {
           className="border py-2.5 text-center text-xs"
           style={{ borderColor: "var(--gold)", color: "var(--gold-light)" }}
         >
-          Open the {copy.wall.toLowerCase()} on the venue screen ↗
+          Open {copy.wall.toLowerCase()} ↗
         </a>
       )}
     </section>
@@ -213,11 +207,10 @@ function Payout({ shortId, view }: { shortId: string; view: EventHostView }) {
     });
 
   return (
-    <Section title="Where your cash gifts go">
-      <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-        {formatNaira(view.payoutDue)} so far. It&rsquo;s paid to your account after giving closes (
+    <Section title="Payout">
+      <p className="text-xs" style={{ color: "var(--cream-dim)" }}>
+        From{" "}
         {new Date(view.public.givingClosesAt).toLocaleDateString("en-NG", { weekday: "short", day: "numeric", month: "short" })}
-        ), once we&rsquo;ve checked the account is yours.
       </p>
       {!editing && p.accountName ? (
         <div className="flex items-center justify-between gap-3 border p-3" style={{ borderColor: "var(--border)" }}>
@@ -226,7 +219,7 @@ function Payout({ shortId, view }: { shortId: string; view: EventHostView }) {
               {p.accountName} {p.accountNumberMasked}
             </span>
             <span className="text-[11px]" style={{ color: p.verified ? "var(--success)" : "var(--gold-light)" }}>
-              {p.verified ? "Checked by SendEbun" : "Waiting for SendEbun to check it"}
+              {p.verified ? "Verified" : "Being verified"}
             </span>
           </div>
           <button type="button" onClick={() => setEditing(true)} className="text-xs underline underline-offset-2" style={{ color: "var(--gold-light)" }}>
@@ -245,7 +238,7 @@ function Payout({ shortId, view }: { shortId: string; view: EventHostView }) {
               className="border bg-transparent px-2 py-2.5 text-sm"
               style={{ borderColor: "var(--border-strong)", color: "var(--cream)", colorScheme: "dark" }}
             >
-              <option value="">Choose your bank</option>
+              <option value="">Bank</option>
               {BANKS.map((b) => (
                 <option key={b.code} value={b.code}>
                   {b.name}
@@ -278,11 +271,6 @@ function Payout({ shortId, view }: { shortId: string; view: EventHostView }) {
               style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
             />
           </label>
-          {p.verified && (
-            <p className="text-[11px]" style={{ color: "var(--gold-light)" }}>
-              Changing the account means we check it again before paying.
-            </p>
-          )}
           {error && (
             <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>
               {error}
@@ -295,7 +283,7 @@ function Payout({ shortId, view }: { shortId: string; view: EventHostView }) {
             className="py-3 text-sm font-medium disabled:opacity-40"
             style={{ background: "var(--gold)", color: "var(--ink)" }}
           >
-            {pending ? "Saving…" : "Save account"}
+            {pending ? "Saving…" : "Save"}
           </button>
         </div>
       )}
@@ -322,7 +310,7 @@ function GiftListManager({ shortId, view, catalogue }: { shortId: string; view: 
 
   const remove = (id: string, raised: number) =>
     startTransition(async () => {
-      if (raised > 0 && !window.confirm("People have chipped in for this. Removing it refunds them in full. Remove it?")) return;
+      if (raised > 0 && !window.confirm("Remove it? Everyone who chipped in is refunded.")) return;
       setError(null);
       const result = await removeItemAction(shortId, id);
       if (!result.ok) return setError(result.error);
@@ -330,12 +318,7 @@ function GiftListManager({ shortId, view, catalogue }: { shortId: string; view: 
     });
 
   return (
-    <Section title="Your gift list">
-      {listed.length === 0 && (
-        <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-          Add gifts guests can give whole or chip in on. They reach you the morning after the event.
-        </p>
-      )}
+    <Section title="Gift list">
       <ul className="flex flex-col gap-2">
         {listed.map((item) => (
           <li key={item.token} className="flex items-center gap-3 border p-3" style={{ borderColor: "var(--border)" }}>
@@ -346,9 +329,9 @@ function GiftListManager({ shortId, view, catalogue }: { shortId: string; view: 
               <span className="text-[11px]" style={{ color: item.status === "given" ? "var(--success)" : "var(--cream-dim)" }}>
                 {item.status === "given"
                   ? item.givenBy.length > 0
-                    ? `Given by ${item.givenBy.join(", ")}`
+                    ? `Given · ${item.givenBy.join(", ")}`
                     : "Given"
-                  : `${formatNaira(item.raised)} of ${formatNaira(item.price)}${item.contributorCount ? ` · ${item.contributorCount} in` : ""}`}
+                  : `${formatNaira(item.raised)} / ${formatNaira(item.price)}`}
               </span>
             </div>
             {item.managePath && (
@@ -379,7 +362,7 @@ function GiftListManager({ shortId, view, catalogue }: { shortId: string; view: 
             className="min-w-0 flex-1 border bg-transparent px-2 py-2.5 text-sm"
             style={{ borderColor: "var(--border-strong)", color: "var(--cream)", colorScheme: "dark" }}
           >
-            <option value="">Add a gift…</option>
+            <option value="">Add a gift</option>
             {catalogue.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.name} · {formatNaira(g.price)}
@@ -426,7 +409,7 @@ function ThankYous({ shortId, title, entries }: { shortId: string; title: string
   };
 
   return (
-    <Section title={left > 0 ? `Say thank you · ${left} to go` : "Everyone thanked"}>
+    <Section title={left > 0 ? `Thank-yous · ${left}` : "All thanked"}>
       <ul className="flex flex-col gap-2">
         {entries.map((e) => (
           <li key={`${e.kind}-${e.id}`} className="flex items-center gap-3 border p-3" style={{ borderColor: "var(--border)" }}>
@@ -452,7 +435,7 @@ function ThankYous({ shortId, title, entries }: { shortId: string; title: string
                 className="px-3 py-2 text-[11px] disabled:opacity-40"
                 style={{ background: "var(--panel-raised)", color: "var(--gold-light)" }}
               >
-                {e.phone ? "Thank" : "Mark thanked"}
+                {e.phone ? "Thank" : "Done"}
               </button>
             )}
           </li>
@@ -485,13 +468,12 @@ function Settings({ shortId, view }: { shortId: string; view: EventHostView }) {
         <SettingRow label={copy.cash} checked={s.cashEnabled} disabled={pending} onChange={(v) => set({ cashEnabled: v })} />
       ) : (
         <p className="border-b py-3 text-xs leading-relaxed" style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}>
-          {copy.cash}: coming soon. Your gift list works now
-          {s.cashEnabled ? ", and cash opens here automatically when it's ready" : ""}.
+          {copy.cash} · soon
         </p>
       )}
       <SettingRow label={copy.wall} checked={s.wallEnabled} disabled={pending} onChange={(v) => set({ wallEnabled: v })} />
       {event.eventType !== "remembrance" && (
-        <SettingRow label="Guests may show amounts" checked={s.showAmounts} disabled={pending} onChange={(v) => set({ showAmounts: v })} />
+        <SettingRow label="Show amounts" checked={s.showAmounts} disabled={pending} onChange={(v) => set({ showAmounts: v })} />
       )}
       {error && (
         <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>
@@ -512,7 +494,7 @@ function Cancel({ shortId }: { shortId: string }) {
         type="button"
         disabled={pending}
         onClick={() => {
-          if (!window.confirm("Cancel the event? Every cash gift is refunded, and gifts still being chipped in for are closed and refunded.")) return;
+          if (!window.confirm("Cancel the event? Everyone is refunded.")) return;
           startTransition(async () => {
             const result = await cancelEventAction(shortId);
             if (!result.ok) setError(result.error);
@@ -522,7 +504,7 @@ function Cancel({ shortId }: { shortId: string }) {
         className="self-start text-xs underline underline-offset-2 disabled:opacity-40"
         style={{ color: "var(--cream-faint)" }}
       >
-        Cancel this event
+        Cancel event
       </button>
       {error && (
         <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>
@@ -540,9 +522,8 @@ function KeepThisLink({ hostLinkPath }: { hostLinkPath: string }) {
     <section className="flex items-start gap-3 border-t pt-5" style={{ borderColor: "var(--border)" }}>
       <CheckGlyph className="mt-0.5 h-4 w-4 flex-shrink-0 text-[color:var(--gold-dim)]" />
       <div className="flex flex-col gap-2">
-        <p className="text-xs leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-          Keep your host link — it&rsquo;s how you get back here from another phone. Don&rsquo;t share it: it lets
-          whoever has it manage the event and its payout account.
+        <p className="text-xs" style={{ color: "var(--cream-dim)" }}>
+          Your private link. Keep it, don&rsquo;t share it.
         </p>
         <div className="flex gap-4">
           <button
@@ -555,7 +536,7 @@ function KeepThisLink({ hostLinkPath }: { hostLinkPath: string }) {
             className="text-xs underline underline-offset-2"
             style={{ color: "var(--gold-light)" }}
           >
-            {copied ? "Copied" : "Copy my link"}
+            {copied ? "Copied" : "Copy"}
           </button>
           <a
             href="#"
@@ -566,7 +547,7 @@ function KeepThisLink({ hostLinkPath }: { hostLinkPath: string }) {
             className="text-xs underline underline-offset-2"
             style={{ color: "var(--gold-light)" }}
           >
-            Save it to my WhatsApp
+            Save to WhatsApp
           </a>
         </div>
       </div>

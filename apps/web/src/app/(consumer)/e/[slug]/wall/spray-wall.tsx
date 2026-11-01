@@ -119,9 +119,6 @@ export function SprayWall({
             <p className="font-display text-[5vw] leading-tight" style={{ color: "var(--gold-light)" }}>
               Be the first.
             </p>
-            <p className="text-[1.6vw]" style={{ color: "var(--cream-dim)" }}>
-              Scan the code — your name appears here the moment your gift lands.
-            </p>
           </div>
         )}
 
@@ -137,10 +134,10 @@ export function SprayWall({
           )}
           <div className="flex flex-col gap-1">
             <p className="text-[1.9vw] font-medium" style={{ color: "var(--cream)" }}>
-              {cashOpen ? `Scan to ${copy.cash.toLowerCase()}` : "Scan to give a gift"}
+              {cashOpen ? `Scan to ${copy.cash.toLowerCase()}` : "Scan to give"}
             </p>
             <p className="text-[1.2vw]" style={{ color: "var(--cream-dim)" }}>
-              {guestPath} · works from anywhere
+              {guestPath}
             </p>
           </div>
           <p className="ml-auto text-[1.5vw] font-bold tracking-tight">
@@ -152,7 +149,7 @@ export function SprayWall({
 
       <div className="flex min-h-0 flex-col gap-[1.4vh] border-l pl-[2.5vw]" style={{ borderColor: "var(--border)" }}>
         <p className="text-[1.1vw] tracking-[0.16em] uppercase" style={{ color: "var(--cream-dim)" }}>
-          {count > 0 ? "Just now" : "Waiting for the first gift"}
+          {count > 0 ? "Just now" : ""}
         </p>
         <ul className="flex flex-col">
           {side.map((e, i) => (

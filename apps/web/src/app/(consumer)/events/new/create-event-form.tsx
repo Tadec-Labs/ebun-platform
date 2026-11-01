@@ -88,14 +88,12 @@ export function CreateEventForm() {
       </header>
 
       <h1 className="font-display pb-6 text-3xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
-        One link for every gift your guests <span style={{ color: "var(--gold-light)" }}>want to give.</span>
+        One link for <span style={{ color: "var(--gold-light)" }}>every gift.</span>
       </h1>
 
       <div className="flex flex-col gap-7 pb-44">
         <fieldset className="flex flex-col gap-3">
-          <legend className="pb-3 text-xs" style={{ color: "var(--cream-dim)" }}>
-            What&rsquo;s the occasion?
-          </legend>
+          <legend className="sr-only">Occasion</legend>
           <div className="flex flex-wrap gap-2">
             {EVENT_TYPE_ORDER.map((type) => {
               const active = type === eventType;
@@ -131,7 +129,7 @@ export function CreateEventForm() {
             />
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Date" error={eventDate && !dateOk ? "Pick today or a later date" : undefined}>
+            <Field label="Date" error={eventDate && !dateOk ? "Pick a future date" : undefined}>
               <input
                 type="date"
                 value={eventDate}
@@ -155,46 +153,14 @@ export function CreateEventForm() {
         </section>
 
         <fieldset className="flex flex-col gap-2">
-          <legend className="pb-3 text-xs" style={{ color: "var(--cream-dim)" }}>
-            Guests can
-          </legend>
-          <Toggle
-            checked={giftList}
-            onChange={setGiftList}
-            title="Give from your gift list"
-            body="Real gifts from our partners, delivered after the event. Friends can chip in on big ones."
-          />
-          <Toggle
-            checked={cash}
-            onChange={setCash}
-            title={copy.cash}
-            body="Paid to your bank account after the event, once we've checked it's yours."
-          />
-          <Toggle
-            checked={wall}
-            onChange={setWall}
-            title={`Show a live ${copy.wall.toLowerCase()}`}
-            body="Guests' names and messages appear on a screen at the venue as they give."
-          />
-          {!remembrance && (
-            <Toggle
-              checked={showAmounts}
-              onChange={setShowAmounts}
-              title="Let guests show amounts"
-              body="Off by default. Each guest still decides for their own gift."
-            />
-          )}
-          {!giftList && !cash && (
-            <p className="text-[11px]" style={{ color: "var(--gold-light)" }}>
-              Turn on the gift list, cash or both.
-            </p>
-          )}
+          <legend className="sr-only">What guests can do</legend>
+          <Toggle checked={giftList} onChange={setGiftList} title="Gift list" />
+          <Toggle checked={cash} onChange={setCash} title={copy.cash} />
+          <Toggle checked={wall} onChange={setWall} title={copy.wall} />
+          {!remembrance && <Toggle checked={showAmounts} onChange={setShowAmounts} title="Show amounts" />}
         </fieldset>
 
         <section className="flex flex-col gap-4">
-          <p className="text-xs" style={{ color: "var(--cream-dim)" }}>
-            About you, the host
-          </p>
           <Field label="Your name">
             <input
               value={hostName}
@@ -205,7 +171,7 @@ export function CreateEventForm() {
               style={inputStyle}
             />
           </Field>
-          <Field label="Your email" error={hostEmail && !emailOk ? "That doesn't look like a valid email" : undefined}>
+          <Field label="Email" error={hostEmail && !emailOk ? "Check the email" : undefined}>
             <input
               type="email"
               value={hostEmail}
@@ -215,10 +181,7 @@ export function CreateEventForm() {
               style={inputStyle}
             />
           </Field>
-          <Field
-            label="Your WhatsApp number"
-            error={hostPhone && !phone ? "A Nigerian number like 0803 123 4567, or +44…" : undefined}
-          >
+          <Field label="WhatsApp number" error={hostPhone && !phone ? "Check the number" : undefined}>
             <input
               type="tel"
               value={hostPhone}
@@ -229,9 +192,6 @@ export function CreateEventForm() {
               style={inputStyle}
             />
           </Field>
-          <p className="text-[11px] leading-relaxed" style={{ color: "var(--cream-faint)" }}>
-            Gifts from your list are sent to this number after the event. Guests never see it.
-          </p>
         </section>
       </div>
 
@@ -257,11 +217,8 @@ export function CreateEventForm() {
             className="w-full py-3.5 text-sm font-medium tracking-wide disabled:opacity-40"
             style={{ background: "var(--action)", color: "var(--ink)" }}
           >
-            {submitting ? "Creating your link…" : "Create the link · free"}
+            {submitting ? "Creating…" : "Create link"}
           </button>
-          <p className="mt-2 text-center text-[11px]" style={{ color: "var(--cream-faint)" }}>
-            You&rsquo;ll get a shareable link and a QR code for the venue.
-          </p>
         </div>
       </div>
       <PolicyLinks className="mt-auto pt-6 pb-8" />
@@ -288,29 +245,14 @@ function Field({ label, error, children }: { label: string; error?: string; chil
   );
 }
 
-function Toggle({
-  checked,
-  onChange,
-  title,
-  body,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  title: string;
-  body: string;
-}) {
+function Toggle({ checked, onChange, title }: { checked: boolean; onChange: (next: boolean) => void; title: string }) {
   return (
     <label
-      className="flex cursor-pointer items-center gap-3 border p-3.5"
+      className="flex min-h-12 cursor-pointer items-center justify-between gap-3 border px-3.5"
       style={{ borderColor: checked ? "var(--border-strong)" : "var(--border)", background: "var(--panel)" }}
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-sm" style={{ color: "var(--cream)" }}>
-          {title}
-        </span>
-        <span className="text-[11px] leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-          {body}
-        </span>
+      <span className="text-sm" style={{ color: "var(--cream)" }}>
+        {title}
       </span>
       <input
         type="checkbox"
