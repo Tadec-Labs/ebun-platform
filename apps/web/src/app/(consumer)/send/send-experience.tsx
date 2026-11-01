@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { BrandLogo } from "@/components/brand-logo";
 import { OtherWays } from "@/components/other-ways";
-import { LANDING_URL } from "@/lib/site-links";
 import { useEffect, useState } from "react";
 import { PolicyLinks } from "@/components/policy-links";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
@@ -112,9 +111,9 @@ export function SendExperience({
     >
       <header className="pt-5 pb-7">
         <div className="flex items-center justify-between">
-          {/* The logo goes home to the main site — but only from the first
+          {/* The logo goes back to the launcher — but only from the first
               step, so a tap mid-message can't throw away a draft. */}
-          <BrandLogo size="sm" href={phase === "gift" ? LANDING_URL : null} />
+          <BrandLogo size="sm" href={phase === "gift" ? "/" : null} />
           <div className="flex items-center gap-4">
             {phase === "gift" && companiesOpen && (
               <Link

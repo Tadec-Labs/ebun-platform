@@ -17,11 +17,11 @@ import Link from "next/link";
 export function BrandLogo({
   size = "md",
   wordmark = true,
-  href = "/send",
+  href = "/",
 }: {
   size?: "sm" | "md";
   wordmark?: boolean;
-  /** Where the logo goes when tapped; null for a plain, unlinked logo. */
+  /** Where the logo goes when tapped — the launcher by default; null for a plain, unlinked logo. */
   href?: string | null;
 }) {
   const tile = size === "sm" ? 28 : 36;
@@ -51,7 +51,7 @@ export function BrandLogo({
   return (
     <Link
       href={href}
-      aria-label="SendEbun — send a gift"
+      aria-label={href.startsWith("http") ? "SendEbun website" : "SendEbun home"}
       className="inline-flex"
     >
       {content}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useSyncExternalStore } from "react";
 import { BrandLogo } from "@/components/brand-logo";
 import { readRecent, recentSnapshot } from "@/lib/recent";
+import { LANDING_URL } from "@/lib/site-links";
 
 // Nothing else writes the list while the launcher is open.
 const subscribe = () => () => undefined;
@@ -40,8 +41,16 @@ export function Launcher({ eventsOpen, companiesOpen }: { eventsOpen: boolean; c
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col gap-8 px-7 pb-10">
-      <header className="pt-5">
-        <BrandLogo size="sm" href={null} />
+      {/* The launcher is the app's front door, so its way out is the main site. */}
+      <header className="flex items-center justify-between pt-5">
+        <BrandLogo size="sm" href={LANDING_URL} />
+        <a
+          href={LANDING_URL}
+          className="flex items-center gap-1.5 text-[11px] tracking-wide underline-offset-4 hover:underline"
+          style={{ color: "var(--cream-dim)" }}
+        >
+          <span aria-hidden="true">&larr;</span> Website
+        </a>
       </header>
 
       <h1 className="font-display mt-6 text-4xl leading-tight font-normal" style={{ color: "var(--cream)" }}>
