@@ -92,7 +92,7 @@ export function ConfirmationExperience({
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7 pb-10">
       <div className="flex justify-center pt-6 pb-8">
-        <BrandLogo size="sm" href={null} />
+        <BrandLogo size="sm" />
       </div>
 
       <div className="flex flex-1 flex-col justify-center gap-8" aria-live="polite">

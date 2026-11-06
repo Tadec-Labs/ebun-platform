@@ -111,9 +111,17 @@ export function SendExperience({
     >
       <header className="pt-5 pb-7">
         <div className="flex items-center justify-between">
-          {/* The logo goes back to the launcher — but only from the first
-              step, so a tap mid-message can't throw away a draft. */}
-          <BrandLogo size="sm" href={phase === "gift" ? "/" : null} />
+          {/* The logo always goes back to the launcher. Past the first
+              step it asks first, so a stray tap can't throw away a draft. */}
+          <span
+            onClickCapture={(e) => {
+              if (phase !== "gift" && !window.confirm("Leave this gift? What you've written won't be saved.")) {
+                e.preventDefault();
+              }
+            }}
+          >
+            <BrandLogo size="sm" />
+          </span>
           <div className="flex items-center gap-4">
             {phase === "gift" && companiesOpen && (
               <Link

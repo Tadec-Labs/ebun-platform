@@ -61,7 +61,7 @@ export function EventExperience({
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
       <header className="flex items-center justify-between pt-5 pb-7">
-        <BrandLogo size="sm" href={null} />
+        <BrandLogo size="sm" />
         <p className="border px-2.5 py-1 text-[11px]" style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}>
           {formatEventDate(event.eventDate)} · {event.city}
         </p>

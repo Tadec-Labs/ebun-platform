@@ -71,7 +71,7 @@ export function PotExperience({
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
       <header className="flex items-center justify-between pt-5 pb-7">
-        <BrandLogo size="sm" href={null} />
+        <BrandLogo size="sm" />
         {pot.status === "open" && (
           <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
             {deadlineLabel(pot.deadline)}
