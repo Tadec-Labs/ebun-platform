@@ -10,6 +10,7 @@ import {
 } from "@/lib/orders/get-order-confirmation";
 import { giftMessage, whatsappChatUrl } from "@/lib/whatsapp-share";
 import { PolicyLinks } from "@/components/policy-links";
+import { track } from "@/lib/analytics";
 
 // The webhook that actually confirms payment is asynchronous — usually a
 // couple of seconds behind the redirect, occasionally much longer. Poll
@@ -63,10 +64,12 @@ export function ConfirmationExperience({
       if (result.kind === "ok") {
         lastData = result.data;
         if (result.data.status === "confirmed") {
+          track("payment_result", { result: "confirmed" });
           setState({ kind: "confirmed", data: result.data });
           return;
         }
         if (result.data.status === "unsuccessful") {
+          track("payment_result", { result: "unsuccessful" });
           setState({ kind: "unsuccessful", data: result.data });
           return;
         }
@@ -75,6 +78,7 @@ export function ConfirmationExperience({
       // A network "error" falls through and is retried like "awaiting".
 
       if (attempts >= MAX_ATTEMPTS) {
+        track("payment_result", { result: "timeout" });
         setState({ kind: "timeout", data: lastData });
         return;
       }

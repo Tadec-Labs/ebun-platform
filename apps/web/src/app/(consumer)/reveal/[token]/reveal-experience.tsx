@@ -14,6 +14,7 @@ import { GroupLines } from "./components/group-lines";
 import { PickupBookingPanel } from "./components/pickup-booking";
 import { ScratchPanel } from "./components/scratch-panel";
 import { ChooseScreen, ThanksPanel } from "./components/company-gift";
+import { track } from "@/lib/analytics";
 
 /**
  * Phase is local state; what it is allowed to start as comes from the
@@ -176,7 +177,10 @@ export function RevealExperience({ token, initial }: { token: string; initial: R
           <RevealScreen
             payload={initial}
             scratched={scratched}
-            onScratched={() => setScratched(true)}
+            onScratched={() => {
+              track("gift_scratched", {});
+              setScratched(true);
+            }}
             onPrimaryAction={() => (isPhysical ? setPhase("address") : claim())}
             claiming={claiming}
             claimError={claimError}

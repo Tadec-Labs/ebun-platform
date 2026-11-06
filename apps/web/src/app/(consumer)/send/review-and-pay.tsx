@@ -5,6 +5,7 @@ import { useState } from "react";
 import { FulfillmentType } from "@ebun/types";
 import { CreateOrderError, createOrder } from "@/lib/orders/create-order";
 import { formatNaira } from "@/lib/format-money";
+import { track } from "@/lib/analytics";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 import type { MessageDraft } from "./compose";
 
@@ -78,6 +79,7 @@ export function ReviewAndPay({
       // leaving the page; Paystack returns the sender to
       // WEB_APP_BASE_URL's configured callback once they've paid (or
       // abandoned), independent of this component's lifecycle.
+      track("checkout_started", { flow: "gift" });
       window.location.href = result.checkoutUrl;
     } catch (e) {
       setError(

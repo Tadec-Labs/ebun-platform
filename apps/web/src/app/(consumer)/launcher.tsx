@@ -5,6 +5,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { BrandLogo } from "@/components/brand-logo";
 import { readRecent, recentSnapshot } from "@/lib/recent";
 import { LANDING_URL } from "@/lib/site-links";
+import { track } from "@/lib/analytics";
 
 // Nothing else writes the list while the launcher is open.
 const subscribe = () => () => undefined;
@@ -62,6 +63,7 @@ export function Launcher({ eventsOpen, companiesOpen }: { eventsOpen: boolean; c
           <Link
             key={t.href}
             href={t.href}
+            onClick={() => track("launcher_choice", { choice: t.title })}
             className="flex items-center gap-4 border p-5 transition-colors"
             style={{ borderColor: i === 0 ? "var(--border-strong)" : "var(--border)", background: "var(--panel)" }}
           >

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BrandLogo } from "@/components/brand-logo";
 import { PolicyLinks } from "@/components/policy-links";
 import { formatNaira, parseNairaToKobo } from "@/lib/format-money";
+import { track } from "@/lib/analytics";
 import { GroupGiftError, type ShareStatus, contribute, shareStatus } from "@/lib/group/api";
 import { shareFee } from "@/lib/group/fee";
 import type { GroupGiftPublicView } from "@/lib/group/types";
@@ -241,6 +242,7 @@ function ContributeForm({
         amountNaira: wholeNaira,
         message: message.trim() || undefined,
       });
+      track("checkout_started", { flow: "pot" });
       window.location.href = result.checkoutUrl;
     } catch (e) {
       setError(e instanceof GroupGiftError ? e.message : "Something went wrong. Please try again.");

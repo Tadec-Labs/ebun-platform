@@ -1,15 +1,37 @@
 version: 0.2
 
+# Builds the API image, pushes it to ECR, then tells ECS to roll it out.
+#
+# Auto-deploy runs only when ECS_CLUSTER and ECS_SERVICE are set on the
+# CodeBuild project; without them this builds and pushes as before, and
+# a deploy is still "Update service" in the ECS console.
+#
+# The image is also tagged with the commit, so any earlier build can be
+# put back by pointing the service at that tag.
+
 phases:
   pre_build:
     commands:
       - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "${REPOSITORY_URI%/*}"
+      - COMMIT_TAG="$(echo "${CODEBUILD_RESOLVED_SOURCE_VERSION:-manual}" | cut -c1-7)"
 
   build:
     commands:
-      - docker build --platform linux/amd64 -f Dockerfile.api -t "$REPOSITORY_URI:$IMAGE_TAG" .
+      - docker build --platform linux/amd64 -f Dockerfile.api -t "$REPOSITORY_URI:$IMAGE_TAG" -t "$REPOSITORY_URI:$COMMIT_TAG" .
 
   post_build:
     commands:
       - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
       - docker push "$REPOSITORY_URI:$IMAGE_TAG"
+      - docker push "$REPOSITORY_URI:$COMMIT_TAG"
+      - |
+        if [ -n "$ECS_CLUSTER" ] && [ -n "$ECS_SERVICE" ]; then
+          # Same task definition, fresh pull of the tag just pushed.
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment > /dev/null
+          echo "Deploying $COMMIT_TAG to $ECS_SERVICE; waiting for it to settle..."
+          # Fails the build (so you see it) if the new tasks never become healthy.
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          echo "Deployed $COMMIT_TAG."
+        else
+          echo "ECS_CLUSTER/ECS_SERVICE not set: image pushed, not deployed."
+        fi

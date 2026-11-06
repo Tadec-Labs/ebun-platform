@@ -10,6 +10,7 @@ import { EVENT_COPY, formatEventDate } from "@/lib/events/copy";
 import { type CashGiftStatus, EventError, cashGiftStatus, giveCash } from "@/lib/events/api";
 import type { EventItemView, EventPublicView } from "@/lib/events/types";
 import { formatNaira, parseNairaToKobo } from "@/lib/format-money";
+import { track } from "@/lib/analytics";
 import { shareFee } from "@/lib/group/fee";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -236,6 +237,7 @@ function CashForm({ event }: { event: EventPublicView }) {
         showOnWall: event.wallEnabled ? onWall : false,
         showAmount: event.showAmounts ? showAmount : false,
       });
+      track("checkout_started", { flow: "event_cash" });
       window.location.href = result.checkoutUrl;
     } catch (e) {
       setError(e instanceof EventError ? e.message : "Something went wrong. Please try again.");

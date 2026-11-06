@@ -84,7 +84,8 @@ export default function PrivacyPage() {
           items={[
             "Paystack — payments and refunds.",
             "Supabase — our database.",
-            "Vercel and Railway — hosting for our website and servers.",
+            "Vercel and Amazon Web Services — hosting for our website and servers.",
+            "PostHog — anonymous counts of which pages and steps are used, so we can improve the service.",
             "WhatsApp (Meta) — when a gift link is sent through WhatsApp, including when you send it from your own WhatsApp.",
             "The vendor handing over a gift, as described above.",
           ]}
@@ -139,7 +140,10 @@ export default function PrivacyPage() {
         <p>
           We use only the cookies needed to make the service work, such as
           keeping a vendor&rsquo;s counter screen signed in. We don&rsquo;t use
-          advertising or tracking cookies.
+          advertising cookies. To see which pages and steps people use, your
+          browser keeps a random ID that isn&rsquo;t linked to your name, phone
+          or email; we never record what you type, and private gift links are
+          removed before anything is counted.
         </p>
       </Section>
 

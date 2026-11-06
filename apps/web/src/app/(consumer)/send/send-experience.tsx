@@ -5,6 +5,7 @@ import { BrandLogo } from "@/components/brand-logo";
 import { OtherWays } from "@/components/other-ways";
 import { useEffect, useState } from "react";
 import { PolicyLinks } from "@/components/policy-links";
+import { track } from "@/lib/analytics";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 import type { OccasionId } from "@/lib/occasions";
 import { Compose, type MessageDraft } from "./compose";
@@ -98,6 +99,13 @@ export function SendExperience({
   // a smooth scroll on a screen that has just changed reads as lag.
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
+  }, [phase]);
+
+  // Which step people reach is the funnel: gift → message → pay.
+  useEffect(() => {
+    track("send_step", { step: phase, group: draft.group });
+    // draft.group is read at the moment the step opens, not tracked on its own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
   return (
