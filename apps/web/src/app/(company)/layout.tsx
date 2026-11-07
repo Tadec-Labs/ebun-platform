@@ -4,7 +4,7 @@ import { BrandLogo } from "@/components/brand-logo";
 
 export const metadata: Metadata = {
   title: "Your SendEbun campaign",
-  // A private, per-company tool.
+  // A private, per-company tool
   robots: { index: false, follow: false },
 };
 
