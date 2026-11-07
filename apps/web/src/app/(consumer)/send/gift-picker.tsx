@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   FulfillmentType,
-  GIFT_CATEGORIES,
   GIFT_CATEGORY_LABEL,
   OCCASIONS,
   OCCASION_LABEL,
@@ -17,46 +16,31 @@ type Category = GiftCatalogItem["category"];
 
 const CATEGORY_LABEL: Record<Category, string> = GIFT_CATEGORY_LABEL;
 
-/**
- * Price bands in naira, on the price the card shows. Three, because the
- * sender's real question is "roughly how much am I spending" — a slider
- * on a phone is fiddly and nobody needs ₦13,500 precision to browse.
- */
-const PRICE_BANDS = [
-  { id: "under10", label: "Under ₦10k", min: 0, max: 1_000_000 },
-  { id: "10to25", label: "₦10k–25k", min: 1_000_000, max: 2_500_000 },
-  { id: "over25", label: "₦25k+", min: 2_500_000, max: Number.POSITIVE_INFINITY },
-] as const;
-type PriceBand = (typeof PRICE_BANDS)[number]["id"];
-
-const inBand = (item: GiftCatalogItem, band: PriceBand) => {
-  const b = PRICE_BANDS.find((x) => x.id === band)!;
-  return item.basePrice >= b.min && item.basePrice < b.max;
+const MOMENT_HEADING: Record<Occasion, string> = {
+  birthday: "For their birthday",
+  thank_you: "To say thank you",
+  congratulations: "To say well done",
+  love: "Because you love them",
+  just_because: "Just because",
+  get_well: "To help them feel better",
+  new_baby: "For the new baby",
+  festive: "For the season",
 };
 
+/** How many big cards the swipe row holds before the rest drop to the list below. */
+const TOP_PICKS = 5;
+
 /**
- * The entry point, and the hook.
+ * The entry point, and the hook: one screen, no gates.
  *
- * A browsing grid rather than a list: photo first, then a small category
- * line, the name, the price. Senders pick gifts the way people shop —
- * by looking — and a grid shows twice as many options per screen as a
- * list of wide rows, on the phone-sized screen most senders use.
+ * Big swipeable cards up top (the "best picks"), every other gift in a
+ * compact grid underneath, and one optional row of moments. Choosing a
+ * moment doesn't hide anything — it reorders, so the gifts ops tagged
+ * for that moment come first. Nobody is boxed in by a missing reason:
+ * "Anything" (the default) shows the catalogue as ops ordered it.
  *
- * Tapping a card IS choosing it. There is no "Add to cart": one order
- * is one gift, so a basket would be a step that does nothing. The
- * choice is shown again, with a way back, on the very next screen.
- *
- * One featured gift (ops' "Featured" toggle) is shown full width above
- * the grid when browsing everything — a starting point for someone who
- * opened the app without a gift in mind, which is most people.
- *
- * Three filters, all optional and combinable: what kind of gift
- * (category), what it's for (occasion), and roughly how much (price
- * band). Each only appears when it would actually split the list —
- * a filter that every gift passes is just noise on a small screen.
- *
- * Built to hold up with no photographs, because today there are none:
- * see GiftArt for the designed stand-in.
+ * Swipe on phones, arrows on laptops, one tap on a card to send it.
+ * Prices stay small; the photo and the name do the selling.
  */
 export function GiftPicker({
   catalog,
@@ -65,189 +49,233 @@ export function GiftPicker({
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
-  onChoose: (gift: GiftCatalogItem) => void;
+  onChoose: (gift: GiftCatalogItem, moment: Occasion | null) => void;
 }) {
-  const [category, setCategory] = useState<Category | "all">("all");
-  const [occasion, setOccasion] = useState<Occasion | null>(null);
-  const [band, setBand] = useState<PriceBand | null>(null);
+  const [moment, setMoment] = useState<Occasion | null>(null);
 
-  // Fixed order (the shared list), not order of first appearance, so
-  // chips don't shuffle when ops reorders the catalogue.
-  const categories = useMemo(
-    () => GIFT_CATEGORIES.filter((c) => catalog.some((item) => item.category === c)),
-    [catalog],
-  );
-  const occasions = useMemo(
+  // Only moments some gift is tagged for; fixed order from the shared list.
+  const moments = useMemo(
     () => OCCASIONS.filter((o) => catalog.some((item) => item.occasions?.includes(o))),
     [catalog],
   );
-  const bands = useMemo(
-    () => PRICE_BANDS.filter((b) => catalog.some((item) => inBand(item, b.id))),
-    [catalog],
-  );
 
-  const visible = catalog.filter(
-    (item) =>
-      (category === "all" || item.category === category) &&
-      (occasion === null || item.occasions?.includes(occasion)) &&
-      (band === null || inBand(item, band)),
-  );
-  const filtered = category !== "all" || occasion !== null || band !== null;
+  // Reorder, never filter: matches first, featured first within each group.
+  const ordered = useMemo(() => {
+    const score = (item: GiftCatalogItem) =>
+      (moment && item.occasions?.includes(moment) ? 2 : 0) + (item.featured ? 1 : 0);
+    return catalog
+      .map((item, i) => ({ item, i }))
+      .sort((a, b) => score(b.item) - score(a.item) || a.i - b.i)
+      .map((x) => x.item);
+  }, [catalog, moment]);
 
-  // Only lead with a hero when there is enough to browse beneath it —
-  // a hero over a single other card is just a big card and a small one.
-  const hero =
-    !filtered && visible.length >= 3
-      ? (visible.find((item) => item.featured) ?? null)
-      : null;
-  const grid = hero ? visible.filter((item) => item.id !== hero.id) : visible;
+  const matches = moment ? ordered.filter((item) => item.occasions?.includes(moment)).length : ordered.length;
+  const picks = ordered.slice(0, Math.max(1, Math.min(TOP_PICKS, matches)));
+  const rest = ordered.slice(picks.length);
+  const choose = (gift: GiftCatalogItem) => onChoose(gift, moment);
 
   return (
     <>
-      <div className="pb-6">
-        <h1
-          className="font-display text-3xl leading-tight font-normal md:text-4xl"
-          style={{ color: "var(--cream)" }}
-        >
-          What are you sending?
-        </h1>
-        <p className="mt-2 text-sm" style={{ color: "var(--cream-dim)" }}>
-          Tap a gift to choose it. You&rsquo;ll add your message next.
-        </p>
-      </div>
+      <h1
+        className="font-display pb-5 text-3xl leading-tight font-normal md:text-4xl"
+        style={{ color: "var(--cream)" }}
+      >
+        {moment ? MOMENT_HEADING[moment] : "Make someone\u2019s day"}
+      </h1>
 
-      {categories.length > 1 && (
+      {moments.length > 0 && (
         <div
-          className="-mx-7 mb-6 flex gap-2 overflow-x-auto px-7 pb-1 [scrollbar-width:none] md:mx-0 md:px-0"
+          className="-mx-7 mb-5 flex gap-2 overflow-x-auto px-7 pb-1 [scrollbar-width:none] md:mx-0 md:px-0"
           role="group"
-          aria-label="Filter gifts by category"
+          aria-label="What's the moment?"
         >
-          <CategoryChip
-            active={category === "all"}
-            onClick={() => setCategory("all")}
-          >
-            Everything
-          </CategoryChip>
-          {categories.map((item) => (
-            <CategoryChip
-              key={item}
-              active={category === item}
-              onClick={() => setCategory(item)}
-            >
-              {CATEGORY_LABEL[item]}
-            </CategoryChip>
-          ))}
-        </div>
-      )}
-
-      {(occasions.length > 0 || bands.length > 1) && (
-        <div
-          className="-mx-7 -mt-3 mb-6 flex items-center gap-2 overflow-x-auto px-7 pb-1 [scrollbar-width:none] md:mx-0 md:px-0"
-          role="group"
-          aria-label="Filter gifts by occasion and price"
-        >
-          {occasions.map((item) => (
-            <CategoryChip
-              key={item}
-              subtle
-              active={occasion === item}
-              onClick={() => setOccasion(occasion === item ? null : item)}
-            >
+          <Chip active={moment === null} onClick={() => setMoment(null)}>
+            Anything
+          </Chip>
+          {moments.map((item) => (
+            <Chip key={item} active={moment === item} onClick={() => setMoment(moment === item ? null : item)}>
               {OCCASION_LABEL[item]}
-            </CategoryChip>
+            </Chip>
           ))}
-          {occasions.length > 0 && bands.length > 1 && (
-            <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0" style={{ background: "var(--border-strong)" }} />
-          )}
-          {bands.length > 1 &&
-            bands.map((item) => (
-              <CategoryChip
-                key={item.id}
-                subtle
-                active={band === item.id}
-                onClick={() => setBand(band === item.id ? null : item.id)}
-              >
-                {item.label}
-              </CategoryChip>
-            ))}
         </div>
       )}
 
-      {catalog.length > 0 && visible.length === 0 ? (
-        <div
-          className="mb-12 flex flex-col items-center gap-3 border p-6 text-center text-sm leading-relaxed"
-          style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
-        >
-          Nothing matches all of that yet.
-          <button
-            type="button"
-            onClick={() => {
-              setCategory("all");
-              setOccasion(null);
-              setBand(null);
-            }}
-            className="border-b pb-0.5 text-xs"
-            style={{ borderColor: "var(--gold-dim)", color: "var(--gold-light)" }}
-          >
-            Show everything
-          </button>
-        </div>
-      ) : catalog.length === 0 ? (
+      {catalog.length === 0 ? (
         <div
           className="mb-12 border p-6 text-center text-sm leading-relaxed"
           style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
         >
-          {/*
-            Two different problems with two different fixes. Telling
-            someone to check their connection when the real answer is
-            that nothing is on sale sends them chasing a fault that
-            isn't theirs — and hides, from whoever is debugging, the
-            one state they most need to see.
-          */}
+          {/* Two different problems, two different fixes: nothing on sale vs. a failed load. */}
           {catalogReachable
             ? "There's nothing to send just yet. We're adding gifts — check back shortly."
             : "The gift list didn't load. Check your connection and reload the page."}
         </div>
       ) : (
-        <div className="flex flex-col gap-3 pb-14 md:gap-4">
-          {hero && <HeroCard item={hero} onChoose={() => onChoose(hero)} />}
-          <ul className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
-            {grid.map((item) => (
-              <li key={item.id} className="flex">
-                <GiftCard item={item} onChoose={() => onChoose(item)} />
-              </li>
-            ))}
-          </ul>
+        <div className="flex flex-col gap-8 pb-14">
+          {/* key: a new moment starts the row from its first card. */}
+          <PickRow key={moment ?? "all"} picks={picks} onChoose={choose} />
+          {rest.length > 0 && (
+            <section aria-label="More gifts">
+              <h2 className="mb-3 text-xs tracking-[0.16em] uppercase" style={{ color: "var(--gold-dim)" }}>
+                More gifts
+              </h2>
+              <ul className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
+                {rest.map((item) => (
+                  <li key={item.id} className="flex">
+                    <GiftCard item={item} onChoose={() => choose(item)} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
       )}
     </>
   );
 }
 
-function CategoryChip({
+/**
+ * The swipe row. Native scroll-snap, not a carousel library: it is
+ * smooth on low-end Android, works with a trackpad, and needs no
+ * dependency. A light vibration marks each new card where the phone
+ * supports it; arrows appear on wider screens, where nobody swipes.
+ */
+function PickRow({
+  picks,
+  onChoose,
+}: {
+  picks: GiftCatalogItem[];
+  onChoose: (gift: GiftCatalogItem) => void;
+}) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [index, setIndex] = useState(0);
+
+  const onScroll = () => {
+    const row = rowRef.current;
+    if (!row) return;
+    const card = row.firstElementChild as HTMLElement | null;
+    if (!card) return;
+    const next = Math.round(row.scrollLeft / (card.offsetWidth + 12));
+    if (next !== index) {
+      setIndex(next);
+      if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.(8);
+    }
+  };
+
+  const go = (to: number) => {
+    const row = rowRef.current;
+    const card = row?.children[to] as HTMLElement | undefined;
+    if (row && card) row.scrollTo({ left: card.offsetLeft - row.offsetLeft, behavior: "smooth" });
+  };
+
+  return (
+    <div className="relative">
+      <div
+        ref={rowRef}
+        onScroll={onScroll}
+        className="-mx-7 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-7 [scrollbar-width:none] md:mx-0 md:px-0"
+        aria-label="Best picks"
+      >
+        {picks.map((item) => (
+          <PickCard key={item.id} item={item} onChoose={() => onChoose(item)} />
+        ))}
+      </div>
+
+      {picks.length > 1 && (
+        <div className="mt-4 flex items-center justify-center gap-4">
+          <ArrowButton label="Previous gift" disabled={index === 0} onClick={() => go(index - 1)} dir="left" />
+          <div className="flex gap-1.5" aria-hidden="true">
+            {picks.map((item, i) => (
+              <span
+                key={item.id}
+                className="h-1.5 rounded-full transition-all duration-300"
+                style={{ width: i === index ? 18 : 6, background: i === index ? "var(--gold)" : "var(--border-strong)" }}
+              />
+            ))}
+          </div>
+          <ArrowButton label="Next gift" disabled={index >= picks.length - 1} onClick={() => go(index + 1)} dir="right" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ArrowButton({
+  label,
+  disabled,
+  onClick,
+  dir,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+  dir: "left" | "right";
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="hidden h-9 w-9 items-center justify-center rounded-full border transition-opacity disabled:opacity-30 md:flex"
+      style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
+    >
+      <span aria-hidden="true">{dir === "left" ? "\u2190" : "\u2192"}</span>
+    </button>
+  );
+}
+
+function PickCard({ item, onChoose }: { item: GiftCatalogItem; onChoose: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onChoose}
+      className="group flex w-[84%] shrink-0 snap-center flex-col overflow-hidden border text-left transition-transform duration-200 active:scale-[0.98] md:w-[46%]"
+      style={{ borderColor: "var(--border-strong)", background: "var(--panel)" }}
+    >
+      <GiftArt item={item} className="aspect-[4/3] w-full md:aspect-[16/9]" large />
+      <div className="flex flex-1 flex-col gap-1.5 p-5">
+        <h2 className="font-display line-clamp-2 text-2xl leading-tight" style={{ color: "var(--cream)" }}>
+          {item.name}
+        </h2>
+        <span className="text-xs" style={{ color: "var(--cream-faint)" }}>
+          {describeCollection(item)}
+        </span>
+        <div className="mt-auto flex items-center justify-between pt-4">
+          <span className="text-sm" style={{ color: "var(--gold-light)" }}>
+            {formatNaira(item.basePrice)}
+          </span>
+          <span
+            className="px-4 py-2 text-xs font-medium tracking-wide"
+            style={{ background: "var(--gold)", color: "var(--ink)" }}
+          >
+            Send this
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function Chip({
   active,
   children,
   onClick,
-  subtle = false,
 }: {
   active: boolean;
   children: React.ReactNode;
   onClick: () => void;
-  /** Secondary filters (occasion, price): smaller and rounded, so the category row stays the main choice. */
-  subtle?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`shrink-0 border tracking-wide whitespace-nowrap transition-colors ${
-        subtle ? "rounded-full px-3 py-1.5 text-[11px]" : "px-4 py-2 text-xs"
-      }`}
+      className="shrink-0 rounded-full border px-3.5 py-1.5 text-xs whitespace-nowrap transition-colors"
       style={{
         borderColor: active ? "var(--gold)" : "var(--border)",
-        background: active ? "var(--gold-glow)" : "transparent",
-        color: active ? "var(--gold-light)" : "var(--cream-dim)",
+        background: active ? "var(--gold)" : "transparent",
+        color: active ? "var(--ink)" : "var(--cream-dim)",
       }}
     >
       {children}
@@ -323,73 +351,6 @@ function GiftCard({
             {describeCollection(item)}
           </span>
         </div>
-      </div>
-    </button>
-  );
-}
-
-function HeroCard({
-  item,
-  onChoose,
-}: {
-  item: GiftCatalogItem;
-  onChoose: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onChoose}
-      className="group flex w-full flex-col overflow-hidden border text-left transition-[border-color,transform] duration-200 hover:border-[color:var(--border-strong)] active:scale-[0.99] md:flex-row"
-      style={{
-        borderColor: "var(--border-strong)",
-        background: "var(--panel)",
-      }}
-    >
-      <GiftArt
-        item={item}
-        // A shorter band when there's no photo: the stand-in tile has
-        // nothing to show at full height.
-        className={`${item.imageUrl ? "aspect-[16/10]" : "aspect-[2/1]"} w-full md:aspect-auto md:w-1/2 md:self-stretch`}
-        large
-      />
-      <div className="flex flex-1 flex-col gap-2 p-5 md:justify-center md:p-8">
-        <span
-          className="text-[10px] tracking-[0.16em] uppercase"
-          style={{ color: "var(--gold)" }}
-        >
-          A good place to start
-        </span>
-        <h2
-          className="font-display text-3xl leading-tight md:text-4xl"
-          style={{ color: "var(--cream)" }}
-        >
-          {item.name}
-        </h2>
-        {item.description && (
-          <p
-            className="line-clamp-3 text-sm leading-relaxed"
-            style={{ color: "var(--cream-dim)" }}
-          >
-            {item.description}
-          </p>
-        )}
-        <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span
-            className="text-base font-medium"
-            style={{ color: "var(--gold-light)" }}
-          >
-            {formatNaira(item.basePrice)}
-          </span>
-          <span className="text-xs" style={{ color: "var(--cream-faint)" }}>
-            {describeCollection(item)}
-          </span>
-        </div>
-        <span
-          className="mt-3 self-start border-b pb-0.5 text-xs tracking-wide transition-colors group-hover:text-[color:var(--cream)]"
-          style={{ borderColor: "var(--gold-dim)", color: "var(--gold-light)" }}
-        >
-          Send this &rarr;
-        </span>
       </div>
     </button>
   );

@@ -7,11 +7,14 @@ import { useEffect, useState } from "react";
 import { PolicyLinks } from "@/components/policy-links";
 import { track } from "@/lib/analytics";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
-import type { OccasionId } from "@/lib/occasions";
+import { OCCASIONS as OCCASION_LIST, type OccasionId } from "@/lib/occasions";
+
 import { Compose, type MessageDraft } from "./compose";
 import { GiftPicker } from "./gift-picker";
 import { ReviewAndPay } from "./review-and-pay";
 import { StartGroupGift } from "./start-group-gift";
+
+const MESSAGE_OCCASIONS = OCCASION_LIST.map((o) => o.id);
 
 type Phase = "gift" | "compose" | "pay";
 
@@ -173,8 +176,10 @@ export function SendExperience({
         <GiftPicker
           catalog={catalog}
           catalogReachable={catalogReachable}
-          onChoose={(gift) => {
-            setDraft((prev) => ({ ...prev, gift }));
+          onChoose={(gift, moment) => {
+            // Carry the moment into the message prompt where the two lists overlap.
+            const occasion = moment && (MESSAGE_OCCASIONS as readonly string[]).includes(moment) ? (moment as OccasionId) : null;
+            setDraft((prev) => ({ ...prev, gift, occasion: prev.occasion ?? occasion }));
             setPhase("compose");
           }}
         />
