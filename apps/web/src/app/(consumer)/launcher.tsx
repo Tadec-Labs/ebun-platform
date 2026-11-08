@@ -37,7 +37,7 @@ export function Launcher({ eventsOpen, companiesOpen }: { eventsOpen: boolean; c
   const tiles = [
     { href: "/send", title: "Someone", hint: "Alone or with friends", d: GIFT, show: true },
     { href: "/events/new", title: "An event", hint: "Wedding, birthday, naming…", d: EVENT, show: eventsOpen },
-    { href: "/company/start", title: "My team or clients", hint: "One payment, everyone chooses", d: TEAM, show: companiesOpen },
+    { href: "/business", title: "My team or clients", hint: "One payment, everyone chooses", d: TEAM, show: companiesOpen },
   ].filter((t) => t.show);
 
   return (

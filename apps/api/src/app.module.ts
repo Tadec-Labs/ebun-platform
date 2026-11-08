@@ -18,6 +18,7 @@ import { DeliveriesModule } from './deliveries/deliveries.module';
 import { OverviewModule } from './overview/overview.module';
 import { JobsModule } from './jobs/jobs.module';
 import { RefundsModule } from './refunds/refunds.module';
+import { BusinessModule } from './business/business.module';
 import { CorporateModule } from './corporate/corporate.module';
 import { GroupGiftsModule } from './group-gifts/group-gifts.module';
 import { EventsModule } from './events/events.module';
@@ -46,6 +47,7 @@ import { EventsModule } from './events/events.module';
     JobsModule,
     RefundsModule,
     CorporateModule,
+    BusinessModule,
     GroupGiftsModule,
     EventsModule,
   ],

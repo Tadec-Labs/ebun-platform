@@ -5,6 +5,8 @@ import { SUPABASE_CLIENT } from '../supabase/supabase.module';
 export interface VerifiedIdentity {
   authId: string;
   email: string | null;
+  /** True once the person has clicked Supabase's verification link. */
+  emailConfirmed: boolean;
 }
 
 @Injectable()
@@ -31,6 +33,10 @@ export class AuthService {
     if (error || !data.user) {
       return null;
     }
-    return { authId: data.user.id, email: data.user.email ?? null };
+    return {
+      authId: data.user.id,
+      email: data.user.email ?? null,
+      emailConfirmed: Boolean(data.user.email_confirmed_at),
+    };
   }
 }

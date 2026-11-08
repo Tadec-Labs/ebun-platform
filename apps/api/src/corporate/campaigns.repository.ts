@@ -13,6 +13,8 @@ export interface CampaignRow {
   contact_name: string;
   contact_email: string;
   contact_phone: string | null;
+  /** Set when the campaign belongs to a company account; null for link-only campaigns. */
+  company_id?: string | null;
   title: string;
   sender_display_name: string | null;
   message_text: string | null;

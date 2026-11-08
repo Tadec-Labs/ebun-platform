@@ -29,7 +29,9 @@ export default function CompanyLayout({ children }: LayoutProps<"/">) {
           {/* To the launcher. Safe to leave: the company's link lives in a cookie, so /company brings them straight back. */}
           <BrandLogo size="sm" href="/" />
           <nav aria-label="SendEbun" className="flex items-center gap-4 text-xs">
-            <span className="hidden text-zinc-400 sm:inline">For companies</span>
+            <Link href="/business" className="text-zinc-200 underline-offset-4 hover:underline">
+              Company account
+            </Link>
             <Link href="/send" className="text-zinc-200 underline-offset-4 hover:underline">
               Send a personal gift
             </Link>

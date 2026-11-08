@@ -50,6 +50,8 @@ import { OpsCampaignsController } from './ops-campaigns.controller';
     CompanySignupService,
   ],
   exports: [
+    CampaignsRepository,
+    CampaignsService,
     CampaignFundingService,
     CampaignSendingService,
     CampaignGiftsService,
