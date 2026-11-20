@@ -100,6 +100,8 @@ export function trackPageview(): void {
 export type AnalyticsEvent =
   | { name: "launcher_choice"; props: { choice: string } }
   | { name: "send_step"; props: { step: string; group: boolean } }
+  | { name: "city_chosen"; props: { city: string } }
+  | { name: "city_requested"; props: Record<string, never> }
   | { name: "checkout_started"; props: { flow: "gift" | "pot" | "event_cash" } }
   | { name: "payment_result"; props: { result: "confirmed" | "unsuccessful" | "timeout" } }
   | { name: "gift_scratched"; props: Record<string, never> };

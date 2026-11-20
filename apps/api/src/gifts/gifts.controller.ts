@@ -1,4 +1,5 @@
-import { Controller, Get } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
+import { isCitySlug } from '../cities/cities.service';
 import { GiftCatalogItem, GiftsService } from './gifts.service';
 
 /**
@@ -10,8 +11,16 @@ import { GiftCatalogItem, GiftsService } from './gifts.service';
 export class GiftsController {
   constructor(private readonly giftsService: GiftsService) {}
 
+  /**
+   * `?city=akure` lists only what can reach a recipient there (plus the
+   * nationwide gifts). Without it, every gift is listed with the cities
+   * it can be sent to.
+   */
   @Get()
-  async list(): Promise<GiftCatalogItem[]> {
-    return this.giftsService.listAvailable();
+  async list(@Query('city') city?: string): Promise<GiftCatalogItem[]> {
+    if (city !== undefined && !isCitySlug(city)) {
+      throw new BadRequestException('Unknown city.');
+    }
+    return this.giftsService.listAvailable(city);
   }
 }

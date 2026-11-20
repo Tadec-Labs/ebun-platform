@@ -2,6 +2,8 @@ import { API_BASE_URL } from "@/lib/api-config";
 
 export interface CreateOrderPayload {
   giftTemplateId: string;
+  /** City slug chosen before the gift. Required by the API for anything a shop hands over. */
+  recipientCity?: string;
   recipientName: string;
   recipientPhone: string;
   senderName: string;

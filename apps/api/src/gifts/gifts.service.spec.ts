@@ -5,6 +5,7 @@ import { FulfillmentType } from '@ebun/types';
 import {
   GiftTemplateRow,
   GiftTemplatesRepository,
+  SellableOfferingRow,
 } from './gift-templates.repository';
 import { GiftsService } from './gifts.service';
 
@@ -29,12 +30,29 @@ function makeTemplate(
   };
 }
 
+function offering(
+  giftId: string,
+  shop: Partial<NonNullable<SellableOfferingRow['vendors']>> = {},
+): SellableOfferingRow {
+  return {
+    gift_template_id: giftId,
+    vendors: {
+      business_name: 'Perfect Menu',
+      active: true,
+      city_slug: 'akure',
+      service_areas: ['Alagbaka', 'Ijapo'],
+      ...shop,
+    },
+  };
+}
+
 describe('GiftsService', () => {
   let sut: GiftsService;
   let repository: {
     findById: jest.Mock;
     findAllAvailable: jest.Mock;
     findTemplateIdsWithAvailableVendor: jest.Mock;
+    findSellableOfferings: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -45,6 +63,10 @@ describe('GiftsService', () => {
       findTemplateIdsWithAvailableVendor: jest
         .fn()
         .mockResolvedValue(new Set(['template-1'])),
+      // ...and that vendor is Perfect Menu, in Akure.
+      findSellableOfferings: jest
+        .fn()
+        .mockResolvedValue([offering('template-1')]),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -86,11 +108,73 @@ describe('GiftsService', () => {
           featured: true,
           occasions: ['birthday'],
           bookingStyle: 'pickup',
+          nationwide: false,
+          cities: [
+            {
+              city: 'akure',
+              sellers: ['Perfect Menu'],
+              deliveryAreas: ['Alagbaka', 'Ijapo'],
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('with a city, lists only gifts a shop in that city can hand over', async () => {
+      repository.findAllAvailable.mockResolvedValue([
+        makeTemplate({ id: 'template-1' }),
+        makeTemplate({ id: 'lagos-only', name: 'Lagos brunch' }),
+        makeTemplate({ id: 'airtime', delivery_type: FulfillmentType.Vtu }),
+      ]);
+      repository.findSellableOfferings.mockResolvedValue([
+        offering('template-1'),
+        offering('lagos-only', {
+          business_name: 'Island Cafe',
+          city_slug: 'lagos',
+        }),
+      ]);
+
+      const akure = await sut.listAvailable('akure');
+
+      expect(akure.map((item) => item.id)).toEqual(['template-1', 'airtime']);
+      expect(akure[0].cities.map((c) => c.city)).toEqual(['akure']);
+      expect(akure[1]).toMatchObject({ nationwide: true, cities: [] });
+    });
+
+    it('leaves out a shop with no city yet: it cannot be promised to anyone', async () => {
+      repository.findAllAvailable.mockResolvedValue([makeTemplate()]);
+      repository.findSellableOfferings.mockResolvedValue([
+        offering('template-1', { city_slug: null }),
+      ]);
+
+      expect(await sut.listAvailable()).toEqual([]);
+    });
+
+    it('merges shops in the same city: names A–Z, areas de-duplicated', async () => {
+      repository.findAllAvailable.mockResolvedValue([makeTemplate()]);
+      repository.findSellableOfferings.mockResolvedValue([
+        offering('template-1', {
+          business_name: 'Unique Catering',
+          service_areas: ['ijapo ', 'Oba-Ile'],
+        }),
+        offering('template-1'),
+      ]);
+
+      const [item] = await sut.listAvailable('akure');
+
+      expect(item.cities).toEqual([
+        {
+          city: 'akure',
+          sellers: ['Perfect Menu', 'Unique Catering'],
+          deliveryAreas: ['Alagbaka', 'ijapo', 'Oba-Ile'],
         },
       ]);
     });
 
     it('leaves out a voucher gift no vendor can hand over today', async () => {
+      repository.findSellableOfferings.mockResolvedValue([
+        offering('template-1'),
+      ]);
       repository.findAllAvailable.mockResolvedValue([
         makeTemplate({ id: 'template-1' }),
         makeTemplate({ id: 'template-2', name: 'Sold out everywhere' }),
@@ -108,11 +192,9 @@ describe('GiftsService', () => {
           delivery_type: FulfillmentType.Vtu,
         }),
       ]);
-      repository.findTemplateIdsWithAvailableVendor.mockResolvedValue(
-        new Set(),
-      );
+      repository.findSellableOfferings.mockResolvedValue([]);
 
-      const result = await sut.listAvailable();
+      const result = await sut.listAvailable('akure');
 
       expect(result.map((item) => item.id)).toEqual(['airtime']);
     });
@@ -134,6 +216,28 @@ describe('GiftsService', () => {
       const result = await sut.findAvailableById('template-1');
 
       expect(result).toBe(template);
+    });
+
+    it('with a city, accepts the gift only when a shop there sells it', async () => {
+      const template = makeTemplate();
+      repository.findById.mockResolvedValue(template);
+
+      await expect(sut.findAvailableById('template-1', 'akure')).resolves.toBe(
+        template,
+      );
+      await expect(
+        sut.findAvailableById('template-1', 'lagos'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('a nationwide gift needs no shop in the city', async () => {
+      const template = makeTemplate({ delivery_type: FulfillmentType.Vtu });
+      repository.findById.mockResolvedValue(template);
+      repository.findSellableOfferings.mockResolvedValue([]);
+
+      await expect(sut.findAvailableById('template-1', 'lagos')).resolves.toBe(
+        template,
+      );
     });
 
     it('throws NotFoundException when the template does not exist', async () => {

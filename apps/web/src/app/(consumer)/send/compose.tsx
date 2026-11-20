@@ -59,6 +59,7 @@ const MESSAGE_MAX_LENGTH = 2000;
  */
 export function Compose({
   gift,
+  city = null,
   draft,
   occasion,
   onChangeDraft,
@@ -72,6 +73,8 @@ export function Compose({
   onContinue,
 }: {
   gift: GiftCatalogItem;
+  /** Recipient's city: only areas shops there deliver to are offered. */
+  city?: string | null;
   draft: MessageDraft;
   occasion: OccasionId | null;
   onChangeDraft: (draft: MessageDraft) => void;
@@ -103,7 +106,8 @@ export function Compose({
   useEffect(() => {
     if (!isDoorstep) return;
     let cancelled = false;
-    fetch(`${API_BASE_URL}/gifts/${encodeURIComponent(gift.id)}/delivery-areas`)
+    const query = city ? `?city=${encodeURIComponent(city)}` : "";
+    fetch(`${API_BASE_URL}/gifts/${encodeURIComponent(gift.id)}/delivery-areas${query}`)
       .then((res) => (res.ok ? (res.json() as Promise<{ areas: string[] }>) : { areas: [] }))
       .then((body) => {
         if (!cancelled) setAreas(Array.isArray(body.areas) ? body.areas : []);
@@ -112,7 +116,7 @@ export function Compose({
     return () => {
       cancelled = true;
     };
-  }, [gift.id, isDoorstep]);
+  }, [gift.id, isDoorstep, city]);
 
   function set<K extends keyof MessageDraft>(key: K, value: MessageDraft[K]) {
     onChangeDraft({ ...draft, [key]: value });

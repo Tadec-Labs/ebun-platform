@@ -33,6 +33,7 @@ export interface VendorRow {
   notes: string | null;
   pickup_address: string | null;
   pickup_hours: string | null;
+  city_slug?: string | null;
   portal_token: string;
   portal_token_rotated_at: string | null;
   created_at: string;
@@ -111,6 +112,7 @@ export interface CollectionPointRow {
     pickup_address: string | null;
     pickup_hours: string | null;
     active: boolean;
+    city_slug: string | null;
   } | null;
 }
 
@@ -411,7 +413,7 @@ export class VendorsRepository {
     const response = (await this.supabase
       .from('vendor_gift_offerings')
       .select(
-        'vendors(id, business_name, whatsapp_number, pickup_address, pickup_hours, active)',
+        'vendors(id, business_name, whatsapp_number, pickup_address, pickup_hours, active, city_slug)',
       )
       .eq('gift_template_id', giftTemplateId)) as {
       data: CollectionPointRow[] | null;

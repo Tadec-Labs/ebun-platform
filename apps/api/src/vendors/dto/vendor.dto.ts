@@ -205,6 +205,21 @@ export class CreateVendorDto {
   @MaxLength(2000)
   notes?: string;
 
+  /**
+   * The city this shop serves (a slug from the cities table, e.g.
+   * 'akure'). Its gifts are only offered to recipients in this city.
+   * Optional while SendEbun is open in one city: left out, the shop goes
+   * in that city.
+   */
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(-[a-z0-9]+)*$/, {
+    message: 'Choose a city from the list.',
+  })
+  @MaxLength(40)
+  citySlug?: string;
+
   /** Shown to recipients as where to collect. Free text: Lagos addresses rarely fit a structured form. */
   @Transform(blankToUndefined)
   @IsOptional()
@@ -345,6 +360,16 @@ export class UpdateVendorDto {
   @IsString()
   @MaxLength(2000)
   notes?: string | null;
+
+  /** Move the shop to another city. Its gifts follow it. */
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(-[a-z0-9]+)*$/, {
+    message: 'Choose a city from the list.',
+  })
+  @MaxLength(40)
+  citySlug?: string;
 
   @Transform(blankToNull)
   @IsOptional()

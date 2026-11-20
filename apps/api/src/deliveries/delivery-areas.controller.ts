@@ -1,4 +1,12 @@
-import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Query,
+} from '@nestjs/common';
+import { isCitySlug } from '../cities/cities.service';
 import { DeliveriesService } from './deliveries.service';
 
 /**
@@ -11,10 +19,17 @@ import { DeliveriesService } from './deliveries.service';
 export class DeliveryAreasController {
   constructor(private readonly deliveries: DeliveriesService) {}
 
+  /** `?city=akure`: only areas shops in that city deliver to. */
   @Get(':giftTemplateId/delivery-areas')
   async areas(
     @Param('giftTemplateId', ParseUUIDPipe) giftTemplateId: string,
+    @Query('city') city?: string,
   ): Promise<{ areas: string[] }> {
-    return { areas: await this.deliveries.deliveryAreas(giftTemplateId) };
+    if (city !== undefined && !isCitySlug(city)) {
+      throw new BadRequestException('Unknown city.');
+    }
+    return {
+      areas: await this.deliveries.deliveryAreas(giftTemplateId, city),
+    };
   }
 }

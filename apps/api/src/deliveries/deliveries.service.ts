@@ -216,7 +216,10 @@ export class DeliveriesService {
       canConfirmReceived: handoverOpen,
       areas:
         stage === 'awaiting_address' || (stage === 'preparing' && !dispatched)
-          ? await this.deliveryAreas(order.gift_template_id)
+          ? await this.deliveryAreas(
+              order.gift_template_id,
+              order.recipient_city_slug,
+            )
           : [],
     };
   }
@@ -226,9 +229,15 @@ export class DeliveriesService {
    * shops that offer it, de-duplicated, in a stable order. Empty when no
    * shop has listed any — the form then falls back to free text and
    * nothing is refused.
+   *
+   * With the recipient's city, only shops in that city count: an Akure
+   * order never offers a Lagos shop's areas.
    */
-  async deliveryAreas(giftTemplateId: string): Promise<string[]> {
-    const candidates = await this.repository.listCandidates(giftTemplateId);
+  async deliveryAreas(
+    giftTemplateId: string,
+    city?: string | null,
+  ): Promise<string[]> {
+    const candidates = await this.candidates(giftTemplateId, city);
     const seen = new Map<string, string>();
     for (const c of candidates) {
       if (!c.vendors?.active || !c.approved) continue;
@@ -260,6 +269,7 @@ export class DeliveriesService {
       area = await this.resolveArea(
         order.gift_template_id,
         order.delivery_zone,
+        order.recipient_city_slug,
       );
     } catch {
       await this.repository.clearDeliveryDetails(orderId);
@@ -316,7 +326,11 @@ export class DeliveriesService {
 
     const details = {
       address: clean(input.address),
-      area: await this.resolveArea(order.gift_template_id, input.area),
+      area: await this.resolveArea(
+        order.gift_template_id,
+        input.area,
+        order.recipient_city_slug,
+      ),
       phone: input.phone ? clean(input.phone) : null,
       note: input.note ? clean(input.note) : null,
     };
@@ -680,6 +694,14 @@ export class DeliveriesService {
         'That vendor doesn’t offer this gift (or is switched off). Add the gift to their items first.',
       );
     }
+    if (
+      order.recipient_city_slug &&
+      candidate.vendors.city_slug !== order.recipient_city_slug
+    ) {
+      throw new BadRequestException(
+        'That vendor is in another city from the recipient. Choose a vendor in their city.',
+      );
+    }
     const done = await this.repository.assignVendor(orderId, vendorId);
     if (!done) {
       throw new ConflictException(
@@ -700,6 +722,18 @@ export class DeliveriesService {
   // ---------------------------------------------------------------------
 
   /**
+   * Shops that offer this gift — in the recipient's city when the order
+   * has one. Older orders (no city) keep the old rule: any shop.
+   */
+  private async candidates(
+    giftTemplateId: string,
+    city?: string | null,
+  ): Promise<DeliveryCandidateRow[]> {
+    const all = await this.repository.listCandidates(giftTemplateId);
+    return city ? all.filter((c) => c.vendors?.city_slug === city) : all;
+  }
+
+  /**
    * The area as the shop listed it. When shops for this gift have listed
    * areas, anything else is refused with the list — that is what stops a
    * Lagos address being sent to an Akure kitchen.
@@ -707,9 +741,10 @@ export class DeliveriesService {
   private async resolveArea(
     giftTemplateId: string,
     area: string,
+    city?: string | null,
   ): Promise<string> {
     const typed = clean(area);
-    const areas = await this.deliveryAreas(giftTemplateId);
+    const areas = await this.deliveryAreas(giftTemplateId, city);
     if (areas.length === 0) return typed;
     const wanted = normaliseArea(typed);
     const match = areas.find((a) => normaliseArea(a) === wanted);
@@ -725,13 +760,14 @@ export class DeliveriesService {
     order: DeliveryOrderRow,
     area: string,
   ): Promise<string | null> {
-    const candidates = await this.repository.listCandidates(
+    const candidates = await this.candidates(
       order.gift_template_id,
+      order.recipient_city_slug,
     );
     const chosen = chooseVendor(candidates, area);
     if (!chosen) {
       this.logger.warn(
-        `Order ${order.id}: delivery address in, but no active vendor offers this gift — needs assigning in /ops.`,
+        `Order ${order.id}: delivery address in, but no active vendor${order.recipient_city_slug ? ` in ${order.recipient_city_slug}` : ''} offers this gift — needs assigning in /ops.`,
       );
       return null;
     }

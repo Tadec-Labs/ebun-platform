@@ -10,7 +10,7 @@ import {
 } from "@ebun/types";
 import { GiftMark } from "@/components/icons";
 import { formatNaira } from "@/lib/format-money";
-import type { GiftCatalogItem } from "@/lib/gifts/types";
+import { availableIn, type GiftCatalogItem } from "@/lib/gifts/types";
 
 type Category = GiftCatalogItem["category"];
 
@@ -45,10 +45,15 @@ const TOP_PICKS = 5;
 export function GiftPicker({
   catalog,
   catalogReachable,
+  city = null,
+  cityName = null,
   onChoose,
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
+  /** The recipient's city: cards say which shop makes it and where it's delivered there. */
+  city?: string | null;
+  cityName?: string | null;
   onChoose: (gift: GiftCatalogItem, moment: Occasion | null) => void;
 }) {
   const [moment, setMoment] = useState<Occasion | null>(null);
@@ -107,13 +112,15 @@ export function GiftPicker({
         >
           {/* Two different problems, two different fixes: nothing on sale vs. a failed load. */}
           {catalogReachable
-            ? "There's nothing to send just yet. We're adding gifts — check back shortly."
+            ? cityName
+              ? `There's nothing to send in ${cityName} just yet. We're adding gifts — check back shortly.`
+              : "There's nothing to send just yet. We're adding gifts — check back shortly."
             : "The gift list didn't load. Check your connection and reload the page."}
         </div>
       ) : (
         <div className="flex flex-col gap-8 pb-14">
           {/* key: a new moment starts the row from its first card. */}
-          <PickRow key={moment ?? "all"} picks={picks} onChoose={choose} />
+          <PickRow key={moment ?? "all"} picks={picks} city={city} onChoose={choose} />
           {rest.length > 0 && (
             <section aria-label="More gifts">
               <h2 className="mb-3 text-xs tracking-[0.16em] uppercase" style={{ color: "var(--gold-dim)" }}>
@@ -122,7 +129,7 @@ export function GiftPicker({
               <ul className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
                 {rest.map((item) => (
                   <li key={item.id} className="flex">
-                    <GiftCard item={item} onChoose={() => choose(item)} />
+                    <GiftCard item={item} city={city} onChoose={() => choose(item)} />
                   </li>
                 ))}
               </ul>
@@ -142,9 +149,11 @@ export function GiftPicker({
  */
 function PickRow({
   picks,
+  city,
   onChoose,
 }: {
   picks: GiftCatalogItem[];
+  city: string | null;
   onChoose: (gift: GiftCatalogItem) => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
@@ -177,7 +186,7 @@ function PickRow({
         aria-label="Best picks"
       >
         {picks.map((item) => (
-          <PickCard key={item.id} item={item} onChoose={() => onChoose(item)} />
+          <PickCard key={item.id} item={item} city={city} onChoose={() => onChoose(item)} />
         ))}
       </div>
 
@@ -225,7 +234,16 @@ function ArrowButton({
   );
 }
 
-function PickCard({ item, onChoose }: { item: GiftCatalogItem; onChoose: () => void }) {
+function PickCard({
+  item,
+  city,
+  onChoose,
+}: {
+  item: GiftCatalogItem;
+  city: string | null;
+  onChoose: () => void;
+}) {
+  const maker = describeMaker(item, city);
   return (
     <button
       type="button"
@@ -238,8 +256,13 @@ function PickCard({ item, onChoose }: { item: GiftCatalogItem; onChoose: () => v
         <h2 className="font-display line-clamp-2 text-2xl leading-tight" style={{ color: "var(--cream)" }}>
           {item.name}
         </h2>
+        {maker && (
+          <span className="text-xs" style={{ color: "var(--cream-dim)" }}>
+            {maker}
+          </span>
+        )}
         <span className="text-xs" style={{ color: "var(--cream-faint)" }}>
-          {describeCollection(item)}
+          {describeCollection(item, city)}
         </span>
         <div className="mt-auto flex items-center justify-between pt-4">
           <span className="text-sm" style={{ color: "var(--gold-light)" }}>
@@ -288,12 +311,13 @@ function Chip({
  * type is genuinely different: a voucher is collected in person, a
  * top-up just arrives, a physical gift is delivered.
  */
-function describeCollection(item: GiftCatalogItem): string {
+function describeCollection(item: GiftCatalogItem, city: string | null = null): string {
   switch (item.deliveryType) {
-    case FulfillmentType.Physical:
-      return item.deliveryWindow
-        ? `Delivered to their door · ${item.deliveryWindow}`
-        : "Delivered to their door";
+    case FulfillmentType.Physical: {
+      const areas = city ? (availableIn(item, city)?.deliveryAreas ?? []) : [];
+      const where = areas.length > 0 ? `Delivers to ${listShort(areas, 2)}` : "Delivered to their door";
+      return item.deliveryWindow ? `${where} · ${item.deliveryWindow}` : where;
+    }
     case FulfillmentType.Vtu:
       return "Arrives on their line in seconds";
     default:
@@ -303,13 +327,33 @@ function describeCollection(item: GiftCatalogItem): string {
   }
 }
 
+/**
+ * Who makes it, so the sender knows they're buying from a real local
+ * shop, not a faceless voucher. Nationwide gifts have no shop.
+ */
+function describeMaker(item: GiftCatalogItem, city: string | null): string | null {
+  if (item.nationwide) return "Anywhere in Nigeria";
+  const sellers = city ? (availableIn(item, city)?.sellers ?? []) : [];
+  if (sellers.length === 0) return null;
+  return `By ${listShort(sellers, 1)}`;
+}
+
+/** "Alagbaka, Ijapo +3" — short enough for a card. */
+function listShort(items: string[], show: number): string {
+  const shown = items.slice(0, show).join(", ");
+  return items.length > show ? `${shown} +${items.length - show}` : shown;
+}
+
 function GiftCard({
   item,
+  city,
   onChoose,
 }: {
   item: GiftCatalogItem;
+  city: string | null;
   onChoose: () => void;
 }) {
+  const maker = describeMaker(item, city);
   return (
     <button
       type="button"
@@ -344,11 +388,16 @@ function GiftCard({
           >
             {formatNaira(item.basePrice)}
           </span>
+          {maker && (
+            <span className="text-[11px] leading-snug" style={{ color: "var(--cream-dim)" }}>
+              {maker}
+            </span>
+          )}
           <span
             className="text-[11px] leading-snug"
             style={{ color: "var(--cream-faint)" }}
           >
-            {describeCollection(item)}
+            {describeCollection(item, city)}
           </span>
         </div>
       </div>

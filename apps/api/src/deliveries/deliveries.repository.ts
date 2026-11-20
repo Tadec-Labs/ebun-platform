@@ -29,6 +29,8 @@ export interface DeliveryOrderRow {
   status: OrderStatus;
   order_number: string | null;
   gift_template_id: string;
+  /** Where the recipient is; only shops in this city deliver it. Null on older orders = any shop. */
+  recipient_city_slug: string | null;
   /** kobo — what the sender paid for the gift itself; the vendor's share is of this. */
   gift_value: number;
   delivery_fee: number;
@@ -80,6 +82,7 @@ export interface DeliveryCandidateRow {
     id: string;
     business_name: string;
     active: boolean;
+    city_slug: string | null;
     delivery_zones: string[] | null;
     service_areas: string[] | null;
   } | null;
@@ -91,7 +94,7 @@ const FULFILLMENT_COLUMNS =
 // orders links to gift_templates twice (swapped_to_template_id too), so
 // the embed names its foreign key or PostgREST refuses it as ambiguous.
 const ORDER_COLUMNS =
-  'id, status, order_number, gift_template_id, gift_value, delivery_fee, recipient_name, recipient_phone, delivery_address, delivery_zone, delivery_phone, delivery_note, delivery_details_at, delivery_failed_at, delivery_failed_reason, created_at, gift_templates!gift_template_id(name, delivery_type, delivery_window)';
+  'id, status, order_number, gift_template_id, recipient_city_slug, gift_value, delivery_fee, recipient_name, recipient_phone, delivery_address, delivery_zone, delivery_phone, delivery_note, delivery_details_at, delivery_failed_at, delivery_failed_reason, created_at, gift_templates!gift_template_id(name, delivery_type, delivery_window)';
 
 type Result<T> = { data: T | null; error: PostgrestError | null };
 
@@ -345,7 +348,7 @@ export class DeliveriesRepository {
     const response = (await this.supabase
       .from('vendor_gift_offerings')
       .select(
-        'vendor_price, available, approved, vendors(id, business_name, active, delivery_zones, service_areas)',
+        'vendor_price, available, approved, vendors(id, business_name, active, city_slug, delivery_zones, service_areas)',
       )
       .eq('gift_template_id', giftTemplateId)) as Result<
       DeliveryCandidateRow[]

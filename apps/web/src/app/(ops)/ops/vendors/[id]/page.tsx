@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
 import type { BankOption, GiftTemplate, Offering, Vendor, VendorEarnings, VendorSummary } from "@/lib/ops/types";
 import { EarningsPanel } from "./earnings-panel";
+import { getCities } from "@/lib/cities/cities";
 import { VendorForm } from "../vendor-form";
 import { OfferingsPanel } from "./offerings-panel";
 import { PortalLink } from "./portal-link";
@@ -21,7 +22,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
     throw error;
   }
 
-  const [offerings, vendors, catalog, earnings, banks] = await Promise.all([
+  const [offerings, vendors, catalog, earnings, banks, cities] = await Promise.all([
     opsFetch<Offering[]>(`/ops/vendors/${id}/offerings`),
     opsFetch<VendorSummary[]>("/ops/vendors"),
     // The OPS catalogue, not the public one. New gifts are created off
@@ -36,6 +37,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
       if (error instanceof OpsApiError) return [] as BankOption[];
       throw error;
     }),
+    getCities(),
   ]);
 
   return (
@@ -96,6 +98,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
         <section>
           <h2 className="mb-4 font-semibold">Details</h2>
           <VendorForm
+            cities={cities}
             vendor={vendor}
             backupOptions={vendors.filter((v) => v.id !== vendor.id).map((v) => ({ id: v.id, name: v.businessName }))}
             banks={banks}

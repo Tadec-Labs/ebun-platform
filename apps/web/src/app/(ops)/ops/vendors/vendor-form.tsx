@@ -52,8 +52,11 @@ export function VendorForm({
   backupOptions,
   catalog = [],
   banks = [],
+  cities = [],
 }: {
   vendor?: Vendor;
+  /** Cities SendEbun is open in. The shop's gifts are offered only to recipients in its city. */
+  cities?: { slug: string; name: string }[];
   backupOptions: { id: string; name: string }[];
   /** Paystack's bank list. Picking from it gives the code automatic payouts need. */
   banks?: BankOption[];
@@ -112,6 +115,22 @@ export function VendorForm({
             {VENDOR_CATEGORIES.map((c) => (
               <option key={c.value} value={c.value}>
                 {c.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="City" hint="Their gifts are only offered to people sending to someone in this city.">
+          <select
+            name="citySlug"
+            defaultValue={vendor?.citySlug ?? cities[0]?.slug ?? ""}
+            className={input}
+          >
+            {vendor?.citySlug && !cities.some((c) => c.slug === vendor.citySlug) && (
+              <option value={vendor.citySlug}>{vendor.citySlug} (not open yet)</option>
+            )}
+            {cities.map((c) => (
+              <option key={c.slug} value={c.slug}>
+                {c.name}
               </option>
             ))}
           </select>

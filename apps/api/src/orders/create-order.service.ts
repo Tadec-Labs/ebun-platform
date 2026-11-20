@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { FulfillmentType, OrderStatus } from '@ebun/types';
+import { CitiesService } from '../cities/cities.service';
 import { GiftsService } from '../gifts/gifts.service';
 import { UsersService } from '../users/users.service';
 import { PaystackClientService } from '../paystack/paystack-client.service';
@@ -29,6 +30,7 @@ export class CreateOrderService {
     private readonly paystackClient: PaystackClientService,
     private readonly pricing: PricingService,
     private readonly media: MessageMediaService,
+    private readonly cities: CitiesService,
   ) {}
 
   async execute(
@@ -43,9 +45,14 @@ export class CreateOrderService {
     // unreachable DB turned an instant 400 into a delayed 500.)
     const mediaKind = this.checkMessage(dto, recording);
 
+    const recipientCity = dto.recipientCity
+      ? (await this.cities.requireLive(dto.recipientCity)).slug
+      : undefined;
     const giftTemplate = await this.giftsService.findAvailableById(
       dto.giftTemplateId,
+      recipientCity,
     );
+    await this.checkReachesRecipient(dto, giftTemplate, recipientCity);
 
     // Stored before the order exists, so the row is written once with its
     // message. If anything below fails before the order is inserted, the
@@ -74,6 +81,46 @@ export class CreateOrderService {
       }
       throw err;
     }
+  }
+
+  /**
+   * The coverage check, before any money moves. A shop-fulfilled gift
+   * needs the recipient's city (findAvailableById has already confirmed
+   * a shop there sells it). If the sender typed an address, its area
+   * must be one shops in that city deliver to — refused here with the
+   * list, never discovered after payment.
+   */
+  private async checkReachesRecipient(
+    dto: CreateOrderDto,
+    giftTemplate: Awaited<ReturnType<GiftsService['findAvailableById']>>,
+    recipientCity: string | undefined,
+  ): Promise<void> {
+    if (giftTemplate.delivery_type === FulfillmentType.Vtu) return;
+    if (!recipientCity) {
+      throw new BadRequestException(
+        'Tell us which city they are in, so we only send what can reach them.',
+      );
+    }
+    if (
+      giftTemplate.delivery_type !== FulfillmentType.Physical ||
+      !dto.deliveryAddress ||
+      !dto.deliveryArea
+    ) {
+      return;
+    }
+    const areas = await this.giftsService.deliveryAreasIn(
+      giftTemplate.id,
+      recipientCity,
+    );
+    if (areas.length === 0) return;
+    const wanted = dto.deliveryArea.replace(/\s+/g, ' ').trim().toLowerCase();
+    const match = areas.find((area) => area.toLowerCase() === wanted);
+    if (!match) {
+      throw new BadRequestException(
+        `This gift is delivered to: ${areas.join(', ')}. Pick one of those, or leave the address for them to add.`,
+      );
+    }
+    dto.deliveryArea = match;
   }
 
   /**
@@ -160,6 +207,7 @@ export class CreateOrderService {
       // carry a name someone else typed with that email.
       senderName: dto.senderName.trim() || null,
       giftTemplateId: giftTemplate.id,
+      recipientCity: dto.recipientCity ?? null,
       recipientName: dto.recipientName,
       recipientPhone: dto.recipientPhone,
       senderMessage: dto.senderMessage,

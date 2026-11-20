@@ -40,6 +40,17 @@ export interface GiftSellerRow {
   vendors: { business_name: string; active: boolean } | null;
 }
 
+/** An offering a sender could buy right now, with the public facts about its shop. */
+export interface SellableOfferingRow {
+  gift_template_id: string;
+  vendors: {
+    business_name: string;
+    active: boolean;
+    city_slug: string | null;
+    service_areas: string[] | null;
+  } | null;
+}
+
 @Injectable()
 export class GiftTemplatesRepository {
   constructor(
@@ -214,6 +225,27 @@ export class GiftTemplatesRepository {
     };
     if (response.error) throw response.error;
     return response.data ?? null;
+  }
+
+  /**
+   * Every offering a sender could buy today — approved, switched on, by
+   * an active shop — with the shop's public name, city and delivery
+   * areas. Backs the city-aware catalogue. Never selects vendor_price
+   * or anything else about the shop's economics.
+   */
+  async findSellableOfferings(): Promise<SellableOfferingRow[]> {
+    const response = (await this.supabase
+      .from('vendor_gift_offerings')
+      .select(
+        'gift_template_id, vendors(business_name, active, city_slug, service_areas)',
+      )
+      .eq('approved', true)
+      .eq('available', true)) as {
+      data: SellableOfferingRow[] | null;
+      error: PostgrestError | null;
+    };
+    if (response.error) throw response.error;
+    return (response.data ?? []).filter((row) => row.vendors?.active === true);
   }
 
   async findTemplateIdsWithAvailableVendor(): Promise<Set<string>> {

@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { BrandLogo } from "@/components/brand-logo";
 import { OtherWays } from "@/components/other-ways";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { PolicyLinks } from "@/components/policy-links";
 import { track } from "@/lib/analytics";
-import type { GiftCatalogItem } from "@/lib/gifts/types";
+import type { City } from "@/lib/cities/cities";
+import { availableIn, type GiftCatalogItem } from "@/lib/gifts/types";
 import { OCCASIONS as OCCASION_LIST, type OccasionId } from "@/lib/occasions";
 
+import { CityBar, CityPicker, ElsewhereNote } from "./city-picker";
 import { Compose, type MessageDraft } from "./compose";
 import { GiftPicker } from "./gift-picker";
 import { ReviewAndPay } from "./review-and-pay";
@@ -19,6 +21,11 @@ const MESSAGE_OCCASIONS = OCCASION_LIST.map((o) => o.id);
 type Phase = "gift" | "compose" | "pay";
 
 export interface SendDraft {
+  /**
+   * Where the recipient is. A city slug, "elsewhere" (a city we don't
+   * serve yet: nationwide gifts only), or null until the sender says.
+   */
+  city: string | "elsewhere" | null;
   occasion: OccasionId | null;
   gift: GiftCatalogItem | null;
   message: MessageDraft;
@@ -39,6 +46,31 @@ const EMPTY_MESSAGE: MessageDraft = {
   deliveryArea: "",
   deliveryNote: "",
 };
+
+/** Remembers the last city on this phone, so a repeat sender doesn't answer twice. */
+const CITY_KEY = "sendebun.city";
+
+function rememberedCity(): string | null {
+  try {
+    return window.localStorage.getItem(CITY_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Storage isn't an event source we listen to; the snapshot is re-read on every render. */
+function noSubscription(): () => void {
+  return () => undefined;
+}
+
+function rememberCity(slug: string | null): void {
+  try {
+    if (slug) window.localStorage.setItem(CITY_KEY, slug);
+    else window.localStorage.removeItem(CITY_KEY);
+  } catch {
+    // Private mode or storage off: the sender just picks again next time.
+  }
+}
 
 const PHASES: { id: Phase; label: string }[] = [
   { id: "gift", label: "Gift" },
@@ -67,6 +99,7 @@ const PHASES: { id: Phase; label: string }[] = [
 export function SendExperience({
   catalog,
   catalogReachable,
+  cities = [],
   allowScheduling,
   allowRecordings,
   companiesOpen,
@@ -75,6 +108,8 @@ export function SendExperience({
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
+  /** Cities SendEbun is open in (GET /cities). */
+  cities?: City[];
   /** "Send later" only exists while Ebun delivers the message itself. */
   allowScheduling: boolean;
   /** Voice and video tabs — off until media storage is live (MEDIA_MESSAGES). */
@@ -88,12 +123,44 @@ export function SendExperience({
 }) {
   const [phase, setPhase] = useState<Phase>("gift");
   const [draft, setDraft] = useState<SendDraft>({
+    city: null,
     occasion: null,
     gift: null,
     message: EMPTY_MESSAGE,
     group: false,
   });
   const currentPhaseIndex = PHASES.findIndex((item) => item.id === phase);
+
+  // A city chosen on this phone before, if we still serve it. Read
+  // through useSyncExternalStore so the server render (no storage) and
+  // the first client render agree, then the saved city takes over.
+  const saved = useSyncExternalStore(noSubscription, rememberedCity, () => null);
+  const city =
+    draft.city ?? (saved && cities.some((c) => c.slug === saved) ? saved : null);
+
+  const cityName = cities.find((c) => c.slug === city)?.name ?? null;
+  const recipientCity = city && city !== "elsewhere" ? city : null;
+
+  // Only what can reach them: shop gifts in their city, plus the
+  // nationwide ones. "Somewhere else" leaves just the nationwide ones.
+  const reachable = useMemo(() => {
+    if (!city) return [];
+    return catalog.filter(
+      (item) => item.nationwide || (recipientCity !== null && availableIn(item, recipientCity) !== null),
+    );
+  }, [catalog, city, recipientCity]);
+
+  const chooseCity = (slug: string | "elsewhere" | null) => {
+    rememberCity(slug && slug !== "elsewhere" ? slug : null);
+    setDraft((prev) => ({
+      ...prev,
+      city: slug,
+      // A gift chosen for another city may not reach this one.
+      gift: null,
+      message: { ...prev.message, deliveryArea: "" },
+    }));
+    if (slug) track("city_chosen", { city: slug });
+  };
 
   // Each step is a new screen to the sender, but it's the same page to
   // the browser, so scroll position carried over: tapping a gift low in
@@ -171,18 +238,38 @@ export function SendExperience({
         </ol>
       </header>
 
-      {phase === "gift" && (
+      {phase === "gift" && !city && (
         <>
-        <GiftPicker
-          catalog={catalog}
-          catalogReachable={catalogReachable}
-          onChoose={(gift, moment) => {
-            // Carry the moment into the message prompt where the two lists overlap.
-            const occasion = moment && (MESSAGE_OCCASIONS as readonly string[]).includes(moment) ? (moment as OccasionId) : null;
-            setDraft((prev) => ({ ...prev, gift, occasion: prev.occasion ?? occasion }));
-            setPhase("compose");
-          }}
-        />
+          <CityPicker
+            cities={cities}
+            onChoose={(city) => chooseCity(city.slug)}
+            onElsewhere={() => chooseCity("elsewhere")}
+          />
+          <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
+          <PolicyLinks className="pt-6 pb-8" />
+        </>
+      )}
+
+      {phase === "gift" && city && (
+        <>
+        <CityBar label={cityName ?? "another city"} onChange={() => chooseCity(null)} />
+        {city === "elsewhere" && (
+          <ElsewhereNote hasNationwide={reachable.length > 0} />
+        )}
+        {(city !== "elsewhere" || reachable.length > 0) && (
+          <GiftPicker
+            catalog={reachable}
+            catalogReachable={catalogReachable}
+            city={recipientCity}
+            cityName={cityName}
+            onChoose={(gift, moment) => {
+              // Carry the moment into the message prompt where the two lists overlap.
+              const occasion = moment && (MESSAGE_OCCASIONS as readonly string[]).includes(moment) ? (moment as OccasionId) : null;
+              setDraft((prev) => ({ ...prev, gift, occasion: prev.occasion ?? occasion }));
+              setPhase("compose");
+            }}
+          />
+        )}
         <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
         <PolicyLinks className="pt-6 pb-8" />
         </>
@@ -191,6 +278,7 @@ export function SendExperience({
       {phase === "compose" && draft.gift && (
         <Compose
           gift={draft.gift}
+          city={recipientCity}
           draft={draft.message}
           occasion={draft.occasion}
           onChangeDraft={(message) => setDraft((prev) => ({ ...prev, message }))}
@@ -212,6 +300,7 @@ export function SendExperience({
       {phase === "pay" && draft.gift && !draft.group && (
         <ReviewAndPay
           gift={draft.gift}
+          city={recipientCity}
           message={draft.message}
           onBack={() => setPhase("compose")}
         />

@@ -1,5 +1,6 @@
 import { PricingModule } from '../pricing/pricing.module';
 import { Module } from '@nestjs/common';
+import { CitiesModule } from '../cities/cities.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { GiftsModule } from '../gifts/gifts.module';
@@ -32,6 +33,7 @@ import { OpsOrdersService } from './ops-orders.service';
  */
 @Module({
   imports: [
+    CitiesModule,
     GiftsModule,
     UsersModule,
     PaystackModule,

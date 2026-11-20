@@ -318,6 +318,7 @@ export class RevealService {
     // the code is worse than an error the recipient can retry.
     const places = await this.vendors.collectionPointsForGift(
       order.gift_template_id,
+      order.recipient_city_slug,
     );
     if (!places.some((place) => place.vendorId === vendorId)) {
       throw new BadRequestException(
@@ -553,7 +554,10 @@ export class RevealService {
           qrPayload: existingRedemption.fallback_code,
           expiresAt: existingRedemption.expires_at as string,
         };
-        view.collectAt = await this.collectionPoints(order.gift_template_id);
+        view.collectAt = await this.collectionPoints(
+          order.gift_template_id,
+          order.recipient_city_slug,
+        );
         if (order.pickup_vendor_id && order.pickup_at) {
           const place = view.collectAt.find(
             (point) => point.vendorId === order.pickup_vendor_id,
@@ -622,9 +626,10 @@ export class RevealService {
    */
   private async collectionPoints(
     giftTemplateId: string,
+    city?: string | null,
   ): Promise<NonNullable<RevealView['collectAt']>> {
     try {
-      return await this.vendors.collectionPointsForGift(giftTemplateId);
+      return await this.vendors.collectionPointsForGift(giftTemplateId, city);
     } catch (err) {
       this.logger.warn(
         `Collection points lookup failed for gift template ${giftTemplateId}: ${

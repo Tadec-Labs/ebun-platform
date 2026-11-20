@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CitiesModule } from '../cities/cities.module';
 import { AlertsModule } from '../alerts/alerts.module';
 import { PayoutsModule } from '../payouts/payouts.module';
 import { AuditModule } from '../audit/audit.module';
@@ -20,6 +21,7 @@ import { PayoutsRepository } from './payouts.repository';
 @Module({
   imports: [
     AlertsModule,
+    CitiesModule,
     AuthModule,
     PayoutsModule,
     AuditModule,

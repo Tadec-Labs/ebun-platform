@@ -4,6 +4,7 @@ import { PricingService } from '../pricing/pricing.service';
 import {
   GiftTemplateRow,
   GiftTemplatesRepository,
+  SellableOfferingRow,
 } from './gift-templates.repository';
 
 /**
@@ -35,11 +36,32 @@ export interface GiftCatalogItem {
   featured: boolean;
   occasions: string[];
   bookingStyle: GiftTemplateRow['booking_style'];
+  /**
+   * True for gifts no shop hands over (airtime, data, power): they reach
+   * a recipient anywhere in Nigeria. `cities` is empty for these.
+   */
+  nationwide: boolean;
+  /**
+   * Where a shop can hand this gift over today, and who. A sender only
+   * sees a shop-fulfilled gift once they've said the recipient is in one
+   * of these cities. Seller names are public (they're on the reveal
+   * screen anyway); nothing about a seller's price or contact is here.
+   */
+  cities: GiftCityAvailability[];
+}
+
+export interface GiftCityAvailability {
+  city: string;
+  /** Shop names, A–Z, de-duplicated. */
+  sellers: string[];
+  /** Doorstep gifts: areas shops in this city deliver to. Empty = not listed. */
+  deliveryAreas: string[];
 }
 
 function toCatalogItem(
   template: GiftTemplateRow,
   pricing: PricingService,
+  cities: GiftCityAvailability[],
 ): GiftCatalogItem {
   const price = pricing.priceGift(template.base_price, template.delivery_type);
   return {
@@ -58,7 +80,57 @@ function toCatalogItem(
     featured: template.featured,
     occasions: template.occasions ?? [],
     bookingStyle: template.booking_style ?? 'pickup',
+    nationwide: !needsVendor(template),
+    cities: needsVendor(template) ? cities : [],
   };
+}
+
+/**
+ * Groups sellable offerings by gift, then by city. A shop with no city
+ * yet is left out entirely: until ops says where it is, it can't be
+ * promised to anyone's recipient.
+ */
+function availabilityByGift(
+  offerings: SellableOfferingRow[],
+): Map<string, GiftCityAvailability[]> {
+  type CityEntry = { sellers: Set<string>; areas: Map<string, string> };
+  const byGift = new Map<string, Map<string, CityEntry>>();
+  for (const { gift_template_id: giftId, vendors: shop } of offerings) {
+    if (!shop?.active || !shop.city_slug) continue;
+    let cities = byGift.get(giftId);
+    if (!cities) {
+      cities = new Map<string, CityEntry>();
+      byGift.set(giftId, cities);
+    }
+    let entry = cities.get(shop.city_slug);
+    if (!entry) {
+      entry = { sellers: new Set<string>(), areas: new Map<string, string>() };
+      cities.set(shop.city_slug, entry);
+    }
+    entry.sellers.add(shop.business_name.trim());
+    for (const raw of shop.service_areas ?? []) {
+      const label = raw.replace(/\s+/g, ' ').trim();
+      const key = label.toLowerCase();
+      if (key && !entry.areas.has(key)) entry.areas.set(key, label);
+    }
+  }
+
+  const result = new Map<string, GiftCityAvailability[]>();
+  for (const [giftId, cities] of byGift) {
+    result.set(
+      giftId,
+      [...cities.entries()]
+        .map(([city, entry]) => ({
+          city,
+          sellers: [...entry.sellers].sort((a, b) => a.localeCompare(b)),
+          deliveryAreas: [...entry.areas.values()].sort((a, b) =>
+            a.localeCompare(b),
+          ),
+        }))
+        .sort((a, b) => a.city.localeCompare(b.city)),
+    );
+  }
+  return result;
 }
 
 /**
@@ -68,13 +140,6 @@ function toCatalogItem(
  */
 function needsVendor(template: GiftTemplateRow): boolean {
   return template.delivery_type !== FulfillmentType.Vtu;
-}
-
-function isSellable(
-  template: GiftTemplateRow,
-  templateIdsWithVendor: Set<string>,
-): boolean {
-  return !needsVendor(template) || templateIdsWithVendor.has(template.id);
 }
 
 @Injectable()
@@ -92,15 +157,26 @@ export class GiftsService {
    * nobody can fulfil — no vendor signed yet, every vendor marked it sold
    * out, or the only vendor deactivated. The gift reappears by itself
    * the moment a vendor switches it back on.
+   *
+   * With a city, "a vendor" means a shop in that city: only what can
+   * actually reach the recipient is listed, plus the nationwide gifts.
+   * Without one, every city's gifts are listed, each carrying the cities
+   * it can be sent to, so the sender's screen can filter instantly.
    */
-  async listAvailable(): Promise<GiftCatalogItem[]> {
-    const [templates, withVendor] = await Promise.all([
+  async listAvailable(city?: string): Promise<GiftCatalogItem[]> {
+    const [templates, offerings] = await Promise.all([
       this.repository.findAllAvailable(),
-      this.repository.findTemplateIdsWithAvailableVendor(),
+      this.repository.findSellableOfferings(),
     ]);
-    return templates
-      .filter((template) => isSellable(template, withVendor))
-      .map((template) => toCatalogItem(template, this.pricing));
+    const availability = availabilityByGift(offerings);
+    const items: GiftCatalogItem[] = [];
+    for (const template of templates) {
+      let cities = availability.get(template.id) ?? [];
+      if (city) cities = cities.filter((c) => c.city === city);
+      if (needsVendor(template) && cities.length === 0) continue;
+      items.push(toCatalogItem(template, this.pricing, cities));
+    }
+    return items;
   }
 
   /**
@@ -108,26 +184,56 @@ export class GiftsService {
    * the catalogue, re-checked at order creation because a vendor can
    * mark it sold out between a sender opening /send and paying.
    * CreateOrderService should never have to check this itself.
+   *
+   * With a city, a shop-fulfilled gift also needs a shop in that city:
+   * this is the check that stops an Akure-only gift being paid for on
+   * behalf of someone in Lagos.
    */
-  async findAvailableById(id: string): Promise<GiftTemplateRow> {
+  async findAvailableById(id: string, city?: string): Promise<GiftTemplateRow> {
     const template = await this.repository.findById(id);
 
-    const sellable =
-      template?.available === true &&
-      (!needsVendor(template) ||
-        (await this.repository.findTemplateIdsWithAvailableVendor()).has(
-          template.id,
-        ));
+    let sellable = template?.available === true;
+    if (template && sellable && needsVendor(template)) {
+      if (city) {
+        const cities =
+          availabilityByGift(await this.repository.findSellableOfferings()).get(
+            template.id,
+          ) ?? [];
+        sellable = cities.some((c) => c.city === city);
+      } else {
+        sellable = (
+          await this.repository.findTemplateIdsWithAvailableVendor()
+        ).has(template.id);
+      }
+    }
 
     if (!template || !sellable) {
-      // One message for all three causes (unknown, pulled from sale, no
-      // vendor today): to a sender they are the same thing.
+      // One message for every cause (unknown, pulled from sale, no
+      // vendor today, none in their city): to a sender they are the
+      // same thing.
       throw new NotFoundException(
-        "This gift isn't available right now. Please choose another.",
+        city
+          ? "This gift isn't available where they are right now. Please choose another."
+          : "This gift isn't available right now. Please choose another.",
       );
     }
 
     return template;
+  }
+
+  /**
+   * Doorstep gifts: the areas shops in this city deliver this gift to.
+   * Empty when none are listed (any address in the city is then taken).
+   */
+  async deliveryAreasIn(
+    giftTemplateId: string,
+    city: string,
+  ): Promise<string[]> {
+    const cities =
+      availabilityByGift(await this.repository.findSellableOfferings()).get(
+        giftTemplateId,
+      ) ?? [];
+    return cities.find((c) => c.city === city)?.deliveryAreas ?? [];
   }
 
   /**

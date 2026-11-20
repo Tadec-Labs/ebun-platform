@@ -28,6 +28,18 @@ export class CreateOrderDto {
   @IsUUID()
   giftTemplateId!: string;
 
+  /**
+   * Where the recipient is (a city slug from GET /cities), chosen before
+   * the gift. Required for anything a shop hands over: the order is only
+   * accepted if a shop in this city sells the gift. Nationwide gifts
+   * (airtime, data, power) don't need it.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(-[a-z0-9]+)*$/, { message: 'Unknown city.' })
+  @MaxLength(40)
+  recipientCity?: string;
+
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)

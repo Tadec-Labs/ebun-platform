@@ -8,6 +8,9 @@ import { PaystackClientService } from '../paystack/paystack-client.service';
 import { PricingService } from '../pricing/pricing.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { MessageMediaService } from '../media/message-media.service';
+import { CitiesService } from '../cities/cities.service';
+import { BadRequestException } from '@nestjs/common';
+import { FulfillmentType } from '@ebun/types';
 
 function makeDto(overrides: Partial<CreateOrderDto> = {}): CreateOrderDto {
   return Object.assign(new CreateOrderDto(), {
@@ -16,13 +19,15 @@ function makeDto(overrides: Partial<CreateOrderDto> = {}): CreateOrderDto {
     recipientPhone: '+2348012345678',
     senderName: 'Sender Name',
     senderEmail: 'sender@example.com',
+    recipientCity: 'akure',
     ...overrides,
   });
 }
 
 describe('CreateOrderService', () => {
   let sut: CreateOrderService;
-  let gifts: { findAvailableById: jest.Mock };
+  let gifts: { findAvailableById: jest.Mock; deliveryAreasIn: jest.Mock };
+  let cities: { requireLive: jest.Mock };
   let users: { findOrCreateGuestSender: jest.Mock };
   let orders: { create: jest.Mock; transitionNormal: jest.Mock };
   let paystack: { initializeTransaction: jest.Mock };
@@ -36,7 +41,24 @@ describe('CreateOrderService', () => {
       store: jest.fn().mockResolvedValue('messages/abc.webm'),
       delete: jest.fn().mockResolvedValue(undefined),
     };
-    gifts = { findAvailableById: jest.fn() };
+    gifts = {
+      findAvailableById: jest.fn(),
+      deliveryAreasIn: jest.fn().mockResolvedValue([]),
+    };
+    cities = {
+      requireLive: jest.fn((slug: string) => {
+        if (slug !== 'akure') {
+          return Promise.reject(new BadRequestException('not live'));
+        }
+        return Promise.resolve({
+          slug,
+          name: 'Akure',
+          state: 'Ondo',
+          live: true,
+          sort_order: 0,
+        });
+      }),
+    };
     users = { findOrCreateGuestSender: jest.fn() };
     orders = { create: jest.fn(), transitionNormal: jest.fn() };
     paystack = { initializeTransaction: jest.fn() };
@@ -49,6 +71,7 @@ describe('CreateOrderService', () => {
         { provide: OrdersService, useValue: orders },
         { provide: PaystackClientService, useValue: paystack },
         { provide: MessageMediaService, useValue: media },
+        { provide: CitiesService, useValue: cities },
         // Real, not mocked: the fee arithmetic is the thing under test.
         PricingService,
       ],
@@ -75,7 +98,7 @@ describe('CreateOrderService', () => {
   it('runs the full sequence and returns the checkout URL', async () => {
     const result = await sut.execute(makeDto(), '127.0.0.1');
 
-    expect(gifts.findAvailableById).toHaveBeenCalledWith('template-1');
+    expect(gifts.findAvailableById).toHaveBeenCalledWith('template-1', 'akure');
     expect(users.findOrCreateGuestSender).toHaveBeenCalledWith({
       email: 'sender@example.com',
       phone: undefined,
@@ -247,5 +270,86 @@ describe('CreateOrderService', () => {
     expect(orders.create).toHaveBeenCalled();
     // ...but the transition to pending_payment must never have been attempted.
     expect(orders.transitionNormal).not.toHaveBeenCalled();
+  });
+
+  describe('recipient city (coverage before payment)', () => {
+    it('stores the city on the order', async () => {
+      await sut.execute(makeDto(), '127.0.0.1');
+
+      expect(orders.create).toHaveBeenCalledWith(
+        expect.objectContaining({ recipientCity: 'akure' }),
+      );
+    });
+
+    it('refuses a shop gift with no city, before money moves', async () => {
+      await expect(
+        sut.execute(makeDto({ recipientCity: undefined }), '127.0.0.1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(paystack.initializeTransaction).not.toHaveBeenCalled();
+      expect(orders.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a city we are not open in, before looking up the gift', async () => {
+      await expect(
+        sut.execute(makeDto({ recipientCity: 'lagos' }), '127.0.0.1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(gifts.findAvailableById).not.toHaveBeenCalled();
+    });
+
+    it('lets airtime, data and power go anywhere without a city', async () => {
+      gifts.findAvailableById.mockResolvedValue({
+        id: 'airtime',
+        base_price: 100000,
+        delivery_type: FulfillmentType.Vtu,
+      });
+
+      await sut.execute(makeDto({ recipientCity: undefined }), '127.0.0.1');
+
+      expect(gifts.findAvailableById).toHaveBeenCalledWith(
+        'template-1',
+        undefined,
+      );
+      expect(paystack.initializeTransaction).toHaveBeenCalled();
+    });
+
+    describe('a doorstep gift with the address given by the sender', () => {
+      beforeEach(() => {
+        gifts.findAvailableById.mockResolvedValue({
+          id: 'hamper',
+          base_price: 2000000,
+          delivery_type: FulfillmentType.Physical,
+        });
+        gifts.deliveryAreasIn.mockResolvedValue(['Alagbaka', 'Ijapo']);
+      });
+
+      it('refuses an area shops in that city do not deliver to', async () => {
+        await expect(
+          sut.execute(
+            makeDto({
+              deliveryAddress: '12 Allen Avenue',
+              deliveryArea: 'Ikeja',
+            }),
+            '127.0.0.1',
+          ),
+        ).rejects.toThrow(/delivered to: Alagbaka, Ijapo/);
+        expect(gifts.deliveryAreasIn).toHaveBeenCalledWith('hamper', 'akure');
+        expect(paystack.initializeTransaction).not.toHaveBeenCalled();
+      });
+
+      it('accepts a listed area, stored as the shop spelt it', async () => {
+        await sut.execute(
+          makeDto({
+            deliveryAddress: '4 Oyemekun Road',
+            deliveryArea: ' alagbaka ',
+          }),
+          '127.0.0.1',
+        );
+
+        const [params] = orders.create.mock.calls[0] as [
+          { delivery: { area: string } | null },
+        ];
+        expect(params.delivery?.area).toBe('Alagbaka');
+      });
+    });
   });
 });

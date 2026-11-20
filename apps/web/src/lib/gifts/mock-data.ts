@@ -25,6 +25,8 @@ export const MOCK_CATALOG: GiftCatalogItem[] = [
     deliveryWindow: "Redeemable anytime this week",
     requiresAddress: false,
     featured: true,
+    nationwide: false,
+    cities: [{ city: "akure", sellers: [], deliveryAreas: [] }],
   },
   {
     id: "mock-pizza-delivered",
@@ -42,6 +44,8 @@ export const MOCK_CATALOG: GiftCatalogItem[] = [
     deliveryWindow: "2-4hrs",
     requiresAddress: true,
     featured: true,
+    nationwide: false,
+    cities: [{ city: "akure", sellers: [], deliveryAreas: [] }],
   },
   {
     id: "mock-burger-voucher",
@@ -60,6 +64,8 @@ export const MOCK_CATALOG: GiftCatalogItem[] = [
     deliveryWindow: "Redeemable anytime this week",
     requiresAddress: false,
     featured: false,
+    nationwide: false,
+    cities: [{ city: "akure", sellers: [], deliveryAreas: [] }],
   },
   {
     id: "mock-burger-delivered",
@@ -77,5 +83,7 @@ export const MOCK_CATALOG: GiftCatalogItem[] = [
     deliveryWindow: "2-4hrs",
     requiresAddress: true,
     featured: false,
+    nationwide: false,
+    cities: [{ city: "akure", sellers: [], deliveryAreas: [] }],
   },
 ];

@@ -162,6 +162,8 @@ export async function saveVendorAction(formData: FormData): Promise<ActionResult
     notes: optional("notes"),
     pickupAddress: optional("pickupAddress"),
     pickupHours: optional("pickupHours"),
+    // Never cleared from here: a shop always belongs to a city.
+    citySlug: text(formData, "citySlug") || undefined,
     backupVendorId: optional("backupVendorId"),
   };
 

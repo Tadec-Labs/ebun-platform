@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { StaffContext } from '../auth/staff.guard';
+import { CitiesService } from '../cities/cities.service';
 import { GiftsService } from '../gifts/gifts.service';
 import { AutoPayoutsService } from '../payouts/auto-payouts.service';
 import {
@@ -50,6 +51,8 @@ export interface VendorSummaryView {
 
 export interface VendorView {
   id: string;
+  /** The city this shop serves; its gifts are only offered to recipients there. */
+  citySlug: string | null;
   businessName: string;
   ownerName: string;
   whatsappNumber: string;
@@ -156,6 +159,7 @@ const FIELD_MAP: Record<string, string> = {
   notes: 'notes',
   pickupAddress: 'pickup_address',
   pickupHours: 'pickup_hours',
+  citySlug: 'city_slug',
   active: 'active',
   verified: 'verified',
 };
@@ -229,6 +233,7 @@ function toView(row: VendorRow, autoPayoutsEnabled: boolean): VendorView {
     notes: row.notes,
     pickupAddress: row.pickup_address,
     pickupHours: row.pickup_hours,
+    citySlug: row.city_slug ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -322,6 +327,7 @@ export class VendorsService {
     private readonly gifts: GiftsService,
     private readonly audit: AuditService,
     private readonly autoPayouts: AutoPayoutsService,
+    private readonly cities: CitiesService,
   ) {}
 
   async list(): Promise<VendorSummaryView[]> {
@@ -354,7 +360,9 @@ export class VendorsService {
       await this.requireBackupVendor(dto.backupVendorId);
     }
 
-    const row = await this.repository.create(toRowValues(dto));
+    const values = toRowValues(dto);
+    values.city_slug = await this.cities.resolveShopCity(dto.citySlug);
+    const row = await this.repository.create(values);
 
     await this.audit.record({
       eventType: 'vendor.created',
@@ -416,8 +424,15 @@ export class VendorsService {
     if (dto.backupVendorId) {
       await this.requireBackupVendor(dto.backupVendorId);
     }
-
     const values = toRowValues(dto);
+    if ('city_slug' in values) {
+      // A shop always has a known city: a blank can't clear it.
+      values.city_slug = await this.cities.resolveShopCity(
+        typeof values.city_slug === 'string' && values.city_slug
+          ? values.city_slug
+          : undefined,
+      );
+    }
     if (Object.keys(values).length === 0) {
       throw new BadRequestException('No changes provided.');
     }
@@ -495,15 +510,21 @@ export class VendorsService {
    * vendors are left out — their counter link stops working — and so
    * are vendors with no pickup address, because a name with nowhere to
    * go is not an answer to "where do I collect this".
+   *
+   * With the recipient's city (orders made since recipient-city-first),
+   * only shops in that city are listed: nobody in Akure is sent to a
+   * Lagos counter. Orders with no city keep the old rule.
    */
   async collectionPointsForGift(
     giftTemplateId: string,
+    city?: string | null,
   ): Promise<CollectionPointView[]> {
     const rows = await this.repository.listCollectionPoints(giftTemplateId);
     const points: CollectionPointView[] = [];
     for (const { vendors: vendor } of rows) {
       const address = vendor?.pickup_address?.trim();
       if (!vendor || !vendor.active || !address) continue;
+      if (city && vendor.city_slug !== city) continue;
       points.push({
         vendorId: vendor.id,
         name: vendor.business_name,

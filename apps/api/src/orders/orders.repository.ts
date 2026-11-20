@@ -49,6 +49,8 @@ export interface OrderRow {
   // recipient books a time (see 20261012120000_order_pickup_booking.sql).
   pickup_vendor_id?: string | null;
   pickup_at?: string | null;
+  /** Where the recipient is (since recipient-city-first); null on older orders. Only selected by findByRevealToken(). */
+  recipient_city_slug?: string | null;
   pickup_confirmed_at?: string | null;
   /** Times the shop marked a booked visit "Didn't come". */
   pickup_no_shows?: number;
@@ -77,6 +79,8 @@ export interface CreateOrderParams {
   /** As typed at checkout: the reveal shows this, not the users row (see 20261031090000). */
   senderName: string | null;
   giftTemplateId: string;
+  /** City slug the sender chose before the gift; null for nationwide gifts sent anywhere. */
+  recipientCity?: string | null;
   recipientName: string;
   recipientPhone: string;
   senderMessage?: string | null;
@@ -160,7 +164,7 @@ export class OrdersRepository {
     const response = (await this.supabase
       .from('orders')
       .select(
-        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_name, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, pickup_no_shows, campaign_id, gift_chosen_at, group_gift_id',
+        'id, status, gift_template_id, gift_value, recipient_name, recipient_phone, reveal_token, sender_id, sender_name, sender_message, message_type, message_url, message_duration_secs, reveal_theme, expires_at, pickup_vendor_id, pickup_at, pickup_confirmed_at, pickup_no_shows, campaign_id, gift_chosen_at, group_gift_id, recipient_city_slug',
       )
       .eq('reveal_token', revealToken)
       .maybeSingle()) as {
@@ -467,6 +471,7 @@ export class OrdersRepository {
         sender_id: params.senderId,
         sender_name: params.senderName,
         gift_template_id: params.giftTemplateId,
+        recipient_city_slug: params.recipientCity ?? null,
         recipient_name: params.recipientName,
         recipient_phone: params.recipientPhone,
         sender_message: params.senderMessage ?? null,

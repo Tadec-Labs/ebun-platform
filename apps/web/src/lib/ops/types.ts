@@ -65,6 +65,8 @@ export interface Vendor {
   /** Shown to recipients as where to collect. Null = not listed. */
   pickupAddress: string | null;
   pickupHours: string | null;
+  /** The city this shop serves; its gifts are only offered to recipients there. */
+  citySlug: string | null;
   /** The vendor's private counter-screen link. A credential — never log or share beyond the vendor. */
   portalToken: string;
   portalTokenRotatedAt: string | null;

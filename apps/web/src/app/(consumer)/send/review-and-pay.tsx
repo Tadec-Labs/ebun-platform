@@ -22,10 +22,13 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 export function ReviewAndPay({
   gift,
+  city = null,
   message,
   onBack,
 }: {
   gift: GiftCatalogItem;
+  /** Recipient's city slug; the API refuses a shop gift without one. */
+  city?: string | null;
   message: MessageDraft;
   onBack: () => void;
 }) {
@@ -52,6 +55,7 @@ export function ReviewAndPay({
       const result = await createOrder(
         {
           giftTemplateId: gift.id,
+          recipientCity: city ?? undefined,
           recipientName: message.recipientName.trim(),
           recipientPhone: message.recipientPhone.trim(),
           senderName: senderName.trim(),

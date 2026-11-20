@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
+import { CitiesService } from '../cities/cities.service';
 import type { StaffContext } from '../auth/staff.guard';
 import { GiftsService } from '../gifts/gifts.service';
 import {
@@ -68,6 +69,7 @@ describe('VendorsService', () => {
   let repository: Record<keyof VendorsRepository, jest.Mock>;
   let gifts: { findById: jest.Mock; putOnSale: jest.Mock };
   let audit: { record: jest.Mock };
+  let cities: { resolveShopCity: jest.Mock };
 
   beforeEach(() => {
     repository = {
@@ -96,11 +98,17 @@ describe('VendorsService', () => {
     };
     gifts = { findById: jest.fn(), putOnSale: jest.fn() };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
+    cities = {
+      resolveShopCity: jest.fn((slug?: string) =>
+        Promise.resolve(slug ?? 'akure'),
+      ),
+    };
     sut = new VendorsService(
       repository as unknown as VendorsRepository,
       gifts as unknown as GiftsService,
       audit as unknown as AuditService,
       { enabled: () => true } as unknown as AutoPayoutsService,
+      cities as unknown as CitiesService,
     );
   });
 
@@ -146,6 +154,7 @@ describe('VendorsService', () => {
       const result = await sut.create(dto, STAFF, META);
 
       expect(repository.create).toHaveBeenCalledWith({
+        city_slug: 'akure',
         business_name: 'Mama Cass Kitchen',
         owner_name: 'Cassandra Okoye',
         whatsapp_number: '+2348012345678',

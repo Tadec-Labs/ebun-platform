@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { OpsApiError, opsFetch } from "@/lib/ops/api";
 import type { BankOption, GiftTemplate, VendorSummary } from "@/lib/ops/types";
+import { getCities } from "@/lib/cities/cities";
 import { VendorForm } from "../vendor-form";
 
 export default async function NewVendorPage() {
-  const [vendors, catalog, banks] = await Promise.all([
+  const [vendors, catalog, banks, cities] = await Promise.all([
     opsFetch<VendorSummary[]>("/ops/vendors"),
     // The ops catalogue, so gifts not yet on sale can be linked too —
     // see the same note on the vendor detail page.
@@ -13,6 +14,7 @@ export default async function NewVendorPage() {
       if (error instanceof OpsApiError) return [] as BankOption[];
       throw error;
     }),
+    getCities(),
   ]);
 
   return (
@@ -26,6 +28,7 @@ export default async function NewVendorPage() {
         &ldquo;More details&rdquo;.
       </p>
       <VendorForm
+        cities={cities}
         banks={banks}
         backupOptions={vendors.map((v) => ({ id: v.id, name: v.businessName }))}
         catalog={catalog

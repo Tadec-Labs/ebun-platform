@@ -22,6 +22,7 @@ import { BusinessModule } from './business/business.module';
 import { CorporateModule } from './corporate/corporate.module';
 import { GroupGiftsModule } from './group-gifts/group-gifts.module';
 import { EventsModule } from './events/events.module';
+import { CitiesModule } from './cities/cities.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { EventsModule } from './events/events.module';
     BusinessModule,
     GroupGiftsModule,
     EventsModule,
+    CitiesModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

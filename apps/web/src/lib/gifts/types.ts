@@ -27,4 +27,22 @@ export interface GiftCatalogItem {
   deliveryWindow: string | null;
   requiresAddress: boolean;
   featured: boolean;
+  /** Airtime, data, power: no shop needed, so it reaches a recipient anywhere in Nigeria. */
+  nationwide: boolean;
+  /** Cities where a shop can hand this over today, who, and (doorstep gifts) which areas. */
+  cities: GiftCityAvailability[];
+}
+
+export interface GiftCityAvailability {
+  /** City slug, as in GET /cities. */
+  city: string;
+  /** Shop names, A–Z. Shown on the card so the sender knows who makes it. */
+  sellers: string[];
+  /** Doorstep gifts: areas shops in this city deliver to. Empty = not listed. */
+  deliveryAreas: string[];
+}
+
+/** Whether a gift can reach a recipient in this city. */
+export function availableIn(item: GiftCatalogItem, city: string): GiftCityAvailability | null {
+  return item.cities?.find((c) => c.city === city) ?? null;
 }

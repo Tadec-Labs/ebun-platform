@@ -699,6 +699,7 @@ describe('RevealService', () => {
 
         expect(vendors.collectionPointsForGift).toHaveBeenCalledWith(
           'template-1',
+          undefined,
         );
         expect(result.collectAt).toEqual(points);
       });
