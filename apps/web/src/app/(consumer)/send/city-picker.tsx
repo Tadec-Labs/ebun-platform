@@ -1,107 +1,224 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useState, type CSSProperties } from "react";
+import { BrandLogo } from "@/components/brand-logo";
+import { OtherWays } from "@/components/other-ways";
+import { PolicyLinks } from "@/components/policy-links";
 import { track } from "@/lib/analytics";
 import { matchCity, requestCity, type City } from "@/lib/cities/cities";
 
+/*
+ * The city screen's palette: forest green above, an ivory sheet below.
+ * Literal hex, not theme variables, because this one screen inverts the
+ * theme — the rest of /send is still dark. Every pairing used here is
+ * WCAG AA or better (lowest: gold eyebrow on green, 5.3:1).
+ */
+const GREEN = "#004B35";
+const IVORY = "#F7F2E6";
+const IVORY_RAISED = "#FFFDF8";
+const INK_TEXT = "#0E2A21";
+const MUTED_TEXT = "#4A5E55";
+const LINE = "#D9CFB8";
+
 /**
- * "Where's the person you're gifting?" — asked before any gift is shown.
+ * Re-points the theme's roles at ivory-friendly colours inside the sheet,
+ * so the shared OtherWays and PolicyLinks components read correctly on a
+ * light surface without growing a "light" variant of their own.
+ */
+const SHEET_THEME = {
+  "--ink": IVORY,
+  "--panel": IVORY_RAISED,
+  "--cream": INK_TEXT,
+  "--cream-dim": MUTED_TEXT,
+  "--cream-faint": MUTED_TEXT,
+  "--gold": GREEN,
+  "--gold-light": GREEN,
+  "--gold-dim": "#7A5C14",
+  "--border": LINE,
+  "--border-strong": LINE,
+  "--focus-ring": GREEN,
+} as CSSProperties;
+
+function Arrow({ color }: { color: string }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" aria-hidden="true" className="shrink-0">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+/**
+ * "Where are they?" — asked before any gift is shown.
  *
  * One tap, and it earns its place: every gift on the next screen can
  * actually reach that city, so nobody pays for an Akure spa day for
- * someone in Lagos. It is the one gate in front of the gift list, so it
- * is as small as a gate can be — a row of cities and a way out.
+ * someone in Lagos.
+ *
+ * It is the first thing a sender sees, so it gets its own full-bleed
+ * layout (green top, ivory sheet) instead of the step container the
+ * rest of /send uses. On a phone the sheet sits under the question;
+ * from lg (1024px) up the two halves sit side by side, so a laptop
+ * doesn't get a 440px strip floating in empty space. Tablets keep the
+ * phone layout: split at 820px, the headline wrapped to three lines.
  */
-export function CityPicker({
+export function CityScreen({
   cities,
   failed = false,
   hasNationwide = false,
+  companiesOpen,
+  eventsOpen = false,
   onChoose,
   onElsewhere,
 }: {
   cities: City[];
-  /** The city list didn't load: say so, rather than offering only "Somewhere else". */
+  /** The city list didn't load: say so, rather than offering only "Anywhere else". */
   failed?: boolean;
   /** Airtime, data or power are on sale: they reach anyone, so say so up front. */
   hasNationwide?: boolean;
+  /** /company/start is open (CORPORATE_SELF_SERVE). */
+  companiesOpen: boolean;
+  /** /events/new is open (EVENTS). */
+  eventsOpen?: boolean;
   onChoose: (city: City) => void;
   onElsewhere: () => void;
 }) {
-  if (failed) {
-    return (
-      <section className="pb-10">
-        <h1 className="font-display pb-2 text-3xl leading-tight font-normal md:text-4xl" style={{ color: "var(--cream)" }}>
-          Where are they?
-        </h1>
-        <p className="pb-4 text-sm leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-          We couldn&rsquo;t load the cities we deliver to. Check your connection and try again.
-        </p>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="px-4 py-2 text-xs font-medium tracking-wide"
-          style={{ background: "var(--gold)", color: "var(--ink)" }}
-        >
-          Try again
-        </button>
-      </section>
-    );
-  }
-
   return (
-    <section aria-labelledby="city-heading" className="pb-10">
-      <h1
-        id="city-heading"
-        className="font-display pb-2 text-3xl leading-tight font-normal md:text-4xl"
-        style={{ color: "var(--cream)" }}
-      >
-        Where are they?
-      </h1>
-      <p className="pb-6 text-sm leading-relaxed" style={{ color: "var(--cream-dim)" }}>
-        Pick the city of the person you&rsquo;re gifting. We&rsquo;ll only show gifts that can reach them there.
-      </p>
-      <ul className="flex flex-col gap-2.5">
-        {cities.map((city) => (
-          <li key={city.slug}>
-            <button
-              type="button"
-              onClick={() => onChoose(city)}
-              className="flex w-full items-center justify-between border px-5 py-4 text-left transition-colors hover:border-[color:var(--gold)] active:scale-[0.99]"
-              style={{ borderColor: "var(--border-strong)", background: "var(--panel)" }}
-            >
-              <span>
-                <span className="font-display block text-xl" style={{ color: "var(--cream)" }}>
-                  {city.name}
-                </span>
-                {city.state && (
-                  <span className="text-xs" style={{ color: "var(--cream-faint)" }}>
-                    {city.state} State
-                  </span>
-                )}
-              </span>
-              <span aria-hidden="true" style={{ color: "var(--gold)" }}>
-                &rarr;
-              </span>
-            </button>
-          </li>
-        ))}
-        <li>
-          <button
-            type="button"
-            onClick={onElsewhere}
-            className="w-full border border-dashed px-5 py-4 text-left text-sm transition-colors hover:border-[color:var(--gold)]"
-            style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
-          >
-            <span className="block">Somewhere else in Nigeria</span>
-            {hasNationwide && (
-              <span className="block pt-1 text-xs" style={{ color: "var(--cream-faint)" }}>
-                Airtime, data and power reach anyone, anywhere.
-              </span>
+    <div
+      className="flex min-h-dvh flex-col lg:grid lg:grid-cols-2"
+      style={{
+        background: GREEN,
+        color: IVORY,
+        // The theme wrapper pads for the notch and home bar in its own
+        // (darker) colour. Bleed through that padding so the green runs
+        // to the top edge and the ivory to the bottom, not a dark band.
+        marginTop: "calc(-1 * env(safe-area-inset-top, 0px))",
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        marginBottom: "calc(-1 * env(safe-area-inset-bottom, 0px))",
+      }}
+    >
+      <div className="mx-auto flex w-full max-w-[440px] flex-col px-6 pt-6 lg:sticky lg:top-0 lg:h-dvh lg:max-w-none lg:px-12 lg:py-10 xl:px-16">
+        <header className="flex items-center justify-between">
+          <BrandLogo size="sm" />
+          <div className="flex items-center gap-4 text-xs tracking-wide">
+            {companiesOpen && (
+              <Link href="/company/start" className="underline-offset-4 hover:underline" style={{ color: "#F3E2BC" }}>
+                For companies
+              </Link>
             )}
-          </button>
-        </li>
-      </ul>
-    </section>
+            <p style={{ color: "#F3E2BC" }}>Step 1 of 3</p>
+          </div>
+        </header>
+        <div className="flex flex-col gap-2.5 pt-14 pb-10 lg:my-auto lg:max-w-[460px] lg:pt-0 lg:pb-0">
+          <p className="text-xs tracking-[0.14em] uppercase" style={{ color: "#E4B454" }}>
+            Gift like you&rsquo;re there
+          </p>
+          <h1 id="city-heading" className="font-display text-[50px] leading-none font-medium lg:text-[76px]">
+            Where are <br />
+            <em>they</em>?
+          </h1>
+          <p className="pt-2 text-[15px] leading-relaxed" style={{ color: "#F3E2BC" }}>
+            We&rsquo;ll only show gifts that can reach them.
+          </p>
+        </div>
+      </div>
+
+      <section
+        aria-labelledby="city-heading"
+        className="flex grow flex-col rounded-t-[32px] px-5 pt-3.5 lg:min-h-dvh lg:justify-center lg:rounded-none lg:px-12 lg:py-16 xl:px-16"
+        style={{
+          ...SHEET_THEME,
+          background: IVORY,
+          color: INK_TEXT,
+          paddingBottom: "calc(2rem + env(safe-area-inset-bottom, 0px))",
+        }}
+      >
+        <div className="mx-auto flex w-full max-w-[440px] grow flex-col lg:grow-0">
+          <span aria-hidden="true" className="mb-3.5 h-1 w-10 self-center rounded-full lg:hidden" style={{ background: LINE }} />
+
+          {failed ? (
+            <div className="flex flex-col items-start gap-4 py-2">
+              <p className="text-[15px] leading-relaxed" style={{ color: MUTED_TEXT }}>
+                We couldn&rsquo;t load the cities we deliver to. Check your connection and try again.
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="min-h-11 rounded-full px-6 text-sm font-medium"
+                style={{ background: GREEN, color: IVORY }}
+              >
+                Try again
+              </button>
+            </div>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {cities.map((city) => (
+                <li key={city.slug}>
+                  <button
+                    type="button"
+                    onClick={() => onChoose(city)}
+                    className="flex w-full items-center gap-3.5 rounded-[20px] border-2 p-[18px] text-left transition-transform hover:-translate-y-px active:scale-[0.99]"
+                    style={{ borderColor: GREEN, background: IVORY_RAISED, color: INK_TEXT }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="font-display flex size-12 shrink-0 items-center justify-center rounded-[14px] text-[26px]"
+                      style={{ background: GREEN, color: "#E4B454" }}
+                    >
+                      {city.name.charAt(0)}
+                    </span>
+                    <span className="flex grow flex-col gap-0.5">
+                      <span className="text-lg font-semibold">{city.name}</span>
+                      <span className="text-[13px]" style={{ color: MUTED_TEXT }}>
+                        Gifts, treats &amp; experiences
+                      </span>
+                    </span>
+                    <Arrow color={GREEN} />
+                  </button>
+                </li>
+              ))}
+              <li>
+                <button
+                  type="button"
+                  onClick={onElsewhere}
+                  className="flex w-full items-center gap-3.5 rounded-[20px] border-[1.5px] p-[18px] text-left transition-colors hover:border-[#004B35]"
+                  style={{ borderColor: LINE, color: INK_TEXT }}
+                >
+                  <span aria-hidden="true" className="flex size-12 shrink-0 items-center justify-center rounded-[14px]" style={{ background: "#F3E2BC" }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
+                    </svg>
+                  </span>
+                  <span className="flex grow flex-col gap-0.5">
+                    <span className="text-lg font-semibold">Anywhere else in Nigeria</span>
+                    <span className="text-[13px]" style={{ color: MUTED_TEXT }}>
+                      {hasNationwide ? "Airtime, data or power, instantly" : "Tell us where, and we'll let you know when we arrive"}
+                    </span>
+                  </span>
+                  <Arrow color={MUTED_TEXT} />
+                </button>
+              </li>
+            </ul>
+          )}
+
+          {!failed && (
+            <p className="pt-5 text-center text-[13px]" style={{ color: MUTED_TEXT }}>
+              Your city next?{" "}
+              <button type="button" onClick={onElsewhere} className="font-medium underline underline-offset-4" style={{ color: GREEN }}>
+                Let us know
+              </button>
+            </p>
+          )}
+
+          {/* Pushed to the foot of the sheet on a tall phone, so the
+              choice above is all the first glance takes in. */}
+          <div className="mt-auto">
+            <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
+            <PolicyLinks className="pt-6" />
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 
