@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { track } from "@/lib/analytics";
-import { requestCity, type City } from "@/lib/cities/cities";
+import { matchCity, requestCity, type City } from "@/lib/cities/cities";
 
 /**
  * "Where's the person you're gifting?" — asked before any gift is shown.
@@ -14,13 +14,40 @@ import { requestCity, type City } from "@/lib/cities/cities";
  */
 export function CityPicker({
   cities,
+  failed = false,
+  hasNationwide = false,
   onChoose,
   onElsewhere,
 }: {
   cities: City[];
+  /** The city list didn't load: say so, rather than offering only "Somewhere else". */
+  failed?: boolean;
+  /** Airtime, data or power are on sale: they reach anyone, so say so up front. */
+  hasNationwide?: boolean;
   onChoose: (city: City) => void;
   onElsewhere: () => void;
 }) {
+  if (failed) {
+    return (
+      <section className="pb-10">
+        <h1 className="font-display pb-2 text-3xl leading-tight font-normal md:text-4xl" style={{ color: "var(--cream)" }}>
+          Where are they?
+        </h1>
+        <p className="pb-4 text-sm leading-relaxed" style={{ color: "var(--cream-dim)" }}>
+          We couldn&rsquo;t load the cities we deliver to. Check your connection and try again.
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 text-xs font-medium tracking-wide"
+          style={{ background: "var(--gold)", color: "var(--ink)" }}
+        >
+          Try again
+        </button>
+      </section>
+    );
+  }
+
   return (
     <section aria-labelledby="city-heading" className="pb-10">
       <h1
@@ -65,7 +92,12 @@ export function CityPicker({
             className="w-full border border-dashed px-5 py-4 text-left text-sm transition-colors hover:border-[color:var(--gold)]"
             style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
           >
-            Somewhere else
+            <span className="block">Somewhere else in Nigeria</span>
+            {hasNationwide && (
+              <span className="block pt-1 text-xs" style={{ color: "var(--cream-faint)" }}>
+                Airtime, data and power reach anyone, anywhere.
+              </span>
+            )}
           </button>
         </li>
       </ul>
@@ -97,7 +129,16 @@ export function CityBar({ label, onChange }: { label: string; onChange: () => vo
  * Their city isn't open yet. Honest about it, asks where (that list
  * decides which city opens next), and offers what does work anywhere.
  */
-export function ElsewhereNote({ hasNationwide }: { hasNationwide: boolean }) {
+export function ElsewhereNote({
+  cities,
+  hasNationwide,
+  onServedCity,
+}: {
+  cities: City[];
+  hasNationwide: boolean;
+  /** They typed a city we do serve ("Akure"): take them straight to its gifts. */
+  onServedCity: (slug: string) => void;
+}) {
   const [city, setCity] = useState("");
   const [contact, setContact] = useState("");
   const [sent, setSent] = useState(false);
@@ -121,6 +162,11 @@ export function ElsewhereNote({ hasNationwide }: { hasNationwide: boolean }) {
       onSubmit={async (e) => {
         e.preventDefault();
         if (city.trim().length < 2 || sending) return;
+        const served = matchCity(cities, city);
+        if (served) {
+          onServedCity(served.slug);
+          return;
+        }
         setSending(true);
         await requestCity({ city: city.trim(), contact: contact.trim() || undefined });
         track("city_requested", {});

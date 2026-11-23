@@ -333,6 +333,7 @@ function describeCollection(item: GiftCatalogItem, city: string | null = null): 
  */
 function describeMaker(item: GiftCatalogItem, city: string | null): string | null {
   if (item.nationwide) return "Anywhere in Nigeria";
+  if (!Array.isArray(item.cities)) return null;
   const sellers = city ? (availableIn(item, city)?.sellers ?? []) : [];
   if (sellers.length === 0) return null;
   return `By ${listShort(sellers, 1)}`;

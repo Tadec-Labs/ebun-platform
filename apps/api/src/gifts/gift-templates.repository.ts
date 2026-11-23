@@ -233,14 +233,19 @@ export class GiftTemplatesRepository {
    * areas. Backs the city-aware catalogue. Never selects vendor_price
    * or anything else about the shop's economics.
    */
-  async findSellableOfferings(): Promise<SellableOfferingRow[]> {
-    const response = (await this.supabase
+  async findSellableOfferings(
+    giftTemplateId?: string,
+  ): Promise<SellableOfferingRow[]> {
+    let query = this.supabase
       .from('vendor_gift_offerings')
       .select(
         'gift_template_id, vendors(business_name, active, city_slug, service_areas)',
       )
       .eq('approved', true)
-      .eq('available', true)) as {
+      .eq('available', true);
+    // One gift's shops only, at checkout; the whole list for the catalogue.
+    if (giftTemplateId) query = query.eq('gift_template_id', giftTemplateId);
+    const response = (await query) as {
       data: SellableOfferingRow[] | null;
       error: PostgrestError | null;
     };

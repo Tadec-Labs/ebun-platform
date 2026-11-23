@@ -196,9 +196,9 @@ export class GiftsService {
     if (template && sellable && needsVendor(template)) {
       if (city) {
         const cities =
-          availabilityByGift(await this.repository.findSellableOfferings()).get(
-            template.id,
-          ) ?? [];
+          availabilityByGift(
+            await this.repository.findSellableOfferings(template.id),
+          ).get(template.id) ?? [];
         sellable = cities.some((c) => c.city === city);
       } else {
         sellable = (
@@ -230,9 +230,9 @@ export class GiftsService {
     city: string,
   ): Promise<string[]> {
     const cities =
-      availabilityByGift(await this.repository.findSellableOfferings()).get(
-        giftTemplateId,
-      ) ?? [];
+      availabilityByGift(
+        await this.repository.findSellableOfferings(giftTemplateId),
+      ).get(giftTemplateId) ?? [];
     return cities.find((c) => c.city === city)?.deliveryAreas ?? [];
   }
 

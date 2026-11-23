@@ -8,19 +8,27 @@ export interface City {
 }
 
 /**
- * Server-side, with the gift list. An empty list (API down, or nothing
- * open yet) just means the picker offers "Somewhere else" on its own;
- * the gift list's own error message covers an unreachable API.
+ * Server-side, with the gift list. `null` means the list couldn't be
+ * loaded (API down, or an API older than this page): the sender is told
+ * to refresh, never quietly sent down "Somewhere else" as if their city
+ * weren't served.
  */
-export async function getCities(): Promise<City[]> {
+export async function getCities(): Promise<City[] | null> {
   try {
     const res = await fetch(`${API_BASE_URL}/cities`, { cache: "no-store" });
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     const body: unknown = await res.json();
-    return Array.isArray(body) ? (body as City[]) : [];
+    return Array.isArray(body) ? (body as City[]) : null;
   } catch {
-    return [];
+    return null;
   }
+}
+
+/** "akure", "Akure ", "AKURE" → the served city, if any. */
+export function matchCity(cities: City[], typed: string): City | null {
+  const wanted = typed.trim().toLowerCase();
+  if (!wanted) return null;
+  return cities.find((c) => c.name.toLowerCase() === wanted || c.slug === wanted.replace(/\s+/g, "-")) ?? null;
 }
 
 /**

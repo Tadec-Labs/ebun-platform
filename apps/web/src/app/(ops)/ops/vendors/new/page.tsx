@@ -28,7 +28,7 @@ export default async function NewVendorPage() {
         &ldquo;More details&rdquo;.
       </p>
       <VendorForm
-        cities={cities}
+        cities={cities ?? []}
         banks={banks}
         backupOptions={vendors.map((v) => ({ id: v.id, name: v.businessName }))}
         catalog={catalog

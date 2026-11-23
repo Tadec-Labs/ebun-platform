@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { PolicyLinks } from "@/components/policy-links";
 import { track } from "@/lib/analytics";
 import type { City } from "@/lib/cities/cities";
-import { availableIn, type GiftCatalogItem } from "@/lib/gifts/types";
+import { reachesCity, type GiftCatalogItem } from "@/lib/gifts/types";
 import { OCCASIONS as OCCASION_LIST, type OccasionId } from "@/lib/occasions";
 
 import { CityBar, CityPicker, ElsewhereNote } from "./city-picker";
@@ -99,7 +99,7 @@ const PHASES: { id: Phase; label: string }[] = [
 export function SendExperience({
   catalog,
   catalogReachable,
-  cities = [],
+  cities: loadedCities = [],
   allowScheduling,
   allowRecordings,
   companiesOpen,
@@ -108,8 +108,8 @@ export function SendExperience({
 }: {
   catalog: GiftCatalogItem[];
   catalogReachable: boolean;
-  /** Cities SendEbun is open in (GET /cities). */
-  cities?: City[];
+  /** Cities SendEbun is open in (GET /cities); null when the list couldn't load. */
+  cities?: City[] | null;
   /** "Send later" only exists while Ebun delivers the message itself. */
   allowScheduling: boolean;
   /** Voice and video tabs — off until media storage is live (MEDIA_MESSAGES). */
@@ -130,6 +130,8 @@ export function SendExperience({
     group: false,
   });
   const currentPhaseIndex = PHASES.findIndex((item) => item.id === phase);
+  const citiesFailed = loadedCities === null;
+  const cities = loadedCities ?? [];
 
   // A city chosen on this phone before, if we still serve it. Read
   // through useSyncExternalStore so the server render (no storage) and
@@ -145,9 +147,7 @@ export function SendExperience({
   // nationwide ones. "Somewhere else" leaves just the nationwide ones.
   const reachable = useMemo(() => {
     if (!city) return [];
-    return catalog.filter(
-      (item) => item.nationwide || (recipientCity !== null && availableIn(item, recipientCity) !== null),
-    );
+    return catalog.filter((item) => reachesCity(item, recipientCity));
   }, [catalog, city, recipientCity]);
 
   const chooseCity = (slug: string | "elsewhere" | null) => {
@@ -242,6 +242,8 @@ export function SendExperience({
         <>
           <CityPicker
             cities={cities}
+            failed={citiesFailed}
+            hasNationwide={catalog.some((item) => item.nationwide)}
             onChoose={(city) => chooseCity(city.slug)}
             onElsewhere={() => chooseCity("elsewhere")}
           />
@@ -254,7 +256,11 @@ export function SendExperience({
         <>
         <CityBar label={cityName ?? "another city"} onChange={() => chooseCity(null)} />
         {city === "elsewhere" && (
-          <ElsewhereNote hasNationwide={reachable.length > 0} />
+          <ElsewhereNote
+            cities={cities}
+            hasNationwide={reachable.length > 0}
+            onServedCity={(slug) => chooseCity(slug)}
+          />
         )}
         {(city !== "elsewhere" || reachable.length > 0) && (
           <GiftPicker

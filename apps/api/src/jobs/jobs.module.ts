@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CitiesModule } from '../cities/cities.module';
+import { CityRequestRetentionJob } from './city-request-retention.job';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersModule } from '../orders/orders.module';
 import { RedemptionsModule } from '../redemptions/redemptions.module';
@@ -46,6 +48,7 @@ import { EventJob } from './event.job';
     DeliveriesModule,
     GroupGiftsModule,
     EventsModule,
+    CitiesModule,
   ],
   providers: [
     AddressNudgeJob,
@@ -58,6 +61,7 @@ import { EventJob } from './event.job';
     StuckOrderJob,
     NotificationRetryJob,
     VendorEscalationJob,
+    CityRequestRetentionJob,
   ],
 })
 export class JobsModule {}

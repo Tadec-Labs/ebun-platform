@@ -98,7 +98,7 @@ export default async function VendorDetailPage({ params, searchParams }: PagePro
         <section>
           <h2 className="mb-4 font-semibold">Details</h2>
           <VendorForm
-            cities={cities}
+            cities={cities ?? []}
             vendor={vendor}
             backupOptions={vendors.filter((v) => v.id !== vendor.id).map((v) => ({ id: v.id, name: v.businessName }))}
             banks={banks}

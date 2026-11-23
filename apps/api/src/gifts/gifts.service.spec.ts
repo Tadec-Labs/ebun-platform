@@ -228,6 +228,10 @@ describe('GiftsService', () => {
       await expect(
         sut.findAvailableById('template-1', 'lagos'),
       ).rejects.toThrow(NotFoundException);
+      // Only this gift's shops are loaded at checkout, not the whole catalogue.
+      expect(repository.findSellableOfferings).toHaveBeenCalledWith(
+        'template-1',
+      );
     });
 
     it('a nationwide gift needs no shop in the city', async () => {

@@ -38,6 +38,21 @@ export class CitiesRepository {
     return response.data ?? null;
   }
 
+  /**
+   * Clears the contact (email/phone) on requests older than `before`.
+   * The city stays: it's demand data, not personal data.
+   */
+  async forgetContactsBefore(before: Date): Promise<number> {
+    const response = (await this.supabase
+      .from('city_requests')
+      .update({ contact: null })
+      .lt('created_at', before.toISOString())
+      .not('contact', 'is', null)
+      .select('id')) as Result<{ id: string }[]>;
+    if (response.error) throw response.error;
+    return response.data?.length ?? 0;
+  }
+
   async recordRequest(values: {
     city: string;
     contact: string | null;

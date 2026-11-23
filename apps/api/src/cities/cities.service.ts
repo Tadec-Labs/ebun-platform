@@ -9,6 +9,9 @@ export interface CityView {
   state: string | null;
 }
 
+/** How long a "tell me when you open" contact is kept (NDPA retention). */
+export const CONTACT_RETENTION_MONTHS = 12;
+
 /** Slugs are lower-case words joined by hyphens: 'akure', 'port-harcourt'. */
 const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
@@ -64,6 +67,16 @@ export class CitiesService {
       throw new BadRequestException('Choose the city this shop serves.');
     }
     return live[0].slug;
+  }
+
+  /**
+   * NDPA retention: a contact left on "tell me when you open" is kept
+   * for 12 months, then cleared. Run daily by CityRequestRetentionJob.
+   */
+  async applyContactRetention(now = new Date()): Promise<number> {
+    const cutoff = new Date(now);
+    cutoff.setUTCMonth(cutoff.getUTCMonth() - CONTACT_RETENTION_MONTHS);
+    return this.repository.forgetContactsBefore(cutoff);
   }
 
   /**

@@ -46,3 +46,14 @@ export interface GiftCityAvailability {
 export function availableIn(item: GiftCatalogItem, city: string): GiftCityAvailability | null {
   return item.cities?.find((c) => c.city === city) ?? null;
 }
+
+/**
+ * Whether to list a gift for this city. An API older than this page
+ * sends no `cities` at all: those gifts are shown as before rather than
+ * hidden, so a web deploy that lands before the API never empties /send.
+ */
+export function reachesCity(item: GiftCatalogItem, city: string | null): boolean {
+  if (item.nationwide) return true;
+  if (!Array.isArray(item.cities)) return city !== null;
+  return city !== null && availableIn(item, city) !== null;
+}
