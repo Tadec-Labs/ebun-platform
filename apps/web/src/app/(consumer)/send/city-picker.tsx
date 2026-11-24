@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type CSSProperties } from "react";
+import { useMemo, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { BrandLogo } from "@/components/brand-logo";
 import { OtherWays } from "@/components/other-ways";
 import { PolicyLinks } from "@/components/policy-links";
 import { track } from "@/lib/analytics";
 import { matchCity, requestCity, type City } from "@/lib/cities/cities";
+import { readRecent, recentSnapshot } from "@/lib/recent";
+import { LANDING_URL } from "@/lib/site-links";
 
 /*
  * The city screen's palette: forest green above, an ivory sheet below.
@@ -61,6 +63,10 @@ function Arrow({ color }: { color: string }) {
  * from lg (1024px) up the two halves sit side by side, so a laptop
  * doesn't get a 440px strip floating in empty space. Tablets keep the
  * phone layout: split at 820px, the headline wrapped to three lines.
+ *
+ * It is also the app's front door ("/" redirects here), so it carries
+ * what the old "Who's it for?" launcher did: events and team gifting
+ * under "More ways", and "Continue" for things started on this phone.
  */
 export function CityScreen({
   cities,
@@ -68,6 +74,7 @@ export function CityScreen({
   hasNationwide = false,
   companiesOpen,
   eventsOpen = false,
+  lastCity = null,
   onChoose,
   onElsewhere,
 }: {
@@ -80,6 +87,12 @@ export function CityScreen({
   companiesOpen: boolean;
   /** /events/new is open (EVENTS). */
   eventsOpen?: boolean;
+  /**
+   * The city picked last time on this phone. Marked, never pre-selected:
+   * the city belongs to whoever receives the gift, and that changes
+   * from one gift to the next.
+   */
+  lastCity?: string | null;
   onChoose: (city: City) => void;
   onElsewhere: () => void;
 }) {
@@ -99,7 +112,8 @@ export function CityScreen({
     >
       <div className="mx-auto flex w-full max-w-[440px] flex-col px-6 pt-6 lg:sticky lg:top-0 lg:h-dvh lg:max-w-none lg:px-12 lg:py-10 xl:px-16">
         <header className="flex items-center justify-between">
-          <BrandLogo size="sm" />
+          {/* The front door's way out is the main site, as the launcher's was. */}
+          <BrandLogo size="sm" href={LANDING_URL} />
           <div className="flex items-center gap-4 text-xs tracking-wide">
             {companiesOpen && (
               <Link href="/company/start" className="underline-offset-4 hover:underline" style={{ color: "#F3E2BC" }}>
@@ -168,7 +182,17 @@ export function CityScreen({
                       {city.name.charAt(0)}
                     </span>
                     <span className="flex grow flex-col gap-0.5">
-                      <span className="text-lg font-semibold">{city.name}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="text-lg font-semibold">{city.name}</span>
+                        {city.slug === lastCity && (
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                            style={{ background: "#F3E2BC", color: GREEN }}
+                          >
+                            Last time
+                          </span>
+                        )}
+                      </span>
                       <span className="text-[13px]" style={{ color: MUTED_TEXT }}>
                         Gifts, treats &amp; experiences
                       </span>
@@ -213,12 +237,48 @@ export function CityScreen({
           {/* Pushed to the foot of the sheet on a tall phone, so the
               choice above is all the first glance takes in. */}
           <div className="mt-auto">
+            <ContinueList />
             <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
             <PolicyLinks className="pt-6" />
           </div>
         </div>
       </section>
     </div>
+  );
+}
+
+// Nothing else writes the recent list while this screen is open.
+const noSubscription = () => () => undefined;
+
+/**
+ * "Pick up where you left off": events and group gifts opened on this
+ * phone (see lib/recent). Moved here from the old launcher. Renders
+ * nothing until the browser has read storage, and nothing at all for
+ * most people, who have none.
+ */
+function ContinueList() {
+  const raw = useSyncExternalStore(noSubscription, recentSnapshot, () => "");
+  const recent = useMemo(() => readRecent(raw), [raw]);
+  if (recent.length === 0) return null;
+  return (
+    <section aria-label="Continue" className="mt-10 flex flex-col gap-2.5">
+      <p className="text-[11px] tracking-[0.14em] uppercase" style={{ color: "var(--gold-dim)" }}>
+        Continue
+      </p>
+      {recent.map((r) => (
+        <Link
+          key={r.path}
+          href={r.path}
+          className="flex min-h-11 items-center justify-between gap-3 rounded-2xl px-4 py-3.5 text-sm"
+          style={{ background: "#EFE7D4", color: INK_TEXT }}
+        >
+          <span className="truncate">{r.title}</span>
+          <span className="text-[11px]" style={{ color: MUTED_TEXT }}>
+            {r.kind === "event" ? "Event" : "Group gift"}
+          </span>
+        </Link>
+      ))}
+    </section>
   );
 }
 

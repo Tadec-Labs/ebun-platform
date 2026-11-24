@@ -1,5 +1,5 @@
 /**
- * "Pick up where you left off" on the launcher. Kept in this browser
+ * "Continue" (pick up where you left off) on the front door. Kept in this browser
  * only, and only the clean page address (/e/h/<short id>, /group/m/<id>)
  * — never a token. The short id opens nothing by itself: the private
  * link's cookie on this device is what lets the page load.
@@ -52,6 +52,6 @@ export function rememberRecent(entry: Omit<RecentEntry, "at">): void {
     const next = [{ ...entry, title: entry.title.slice(0, 80), at: Date.now() }, ...rest].slice(0, MAX);
     window.localStorage.setItem(KEY, JSON.stringify(next));
   } catch {
-    // Private mode or storage full: the launcher just won't list it.
+    // Private mode or storage full: the front door just won't list it.
   }
 }

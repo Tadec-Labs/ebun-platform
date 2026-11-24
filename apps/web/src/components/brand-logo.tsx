@@ -21,7 +21,7 @@ export function BrandLogo({
 }: {
   size?: "sm" | "md";
   wordmark?: boolean;
-  /** Where the logo goes when tapped — the launcher by default; null for a plain, unlinked logo. */
+  /** Where the logo goes when tapped — the front door (/, which opens /send) by default; null for a plain, unlinked logo. */
   href?: string | null;
 }) {
   const tile = size === "sm" ? 28 : 36;

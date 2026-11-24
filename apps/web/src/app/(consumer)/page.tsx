@@ -1,18 +1,15 @@
-import type { Metadata } from "next";
-import { corporateSelfServeEnabled, eventsEnabled } from "@/lib/feature-flags";
-import { Launcher } from "./launcher";
-
-export const metadata: Metadata = {
-  title: "SendEbun",
-  description: "Gifts for someone, for an event, or for your team.",
-};
+import { redirect } from "next/navigation";
 
 /**
- * The front door: one question, three answers. Links from outside (the
- * landing page, invitations, Instagram) go straight to /send, /e/… or
- * /company/start; this is for people who come to the app itself. Tiles
- * for products that are switched off don't show.
+ * The front door is /send's "Where are they?" screen.
+ *
+ * "/" used to ask "Who's it for?" first, but nearly everyone answered
+ * "Someone", and its other two answers (an event, a team) already sit
+ * on the city screen under "More ways". Two questions before any gift
+ * became one. Its "Continue" list moved there too. A redirect rather
+ * than rendering /send here keeps one address for the screen, so
+ * analytics, links and the back button all agree.
  */
 export default function Home() {
-  return <Launcher eventsOpen={eventsEnabled()} companiesOpen={corporateSelfServeEnabled()} />;
+  redirect("/send");
 }
