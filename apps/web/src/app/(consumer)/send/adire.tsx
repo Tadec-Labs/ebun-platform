@@ -101,12 +101,22 @@ export function AdireScreen({ children, className = "" }: { children: ReactNode;
  * Logo, "For companies" and the step, each on a solid green pill so they
  * stay crisp over the pattern.
  */
-export function BandHeader({ companiesOpen, logoHref = "/" }: { companiesOpen: boolean; logoHref?: string }) {
+export function BandHeader({
+  companiesOpen,
+  logoHref = "/",
+  middle,
+}: {
+  companiesOpen: boolean;
+  logoHref?: string;
+  /** Laptops only: something for the middle of the row (the gift list puts the city here). */
+  middle?: ReactNode;
+}) {
   return (
     <header className="flex items-center justify-between gap-3">
       <span className="rounded-full py-1 pr-3 pl-1" style={{ background: GREEN }}>
         <BrandLogo size="sm" href={logoHref} />
       </span>
+      {middle && <div className="hidden lg:block">{middle}</div>}
       <div className="flex items-center gap-2 text-xs tracking-wide whitespace-nowrap" style={{ color: CHAMPAGNE }}>
         {companiesOpen && (
           <Link

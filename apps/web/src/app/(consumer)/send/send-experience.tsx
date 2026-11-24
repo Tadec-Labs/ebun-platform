@@ -13,7 +13,8 @@ import { OCCASIONS as OCCASION_LIST, type OccasionId } from "@/lib/occasions";
 import { CityBar, CityScreen, ElsewhereNote } from "./city-picker";
 import { Compose, type MessageDraft } from "./compose";
 import { AdirePattern, AdireScreen, BandHeader, Sheet } from "./adire";
-import { GiftHeading, GiftList } from "./gift-picker";
+import { GiftDetails, RevealPreview, RevealTeaser, SelectionBar } from "./gift-panel";
+import { GiftGrid } from "./gift-picker";
 import { ReviewAndPay } from "./review-and-pay";
 import { StartGroupGift } from "./start-group-gift";
 
@@ -125,6 +126,8 @@ export function SendExperience({
   const [phase, setPhase] = useState<Phase>("gift");
   // The gift step's moment tab; shared by the heading and the list.
   const [moment, setMoment] = useState<Occasion | null>(null);
+  // The gift picked on the grid but not yet confirmed (see GiftGrid).
+  const [picked, setPicked] = useState<GiftCatalogItem | null>(null);
   const [draft, setDraft] = useState<SendDraft>({
     city: null,
     occasion: null,
@@ -203,56 +206,73 @@ export function SendExperience({
   // screen, so the first step reads as one place.
   if (phase === "gift") {
     const nothingThere = city === "elsewhere" && reachable.length === 0;
+    // A pick from another city's list (they changed city) no longer counts.
+    const pick = picked && reachable.some((g) => g.id === picked.id) ? picked : null;
+    const continueWith = (gift: GiftCatalogItem) => {
+      // Carry the moment into the message prompt where the two lists overlap.
+      const occasion =
+        moment && (MESSAGE_OCCASIONS as readonly string[]).includes(moment) ? (moment as OccasionId) : null;
+      setDraft((prev) => ({ ...prev, gift, occasion: prev.occasion ?? occasion }));
+      setPhase("compose");
+    };
     return (
       <AdireScreen>
+        {/* A slim band: logo, step, their city. The gifts start right under it. */}
         <div className="relative">
           <AdirePattern />
-          <div className="relative mx-auto w-full max-w-[488px] px-6 pt-6 md:max-w-[928px]">
-            <BandHeader companiesOpen={companiesOpen} />
-            <div className="pt-8">
+          <div className="relative mx-auto w-full max-w-[1328px] px-6 pt-5 pb-5 lg:px-12 lg:pb-6">
+            {/* Laptops: one row, the city in the middle. Phones: the city on its own line. */}
+            <BandHeader
+              companiesOpen={companiesOpen}
+              middle={<CityBar label={cityName ?? "anywhere in Nigeria"} onChange={() => chooseCity(null)} />}
+            />
+            <div className="pt-4 lg:hidden">
               <CityBar label={cityName ?? "anywhere in Nigeria"} onChange={() => chooseCity(null)} />
             </div>
           </div>
         </div>
-        <div className="mx-auto w-full max-w-[488px] px-6 pb-5 md:max-w-[928px]">
-          <GiftHeading
-            catalog={reachable}
-            moment={moment}
-            onMoment={setMoment}
-            title={nothingThere ? "We\u2019re not there yet" : undefined}
-          />
-        </div>
-        <Sheet labelledBy="gifts-heading" innerClassName="max-w-[440px] md:max-w-[880px]">
-          {city === "elsewhere" && (
-            <ElsewhereNote
-              cities={cities}
-              hasNationwide={reachable.length > 0}
-              onServedCity={(slug) => chooseCity(slug)}
-            />
-          )}
-          {!nothingThere && (
-            <GiftList
-              catalog={reachable}
-              catalogReachable={catalogReachable}
-              city={recipientCity}
-              cityName={cityName}
-              moment={moment}
-              onChoose={(gift, chosenMoment) => {
-                // Carry the moment into the message prompt where the two lists overlap.
-                const occasion =
-                  chosenMoment && (MESSAGE_OCCASIONS as readonly string[]).includes(chosenMoment)
-                    ? (chosenMoment as OccasionId)
-                    : null;
-                setDraft((prev) => ({ ...prev, gift, occasion: prev.occasion ?? occasion }));
-                setPhase("compose");
-              }}
-            />
-          )}
-          <div className="mt-auto">
-            <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
-            <PolicyLinks className="pt-6" />
+        <Sheet labelledBy="gifts-heading" innerClassName="max-w-[1280px]">
+          {/* Laptops: grid on the left, the decision on the right, kept in view. */}
+          <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start lg:gap-10 xl:grid-cols-[minmax(0,1fr)_400px]">
+            <div className="flex min-w-0 flex-col">
+              <GiftGrid
+                catalog={reachable}
+                catalogReachable={catalogReachable}
+                city={recipientCity}
+                cityName={cityName}
+                title={nothingThere ? "We\u2019re not there yet" : undefined}
+                moment={moment}
+                onMoment={setMoment}
+                selectedId={pick?.id ?? null}
+                onSelect={(gift) => setPicked((prev) => (prev?.id === gift.id ? null : gift))}
+                notice={
+                  city === "elsewhere" ? (
+                    <ElsewhereNote
+                      cities={cities}
+                      hasNationwide={reachable.length > 0}
+                      onServedCity={(slug) => chooseCity(slug)}
+                    />
+                  ) : undefined
+                }
+                interlude={<RevealTeaser />}
+              />
+              <div className="mt-12">
+                <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
+                <PolicyLinks className="pt-6" />
+              </div>
+              {/* Room for the bottom bar, so it never covers the last row. */}
+              {pick && <div aria-hidden="true" className="h-36 lg:hidden" />}
+            </div>
+            <aside aria-label={pick ? "Your pick" : "How it works"} className="hidden lg:sticky lg:top-6 lg:block">
+              {pick ? (
+                <GiftDetails item={pick} city={recipientCity} cityName={cityName} onContinue={() => continueWith(pick)} />
+              ) : (
+                <RevealPreview />
+              )}
+            </aside>
           </div>
         </Sheet>
+        <SelectionBar item={pick} onContinue={() => pick && continueWith(pick)} />
       </AdireScreen>
     );
   }
