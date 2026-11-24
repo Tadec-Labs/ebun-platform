@@ -10,7 +10,7 @@ import type { City } from "@/lib/cities/cities";
 import { reachesCity, type GiftCatalogItem } from "@/lib/gifts/types";
 import { OCCASIONS as OCCASION_LIST, type OccasionId } from "@/lib/occasions";
 
-import { CityBar, CityPicker, ElsewhereNote } from "./city-picker";
+import { CityBar, CityScreen, ElsewhereNote } from "./city-picker";
 import { Compose, type MessageDraft } from "./compose";
 import { GiftPicker } from "./gift-picker";
 import { ReviewAndPay } from "./review-and-pay";
@@ -178,6 +178,21 @@ export function SendExperience({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
+  // The first screen has its own full-bleed layout; see CityScreen.
+  if (phase === "gift" && !city) {
+    return (
+      <CityScreen
+        cities={cities}
+        failed={citiesFailed}
+        hasNationwide={catalog.some((item) => item.nationwide)}
+        companiesOpen={companiesOpen}
+        eventsOpen={eventsOpen}
+        onChoose={(choice) => chooseCity(choice.slug)}
+        onElsewhere={() => chooseCity("elsewhere")}
+      />
+    );
+  }
+
   return (
     // The gift step widens on larger screens so the grid can show three
     // across; the writing and paying steps stay phone-width, where a
@@ -237,20 +252,6 @@ export function SendExperience({
           })}
         </ol>
       </header>
-
-      {phase === "gift" && !city && (
-        <>
-          <CityPicker
-            cities={cities}
-            failed={citiesFailed}
-            hasNationwide={catalog.some((item) => item.nationwide)}
-            onChoose={(city) => chooseCity(city.slug)}
-            onElsewhere={() => chooseCity("elsewhere")}
-          />
-          <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
-          <PolicyLinks className="pt-6 pb-8" />
-        </>
-      )}
 
       {phase === "gift" && city && (
         <>
