@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import {
   FulfillmentType,
   GIFT_CATEGORY_LABEL,
@@ -11,6 +11,7 @@ import {
 import { GiftMark } from "@/components/icons";
 import { formatNaira } from "@/lib/format-money";
 import { availableIn, type GiftCatalogItem } from "@/lib/gifts/types";
+import { CHAMPAGNE, GOLD, GREEN, IVORY, SMALL_CAPS } from "./adire";
 
 type Category = GiftCatalogItem["category"];
 
@@ -27,43 +28,105 @@ const MOMENT_HEADING: Record<Occasion, string> = {
   festive: "For the season",
 };
 
-/** How many big cards the swipe row holds before the rest drop to the list below. */
-const TOP_PICKS = 5;
-
 /**
- * The entry point, and the hook: one screen, no gates.
+ * The gift step is one screen in two parts: this heading and its moment
+ * tabs on the green band, and GiftList on the ivory sheet below. The
+ * moment lives in the parent so both halves share it.
  *
- * Big swipeable cards up top (the "best picks"), every other gift in a
- * compact grid underneath, and one optional row of moments. Choosing a
- * moment doesn't hide anything — it reorders, so the gifts ops tagged
- * for that moment come first. Nobody is boxed in by a missing reason:
- * "Anything" (the default) shows the catalogue as ops ordered it.
- *
- * Swipe on phones, arrows on laptops, one tap on a card to send it.
- * Prices stay small; the photo and the name do the selling.
+ * Choosing a moment never hides anything; it reorders, so the gifts ops
+ * tagged for that moment come first. "Anything" (the default) shows the
+ * catalogue as ops ordered it.
  */
-export function GiftPicker({
+export function GiftHeading({
   catalog,
-  catalogReachable,
-  city = null,
-  cityName = null,
-  onChoose,
+  moment,
+  onMoment,
+  title,
 }: {
   catalog: GiftCatalogItem[];
-  catalogReachable: boolean;
-  /** The recipient's city: cards say which shop makes it and where it's delivered there. */
-  city?: string | null;
-  cityName?: string | null;
-  onChoose: (gift: GiftCatalogItem, moment: Occasion | null) => void;
+  moment: Occasion | null;
+  onMoment: (moment: Occasion | null) => void;
+  /** Replaces the heading, e.g. when there is nothing to show for their city. */
+  title?: string;
 }) {
-  const [moment, setMoment] = useState<Occasion | null>(null);
-
   // Only moments some gift is tagged for; fixed order from the shared list.
   const moments = useMemo(
     () => OCCASIONS.filter((o) => catalog.some((item) => item.occasions?.includes(o))),
     [catalog],
   );
 
+  return (
+    <>
+      <h1
+        id="gifts-heading"
+        className="font-display mt-5 text-[42px] leading-[0.95] font-medium tracking-[-0.01em] md:text-[56px]"
+      >
+        {title ?? (moment ? MOMENT_HEADING[moment] : <>Make someone&rsquo;s <em>day</em></>)}
+      </h1>
+
+      {moments.length > 0 && !title && (
+        <div
+          className="-mx-6 mt-3 flex gap-6 overflow-x-auto px-6 [scrollbar-width:none] md:mx-0 md:px-0"
+          role="group"
+          aria-label="What's the moment?"
+        >
+          <Tab active={moment === null} onClick={() => onMoment(null)}>
+            Anything
+          </Tab>
+          {moments.map((item) => (
+            <Tab key={item} active={moment === item} onClick={() => onMoment(moment === item ? null : item)}>
+              {OCCASION_LABEL[item]}
+            </Tab>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Editorial tabs: plain words with a gold underline, not pill buttons. */
+function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className="min-h-11 shrink-0 border-b-2 text-sm whitespace-nowrap transition-colors"
+      style={{
+        borderColor: active ? GOLD : "transparent",
+        color: active ? IVORY : CHAMPAGNE,
+        fontWeight: active ? 600 : 400,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The list, on the ivory sheet. The first gift (the best match for the
+ * moment, else the first ops featured) is the feature: a big photo and
+ * a magazine-style caption. Every other gift is a numbered row: photo,
+ * name, maker, how it arrives, price. Rows fit four or more gifts on a
+ * phone screen where cards fit one and a half, which matters more as
+ * the catalogue grows. Two columns of rows from md up.
+ */
+export function GiftList({
+  catalog,
+  catalogReachable,
+  city = null,
+  cityName = null,
+  moment,
+  onChoose,
+}: {
+  catalog: GiftCatalogItem[];
+  catalogReachable: boolean;
+  /** The recipient's city: rows say which shop makes it and where it's delivered there. */
+  city?: string | null;
+  cityName?: string | null;
+  moment: Occasion | null;
+  onChoose: (gift: GiftCatalogItem, moment: Occasion | null) => void;
+}) {
   // Reorder, never filter: matches first, featured first within each group.
   const ordered = useMemo(() => {
     const score = (item: GiftCatalogItem) =>
@@ -74,236 +137,118 @@ export function GiftPicker({
       .map((x) => x.item);
   }, [catalog, moment]);
 
-  const matches = moment ? ordered.filter((item) => item.occasions?.includes(moment)).length : ordered.length;
-  const picks = ordered.slice(0, Math.max(1, Math.min(TOP_PICKS, matches)));
-  const rest = ordered.slice(picks.length);
+  if (catalog.length === 0) {
+    return (
+      <p className="mb-8 rounded-2xl border p-6 text-center text-sm leading-relaxed" style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}>
+        {/* Two different problems, two different fixes: nothing on sale vs. a failed load. */}
+        {catalogReachable
+          ? cityName
+            ? `There's nothing to send in ${cityName} just yet. We're adding gifts — check back shortly.`
+            : "There's nothing to send just yet. We're adding gifts — check back shortly."
+          : "The gift list didn't load. Check your connection and reload the page."}
+      </p>
+    );
+  }
+
+  const [feature, ...rest] = ordered;
   const choose = (gift: GiftCatalogItem) => onChoose(gift, moment);
 
   return (
-    <>
-      <h1
-        className="font-display pb-5 text-3xl leading-tight font-normal md:text-4xl"
-        style={{ color: "var(--cream)" }}
-      >
-        {moment ? MOMENT_HEADING[moment] : "Make someone\u2019s day"}
-      </h1>
-
-      {moments.length > 0 && (
-        <div
-          className="-mx-7 mb-5 flex gap-2 overflow-x-auto px-7 pb-1 [scrollbar-width:none] md:mx-0 md:px-0"
-          role="group"
-          aria-label="What's the moment?"
-        >
-          <Chip active={moment === null} onClick={() => setMoment(null)}>
-            Anything
-          </Chip>
-          {moments.map((item) => (
-            <Chip key={item} active={moment === item} onClick={() => setMoment(moment === item ? null : item)}>
-              {OCCASION_LABEL[item]}
-            </Chip>
+    <div className="flex flex-col pb-4">
+      <FeatureGift item={feature} city={city} onChoose={() => choose(feature)} />
+      {rest.length > 0 && (
+        <ul aria-label="More gifts" className="mt-6 grid grid-cols-1 border-t md:grid-cols-2 md:gap-x-10" style={{ borderColor: "var(--border)" }}>
+          {rest.map((item, i) => (
+            <li key={item.id} className="min-w-0 border-b" style={{ borderColor: "var(--border)" }}>
+              <GiftRow item={item} number={i + 2} city={city} onChoose={() => choose(item)} />
+            </li>
           ))}
-        </div>
-      )}
-
-      {catalog.length === 0 ? (
-        <div
-          className="mb-12 border p-6 text-center text-sm leading-relaxed"
-          style={{ borderColor: "var(--border)", color: "var(--cream-dim)" }}
-        >
-          {/* Two different problems, two different fixes: nothing on sale vs. a failed load. */}
-          {catalogReachable
-            ? cityName
-              ? `There's nothing to send in ${cityName} just yet. We're adding gifts — check back shortly.`
-              : "There's nothing to send just yet. We're adding gifts — check back shortly."
-            : "The gift list didn't load. Check your connection and reload the page."}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-8 pb-14">
-          {/* key: a new moment starts the row from its first card. */}
-          <PickRow key={moment ?? "all"} picks={picks} city={city} onChoose={choose} />
-          {rest.length > 0 && (
-            <section aria-label="More gifts">
-              <h2 className="mb-3 text-xs tracking-[0.16em] uppercase" style={{ color: "var(--gold-dim)" }}>
-                More gifts
-              </h2>
-              <ul className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
-                {rest.map((item) => (
-                  <li key={item.id} className="flex">
-                    <GiftCard item={item} city={city} onChoose={() => choose(item)} />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-/**
- * The swipe row. Native scroll-snap, not a carousel library: it is
- * smooth on low-end Android, works with a trackpad, and needs no
- * dependency. A light vibration marks each new card where the phone
- * supports it; arrows appear on wider screens, where nobody swipes.
- */
-function PickRow({
-  picks,
-  city,
-  onChoose,
-}: {
-  picks: GiftCatalogItem[];
-  city: string | null;
-  onChoose: (gift: GiftCatalogItem) => void;
-}) {
-  const rowRef = useRef<HTMLDivElement>(null);
-  const [index, setIndex] = useState(0);
-
-  const onScroll = () => {
-    const row = rowRef.current;
-    if (!row) return;
-    const card = row.firstElementChild as HTMLElement | null;
-    if (!card) return;
-    const next = Math.round(row.scrollLeft / (card.offsetWidth + 12));
-    if (next !== index) {
-      setIndex(next);
-      if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.(8);
-    }
-  };
-
-  const go = (to: number) => {
-    const row = rowRef.current;
-    const card = row?.children[to] as HTMLElement | undefined;
-    if (row && card) row.scrollTo({ left: card.offsetLeft - row.offsetLeft, behavior: "smooth" });
-  };
-
-  return (
-    <div className="relative">
-      <div
-        ref={rowRef}
-        onScroll={onScroll}
-        className="-mx-7 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-7 [scrollbar-width:none] md:mx-0 md:px-0"
-        aria-label="Best picks"
-      >
-        {picks.map((item) => (
-          <PickCard key={item.id} item={item} city={city} onChoose={() => onChoose(item)} />
-        ))}
-      </div>
-
-      {picks.length > 1 && (
-        <div className="mt-4 flex items-center justify-center gap-4">
-          <ArrowButton label="Previous gift" disabled={index === 0} onClick={() => go(index - 1)} dir="left" />
-          <div className="flex gap-1.5" aria-hidden="true">
-            {picks.map((item, i) => (
-              <span
-                key={item.id}
-                className="h-1.5 rounded-full transition-all duration-300"
-                style={{ width: i === index ? 18 : 6, background: i === index ? "var(--gold)" : "var(--border-strong)" }}
-              />
-            ))}
-          </div>
-          <ArrowButton label="Next gift" disabled={index >= picks.length - 1} onClick={() => go(index + 1)} dir="right" />
-        </div>
+        </ul>
       )}
     </div>
   );
 }
 
-function ArrowButton({
-  label,
-  disabled,
-  onClick,
-  dir,
-}: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-  dir: "left" | "right";
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="hidden h-9 w-9 items-center justify-center rounded-full border transition-opacity disabled:opacity-30 md:flex"
-      style={{ borderColor: "var(--border-strong)", color: "var(--cream)" }}
-    >
-      <span aria-hidden="true">{dir === "left" ? "\u2190" : "\u2192"}</span>
-    </button>
-  );
+/** "No. 02" — the editorial numbering, two digits. */
+function numberLabel(n: number): string {
+  return `No. ${String(n).padStart(2, "0")}`;
 }
 
-function PickCard({
-  item,
-  city,
-  onChoose,
-}: {
-  item: GiftCatalogItem;
-  city: string | null;
-  onChoose: () => void;
-}) {
-  const maker = describeMaker(item, city);
+function FeatureGift({ item, city, onChoose }: { item: GiftCatalogItem; city: string | null; onChoose: () => void }) {
   return (
     <button
       type="button"
       onClick={onChoose}
-      className="group flex w-[84%] shrink-0 snap-center flex-col overflow-hidden border text-left transition-transform duration-200 active:scale-[0.98] md:w-[46%]"
-      style={{ borderColor: "var(--border-strong)", background: "var(--panel)" }}
+      className="group flex w-full flex-col text-left transition-transform active:scale-[0.99] md:flex-row md:items-end md:gap-8"
     >
-      <GiftArt item={item} className="aspect-[4/3] w-full md:aspect-[16/9]" large />
-      <div className="flex flex-1 flex-col gap-1.5 p-5">
-        <h2 className="font-display line-clamp-2 text-2xl leading-tight" style={{ color: "var(--cream)" }}>
+      <GiftArt item={item} className="aspect-[16/10] w-full rounded-[20px] md:w-[56%]" large />
+      <span className="flex flex-col gap-1.5 pt-4 md:flex-1 md:pt-0">
+        <span className={SMALL_CAPS} style={{ color: "var(--gold-dim)" }}>
+          {numberLabel(1)} · {makerLabel(item, city)}
+        </span>
+        <span className="font-display text-[32px] leading-none md:text-[40px]" style={{ color: "var(--cream)" }}>
           {item.name}
-        </h2>
-        {maker && (
-          <span className="text-xs" style={{ color: "var(--cream-dim)" }}>
-            {maker}
-          </span>
-        )}
-        <span className="text-xs" style={{ color: "var(--cream-faint)" }}>
+        </span>
+        <span className="text-[13px]" style={{ color: "var(--cream-dim)" }}>
           {describeCollection(item, city)}
         </span>
-        <div className="mt-auto flex items-center justify-between pt-4">
-          <span className="text-sm" style={{ color: "var(--gold-light)" }}>
+        <span className="flex items-center justify-between pt-4">
+          <span className="font-display text-[26px] font-semibold" style={{ color: GREEN }}>
             {formatNaira(item.basePrice)}
           </span>
-          <span
-            className="px-4 py-2 text-xs font-medium tracking-wide"
-            style={{ background: "var(--gold)", color: "var(--ink)" }}
-          >
+          <span className="rounded-full px-5 py-3 text-sm font-semibold" style={{ background: GREEN, color: IVORY }}>
             Send this
           </span>
-        </div>
-      </div>
+        </span>
+      </span>
     </button>
   );
 }
 
-function Chip({
-  active,
-  children,
-  onClick,
+function GiftRow({
+  item,
+  number,
+  city,
+  onChoose,
 }: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
+  item: GiftCatalogItem;
+  number: number;
+  city: string | null;
+  onChoose: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className="shrink-0 rounded-full border px-3.5 py-1.5 text-xs whitespace-nowrap transition-colors"
-      style={{
-        borderColor: active ? "var(--gold)" : "var(--border)",
-        background: active ? "var(--gold)" : "transparent",
-        color: active ? "var(--ink)" : "var(--cream-dim)",
-      }}
-    >
-      {children}
+    <button type="button" onClick={onChoose} className="group flex w-full items-center gap-3.5 py-4 text-left">
+      <GiftArt item={item} className="size-[84px] shrink-0 rounded-2xl" />
+      <span className="flex min-w-0 grow flex-col gap-0.5">
+        <span className="truncate text-[11px] tracking-[0.14em] uppercase" style={{ color: "var(--gold-dim)" }}>
+          {numberLabel(number)} · {makerLabel(item, city)}
+        </span>
+        <span className="font-display line-clamp-2 text-[22px] leading-tight" style={{ color: "var(--cream)" }}>
+          {item.name}
+        </span>
+        <span className="line-clamp-1 text-xs" style={{ color: "var(--cream-dim)" }}>
+          {describeCollection(item, city)}
+        </span>
+        <span className="text-[15px] font-semibold" style={{ color: GREEN }}>
+          {formatNaira(item.basePrice)}
+        </span>
+      </span>
+      <span className="shrink-0 rounded-full px-4 py-2.5 text-[13px] font-semibold" style={{ background: GREEN, color: IVORY }}>
+        Send
+      </span>
     </button>
   );
+}
+
+/**
+ * The small-caps line above a gift's name: the shop that makes it in
+ * their city, so the sender knows they're buying from a real local
+ * business; "Anywhere in Nigeria" for top-ups; else the category.
+ */
+function makerLabel(item: GiftCatalogItem, city: string | null): string {
+  if (item.nationwide) return "Anywhere in Nigeria";
+  const sellers = city && Array.isArray(item.cities) ? (availableIn(item, city)?.sellers ?? []) : [];
+  return sellers.length > 0 ? listShort(sellers, 1) : CATEGORY_LABEL[item.category];
 }
 
 /**
@@ -327,83 +272,10 @@ function describeCollection(item: GiftCatalogItem, city: string | null = null): 
   }
 }
 
-/**
- * Who makes it, so the sender knows they're buying from a real local
- * shop, not a faceless voucher. Nationwide gifts have no shop.
- */
-function describeMaker(item: GiftCatalogItem, city: string | null): string | null {
-  if (item.nationwide) return "Anywhere in Nigeria";
-  if (!Array.isArray(item.cities)) return null;
-  const sellers = city ? (availableIn(item, city)?.sellers ?? []) : [];
-  if (sellers.length === 0) return null;
-  return `By ${listShort(sellers, 1)}`;
-}
-
 /** "Alagbaka, Ijapo +3" — short enough for a card. */
 function listShort(items: string[], show: number): string {
   const shown = items.slice(0, show).join(", ");
   return items.length > show ? `${shown} +${items.length - show}` : shown;
-}
-
-function GiftCard({
-  item,
-  city,
-  onChoose,
-}: {
-  item: GiftCatalogItem;
-  city: string | null;
-  onChoose: () => void;
-}) {
-  const maker = describeMaker(item, city);
-  return (
-    <button
-      type="button"
-      onClick={onChoose}
-      className="group flex w-full flex-col overflow-hidden border text-left transition-[border-color,transform] duration-200 hover:border-[color:var(--border-strong)] active:scale-[0.98]"
-      style={{ borderColor: "var(--border)", background: "var(--panel)" }}
-    >
-      {/* Square, not portrait: tall enough to sell a real photo, short
-          enough that a grid of photo-less tiles doesn't push the
-          names and prices below the fold. */}
-      <GiftArt item={item} className="aspect-square w-full" />
-      <div className="flex flex-1 flex-col gap-1 p-3 md:p-4">
-        <span
-          className="text-[10px] tracking-[0.16em] uppercase"
-          style={{ color: "var(--gold-dim)" }}
-        >
-          {CATEGORY_LABEL[item.category]}
-        </span>
-        <h2
-          className="font-display line-clamp-2 text-lg leading-tight md:text-xl"
-          style={{ color: "var(--cream)" }}
-        >
-          {item.name}
-        </h2>
-        {/* mt-auto pins price to the bottom so a row of cards lines up
-            even when one name wraps to two lines and its neighbour's
-            doesn't. */}
-        <div className="mt-auto flex flex-col gap-0.5 pt-2">
-          <span
-            className="text-sm font-medium"
-            style={{ color: "var(--gold-light)" }}
-          >
-            {formatNaira(item.basePrice)}
-          </span>
-          {maker && (
-            <span className="text-[11px] leading-snug" style={{ color: "var(--cream-dim)" }}>
-              {maker}
-            </span>
-          )}
-          <span
-            className="text-[11px] leading-snug"
-            style={{ color: "var(--cream-faint)" }}
-          >
-            {describeCollection(item, city)}
-          </span>
-        </div>
-      </div>
-    </button>
-  );
 }
 
 /**

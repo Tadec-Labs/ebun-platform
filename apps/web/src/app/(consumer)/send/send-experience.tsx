@@ -1,18 +1,19 @@
 "use client";
 
-import Link from "next/link";
 import { BrandLogo } from "@/components/brand-logo";
 import { OtherWays } from "@/components/other-ways";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { PolicyLinks } from "@/components/policy-links";
 import { track } from "@/lib/analytics";
 import type { City } from "@/lib/cities/cities";
+import type { Occasion } from "@ebun/types";
 import { reachesCity, type GiftCatalogItem } from "@/lib/gifts/types";
 import { OCCASIONS as OCCASION_LIST, type OccasionId } from "@/lib/occasions";
 
 import { CityBar, CityScreen, ElsewhereNote } from "./city-picker";
 import { Compose, type MessageDraft } from "./compose";
-import { GiftPicker } from "./gift-picker";
+import { AdirePattern, AdireScreen, BandHeader, Sheet } from "./adire";
+import { GiftHeading, GiftList } from "./gift-picker";
 import { ReviewAndPay } from "./review-and-pay";
 import { StartGroupGift } from "./start-group-gift";
 
@@ -122,6 +123,8 @@ export function SendExperience({
   eventsOpen?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>("gift");
+  // The gift step's moment tab; shared by the heading and the list.
+  const [moment, setMoment] = useState<Occasion | null>(null);
   const [draft, setDraft] = useState<SendDraft>({
     city: null,
     occasion: null,
@@ -196,22 +199,75 @@ export function SendExperience({
     );
   }
 
+  // The gift list: the same green band and ivory sheet as the city
+  // screen, so the first step reads as one place.
+  if (phase === "gift") {
+    const nothingThere = city === "elsewhere" && reachable.length === 0;
+    return (
+      <AdireScreen>
+        <div className="relative">
+          <AdirePattern />
+          <div className="relative mx-auto w-full max-w-[488px] px-6 pt-6 md:max-w-[928px]">
+            <BandHeader companiesOpen={companiesOpen} />
+            <div className="pt-8">
+              <CityBar label={cityName ?? "anywhere in Nigeria"} onChange={() => chooseCity(null)} />
+            </div>
+          </div>
+        </div>
+        <div className="mx-auto w-full max-w-[488px] px-6 pb-5 md:max-w-[928px]">
+          <GiftHeading
+            catalog={reachable}
+            moment={moment}
+            onMoment={setMoment}
+            title={nothingThere ? "We\u2019re not there yet" : undefined}
+          />
+        </div>
+        <Sheet labelledBy="gifts-heading" innerClassName="max-w-[440px] md:max-w-[880px]">
+          {city === "elsewhere" && (
+            <ElsewhereNote
+              cities={cities}
+              hasNationwide={reachable.length > 0}
+              onServedCity={(slug) => chooseCity(slug)}
+            />
+          )}
+          {!nothingThere && (
+            <GiftList
+              catalog={reachable}
+              catalogReachable={catalogReachable}
+              city={recipientCity}
+              cityName={cityName}
+              moment={moment}
+              onChoose={(gift, chosenMoment) => {
+                // Carry the moment into the message prompt where the two lists overlap.
+                const occasion =
+                  chosenMoment && (MESSAGE_OCCASIONS as readonly string[]).includes(chosenMoment)
+                    ? (chosenMoment as OccasionId)
+                    : null;
+                setDraft((prev) => ({ ...prev, gift, occasion: prev.occasion ?? occasion }));
+                setPhase("compose");
+              }}
+            />
+          )}
+          <div className="mt-auto">
+            <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
+            <PolicyLinks className="pt-6" />
+          </div>
+        </Sheet>
+      </AdireScreen>
+    );
+  }
+
   return (
-    // The gift step widens on larger screens so the grid can show three
-    // across; the writing and paying steps stay phone-width, where a
-    // form reads best whatever the screen.
-    <div
-      className={`mx-auto flex min-h-dvh w-full flex-col px-7 ${
-        phase === "gift" ? "max-w-[440px] md:max-w-[880px]" : "max-w-[440px]"
-      }`}
-    >
+    // The writing and paying steps stay phone-width, where a form reads
+    // best whatever the screen.
+    <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
       <header className="pt-5 pb-7">
         <div className="flex items-center justify-between">
           {/* The logo always goes back to the front door. Past the first
               step it asks first, so a stray tap can't throw away a draft. */}
           <span
             onClickCapture={(e) => {
-              if (phase !== "gift" && !window.confirm("Leave this gift? What you've written won't be saved.")) {
+              if (!window.confirm("Leave this gift? What you've written won't be saved.")) {
                 e.preventDefault();
               }
             }}
@@ -219,15 +275,6 @@ export function SendExperience({
             <BrandLogo size="sm" />
           </span>
           <div className="flex items-center gap-4">
-            {phase === "gift" && companiesOpen && (
-              <Link
-                href="/company/start"
-                className="text-[11px] tracking-wide underline-offset-4 hover:underline"
-                style={{ color: "var(--gold-light)" }}
-              >
-                For companies
-              </Link>
-            )}
             <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
               Step {currentPhaseIndex + 1} of {PHASES.length}
             </p>
@@ -255,35 +302,6 @@ export function SendExperience({
           })}
         </ol>
       </header>
-
-      {phase === "gift" && city && (
-        <>
-        <CityBar label={cityName ?? "another city"} onChange={() => chooseCity(null)} />
-        {city === "elsewhere" && (
-          <ElsewhereNote
-            cities={cities}
-            hasNationwide={reachable.length > 0}
-            onServedCity={(slug) => chooseCity(slug)}
-          />
-        )}
-        {(city !== "elsewhere" || reachable.length > 0) && (
-          <GiftPicker
-            catalog={reachable}
-            catalogReachable={catalogReachable}
-            city={recipientCity}
-            cityName={cityName}
-            onChoose={(gift, moment) => {
-              // Carry the moment into the message prompt where the two lists overlap.
-              const occasion = moment && (MESSAGE_OCCASIONS as readonly string[]).includes(moment) ? (moment as OccasionId) : null;
-              setDraft((prev) => ({ ...prev, gift, occasion: prev.occasion ?? occasion }));
-              setPhase("compose");
-            }}
-          />
-        )}
-        <OtherWays companiesOpen={companiesOpen} eventsOpen={eventsOpen} />
-        <PolicyLinks className="pt-6 pb-8" />
-        </>
-      )}
 
       {phase === "compose" && draft.gift && (
         <Compose
