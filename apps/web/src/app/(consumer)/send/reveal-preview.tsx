@@ -1,6 +1,7 @@
 "use client";
 
 import { GiftMark } from "@/components/icons";
+import { REVEAL_DARK_THEME } from "./adire";
 import type { GiftCatalogItem } from "@/lib/gifts/types";
 
 /**
@@ -44,6 +45,8 @@ export function RevealPreview({
       <div
         className="flex flex-col gap-5 border px-5 py-6"
         style={{
+          // Dark even on the ivory sheet: it shows the reveal screen, which is dark.
+          ...REVEAL_DARK_THEME,
           borderColor: "var(--border-strong)",
           background: "var(--panel)",
         }}

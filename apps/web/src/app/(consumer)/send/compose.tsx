@@ -171,7 +171,8 @@ export function Compose({
             className="block text-xs"
             style={{ color: "var(--gold-light)" }}
           >
-            {formatNaira(gift.basePrice)}
+            {/* The all-in total, as on the gift page; the breakdown is on the pay step. */}
+            {formatNaira(gift.totalPrice)} all-in
           </span>
         </span>
         <span

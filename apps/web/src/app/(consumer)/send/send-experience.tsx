@@ -1,6 +1,5 @@
 "use client";
 
-import { BrandLogo } from "@/components/brand-logo";
 import { OtherWays } from "@/components/other-ways";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { PolicyLinks } from "@/components/policy-links";
@@ -277,52 +276,36 @@ export function SendExperience({
     );
   }
 
+  // The message and pay steps: the same green band and ivory sheet as
+  // step 1, so the journey reads as one place. The form itself stays
+  // phone-width on every screen, where a form reads best.
   return (
-    // The writing and paying steps stay phone-width, where a form reads
-    // best whatever the screen.
-    <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-7">
-      <header className="pt-5 pb-7">
-        <div className="flex items-center justify-between">
-          {/* The logo always goes back to the front door. Past the first
-              step it asks first, so a stray tap can't throw away a draft. */}
-          <span
-            onClickCapture={(e) => {
-              if (!window.confirm("Leave this gift? What you've written won't be saved.")) {
-                e.preventDefault();
-              }
-            }}
-          >
-            <BrandLogo size="sm" />
-          </span>
-          <div className="flex items-center gap-4">
-            <p className="text-[11px] tracking-wide" style={{ color: "var(--cream-dim)" }}>
-              Step {currentPhaseIndex + 1} of {PHASES.length}
-            </p>
-          </div>
+    <AdireScreen>
+      <div className="relative">
+        <AdirePattern />
+        <div className="relative mx-auto w-full max-w-[1328px] px-6 pt-5 pb-5 lg:px-12">
+          <BandHeader companiesOpen={false} step={phase === "compose" ? 2 : 3} confirmLeave />
+          <ol className="mx-auto mt-5 grid max-w-[480px] grid-cols-3 gap-1.5" aria-label="Send a gift progress">
+            {PHASES.map((item, index) => {
+              const isCurrent = index === currentPhaseIndex;
+              const isComplete = index < currentPhaseIndex;
+              return (
+                <li key={item.id}>
+                  <span className="sr-only">
+                    {item.label}: {isComplete ? "complete" : isCurrent ? "current step" : "upcoming"}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="block h-1 rounded-full"
+                    style={{ background: isCurrent || isComplete ? "#E4B454" : "#2E6B55" }}
+                  />
+                </li>
+              );
+            })}
+          </ol>
         </div>
-        <ol className="mt-4 grid grid-cols-3 gap-1.5" aria-label="Send a gift progress">
-          {PHASES.map((item, index) => {
-            const isCurrent = index === currentPhaseIndex;
-            const isComplete = index < currentPhaseIndex;
-            return (
-              <li key={item.id}>
-                <span className="sr-only">
-                  {item.label}: {isComplete ? "complete" : isCurrent ? "current step" : "upcoming"}
-                </span>
-                <span
-                  aria-hidden="true"
-                  className="block h-px"
-                  style={{
-                    background: isCurrent || isComplete ? "var(--gold)" : "var(--border-strong)",
-                    opacity: isCurrent ? 1 : isComplete ? 0.65 : 0.5,
-                  }}
-                />
-              </li>
-            );
-          })}
-        </ol>
-      </header>
-
+      </div>
+      <Sheet innerClassName="max-w-[440px] md:max-w-[480px]">
       {phase === "compose" && draft.gift && (
         <Compose
           gift={draft.gift}
@@ -353,6 +336,7 @@ export function SendExperience({
           onBack={() => setPhase("compose")}
         />
       )}
-    </div>
+      </Sheet>
+    </AdireScreen>
   );
 }

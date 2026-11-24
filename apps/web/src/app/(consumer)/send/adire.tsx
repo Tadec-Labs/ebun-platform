@@ -41,8 +41,37 @@ export const SHEET_THEME = {
   "--gold-light": GREEN,
   "--gold-dim": LABEL_GOLD,
   "--border": LINE,
-  "--border-strong": LINE,
+  // Input and outline edges: 3.45:1 on ivory, the 3:1 a form field's edge needs.
+  "--border-strong": "#8C8166",
   "--focus-ring": GREEN,
+  // The message and pay steps' main buttons: green like "Next: add your
+  // message", not the dark theme's amber. Their text is var(--ink), ivory here.
+  "--action": GREEN,
+  "--action-hover": "#0B6B4E",
+  "--gold-glow": "rgba(0, 75, 53, 0.08)",
+  "--error": "#B42318",
+  "--success": "#1B6B47",
+  // Sticky bars draw their backdrop from this; ivory instead of near-black.
+  "--sendebun-background-rgb": "247, 242, 230",
+} as CSSProperties;
+
+/**
+ * Puts the dark theme back for one element inside the sheet: the
+ * preview of the recipient's reveal, which is dark in real life and
+ * should look like it.
+ */
+export const REVEAL_DARK_THEME = {
+  "--ink": "var(--sendebun-background)",
+  "--panel": "var(--sendebun-surface)",
+  "--panel-raised": "var(--sendebun-surfaceRaised)",
+  "--cream": "var(--sendebun-text)",
+  "--cream-dim": "var(--sendebun-textSecondary)",
+  "--cream-faint": "var(--sendebun-textMuted)",
+  "--border": "rgba(var(--sendebun-gold-rgb), 0.16)",
+  "--border-strong": "rgba(var(--sendebun-gold-rgb), 0.36)",
+  "--gold": "var(--sendebun-gold)",
+  "--gold-light": "var(--sendebun-goldLight)",
+  "--gold-dim": "var(--sendebun-goldDark)",
 } as CSSProperties;
 
 /** Small caps label: the editorial voice for eyebrows, numbers and makers. */
@@ -105,15 +134,31 @@ export function BandHeader({
   companiesOpen,
   logoHref = "/",
   middle,
+  step = 1,
+  confirmLeave = false,
 }: {
   companiesOpen: boolean;
   logoHref?: string;
   /** Laptops only: something for the middle of the row (the gift list puts the city here). */
   middle?: ReactNode;
+  /** Which of the three steps this is. */
+  step?: 1 | 2 | 3;
+  /** Past step 1 the logo asks first, so a stray tap can't throw away a draft. */
+  confirmLeave?: boolean;
 }) {
   return (
     <header className="flex items-center justify-between gap-3">
-      <span className="rounded-full py-1 pr-3 pl-1" style={{ background: GREEN }}>
+      <span
+        className="rounded-full py-1 pr-3 pl-1"
+        style={{ background: GREEN }}
+        onClickCapture={
+          confirmLeave
+            ? (e) => {
+                if (!window.confirm("Leave this gift? What you've written won't be saved.")) e.preventDefault();
+              }
+            : undefined
+        }
+      >
         <BrandLogo size="sm" href={logoHref} />
       </span>
       {middle && <div className="hidden lg:block">{middle}</div>}
@@ -129,7 +174,8 @@ export function BandHeader({
         )}
         {/* "Step" drops on small phones so the row never wraps. */}
         <p className="rounded-full px-3 py-1.5" style={{ background: GREEN }}>
-          <span className="hidden sm:inline">Step </span>1 of 3
+          <span className="hidden sm:inline">Step </span>
+          {step} of 3
         </p>
       </div>
     </header>

@@ -165,7 +165,7 @@ export function RevealTeaser() {
 function PriceLines({ item }: { item: GiftCatalogItem }) {
   const rows: [string, number][] = [["Gift", item.basePrice]];
   if (item.deliveryFee > 0) rows.push(["Delivery", item.deliveryFee]);
-  if (item.serviceFee > 0) rows.push(["SendEbun fee", item.serviceFee]);
+  if (item.serviceFee > 0) rows.push(["Service fee", item.serviceFee]); // the Terms' and checkout's name for it
   return (
     <dl className="flex flex-col text-[14px]" style={{ color: INK_TEXT }}>
       {rows.map(([label, kobo]) => (
