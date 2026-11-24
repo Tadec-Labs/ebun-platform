@@ -47,7 +47,7 @@ const EMPTY_MESSAGE: MessageDraft = {
   deliveryNote: "",
 };
 
-/** Remembers the last city on this phone, so a repeat sender doesn't answer twice. */
+/** The last city chosen on this phone: marked on the city screen as "Last time". */
 const CITY_KEY = "sendebun.city";
 
 function rememberedCity(): string | null {
@@ -133,12 +133,14 @@ export function SendExperience({
   const citiesFailed = loadedCities === null;
   const cities = loadedCities ?? [];
 
-  // A city chosen on this phone before, if we still serve it. Read
-  // through useSyncExternalStore so the server render (no storage) and
-  // the first client render agree, then the saved city takes over.
+  // The city chosen on this phone last time, if we still serve it. Only
+  // marked on the city screen, never filled in: the city is the
+  // recipient's, and a repeat sender is often gifting someone else
+  // somewhere else. Read through useSyncExternalStore so the server
+  // render (no storage) and the first client render agree.
   const saved = useSyncExternalStore(noSubscription, rememberedCity, () => null);
-  const city =
-    draft.city ?? (saved && cities.some((c) => c.slug === saved) ? saved : null);
+  const lastCity = saved && cities.some((c) => c.slug === saved) ? saved : null;
+  const city = draft.city;
 
   const cityName = cities.find((c) => c.slug === city)?.name ?? null;
   const recipientCity = city && city !== "elsewhere" ? city : null;
@@ -187,6 +189,7 @@ export function SendExperience({
         hasNationwide={catalog.some((item) => item.nationwide)}
         companiesOpen={companiesOpen}
         eventsOpen={eventsOpen}
+        lastCity={lastCity}
         onChoose={(choice) => chooseCity(choice.slug)}
         onElsewhere={() => chooseCity("elsewhere")}
       />
@@ -204,7 +207,7 @@ export function SendExperience({
     >
       <header className="pt-5 pb-7">
         <div className="flex items-center justify-between">
-          {/* The logo always goes back to the launcher. Past the first
+          {/* The logo always goes back to the front door. Past the first
               step it asks first, so a stray tap can't throw away a draft. */}
           <span
             onClickCapture={(e) => {

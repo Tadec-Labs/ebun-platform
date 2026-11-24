@@ -98,7 +98,6 @@ export function trackPageview(): void {
 
 /** The funnel steps worth counting. Properties are labels only, never personal details. */
 export type AnalyticsEvent =
-  | { name: "launcher_choice"; props: { choice: string } }
   | { name: "send_step"; props: { step: string; group: boolean } }
   | { name: "city_chosen"; props: { city: string } }
   | { name: "city_requested"; props: Record<string, never> }
